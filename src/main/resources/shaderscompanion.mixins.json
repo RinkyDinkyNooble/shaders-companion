@@ -1,0 +1,14 @@
+{
+  "required": false,
+  "minVersion": "0.8.5",
+  "package": "com.rinkynooble.shaderscompanion.mixin",
+  "plugin": "com.rinkynooble.shaderscompanion.mixin.MixinPlugin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "shaderscompanion.refmap.json",
+  "client": [
+    "GameRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

@@ -1,0 +1,43 @@
+modLoader="javafml"
+loaderVersion="${loader_version_range}"
+license="${mod_license}"
+issueTrackerURL="${mod_issues}"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+displayURL="${mod_url}"
+authors="${mod_authors}"
+credits="Draws Embeddium's chunk meshes for shader packs running in Oculus. Embeddium is made by embeddedt; Oculus by NanoLive, dima_dencep and the Iris team. Neither is affiliated with this mod."
+# Client only: a server doesn't need it, and a client with it can join any server.
+displayTest="IGNORE_ALL_VERSION"
+description='''${mod_description}'''
+
+[[dependencies.${mod_id}]]
+    modId="forge"
+    mandatory=true
+    versionRange="${forge_version_range}"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="oculus"
+    mandatory=true
+    versionRange="${oculus_version_range}"
+    ordering="AFTER"
+    side="CLIENT"
+
+[[dependencies.${mod_id}]]
+    modId="embeddium"
+    mandatory=true
+    versionRange="${embeddium_version_range}"
+    ordering="AFTER"
+    side="CLIENT"

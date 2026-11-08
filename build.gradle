@@ -1,0 +1,129 @@
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+    id 'org.spongepowered.mixin' version '0.7.+'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+// Dev-only checks (see README): loaded in the dev runs, never packed into the jar.
+sourceSets {
+    verify {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+
+minecraft {
+    mappings channel: 'official', version: minecraft_version
+
+    runs {
+        configureEach {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'info'
+            // Oculus and Embeddium ship production names, so the dev runs remap their mixins.
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                    source sourceSets.verify
+                }
+            }
+        }
+        client {
+            // gradlew runClient -PdevDump=300: makes a world, saves the cube after 300 drawn frames, then quits.
+            if (project.hasProperty('devDump')) {
+                property 'shaderscompanion.devDump', project.property('devDump')
+            }
+            // -PdevLift=0 keeps the player on the ground (default: 60 blocks up).
+            if (project.hasProperty('devLift')) {
+                property 'shaderscompanion.devLift', project.property('devLift')
+            }
+            // -PdevScene=pool: a water pool under a ceiling, screenshotted with the mod on and off; mobs: still mobs around the camera.
+            if (project.hasProperty('devScene')) {
+                property 'shaderscompanion.devScene', project.property('devScene')
+            }
+            // -PdevWait=1200: ticks the scenes wait before saving (160 by default; Distant Horizons needs about 1200).
+            if (project.hasProperty('devWait')) {
+                property 'shaderscompanion.devWait', project.property('devWait')
+            }
+            // -PdevPitch=25: how far the pool scene looks down, in degrees (50 by default).
+            if (project.hasProperty('devPitch')) {
+                property 'shaderscompanion.devPitch', project.property('devPitch')
+            }
+        }
+    }
+}
+
+mixin {
+    add sourceSets.main, "${mod_id}.refmap.json"
+    config "${mod_id}.mixins.json"
+}
+
+repositories {
+    // Oculus and Embeddium are read from libs/ (see README).
+    flatDir { dir 'libs' }
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+    // Compiled against, and loaded in the dev runs. Never packed into this mod's jar.
+    implementation fg.deobf("local:oculus:${oculus_version}")
+    implementation fg.deobf("local:embeddium:${embeddium_version}")
+    // Distant Horizons is optional: compiled against for its LOD buffers (only its own classes are used), loaded in
+    // dev runs only with -PdevDh.
+    compileOnly files("libs/distanthorizons-${distanthorizons_version}.jar")
+    if (project.hasProperty('devDh')) {
+        runtimeOnly fg.deobf("local:distanthorizons:${distanthorizons_version}")
+    }
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    var replaceProperties = [
+            minecraft_version: minecraft_version, minecraft_version_range: minecraft_version_range,
+            forge_version: forge_version, forge_version_range: forge_version_range,
+            loader_version_range: loader_version_range,
+            oculus_version_range: oculus_version_range, embeddium_version_range: embeddium_version_range,
+            mod_id: mod_id, mod_name: mod_name, mod_license: mod_license,
+            mod_version: mod_version, mod_authors: mod_authors, mod_description: mod_description,
+            mod_url: mod_url, mod_issues: mod_issues,
+    ]
+    inputs.properties replaceProperties
+    filesMatching(['META-INF/mods.toml']) {
+        expand replaceProperties + [project: project]
+    }
+}
+
+tasks.named('jar', Jar).configure {
+    manifest {
+        attributes([
+                'Specification-Title'     : mod_id,
+                'Specification-Vendor'    : mod_authors,
+                'Specification-Version'   : '1',
+                'Implementation-Title'    : project.name,
+                'Implementation-Version'  : project.version,
+                'Implementation-Vendor'   : mod_authors,
+                'MixinConfigs'            : "${mod_id}.mixins.json",
+        ])
+    }
+    from('LICENSE') {
+        rename { "LICENSE_${mod_id}" }
+    }
+    finalizedBy 'reobfJar'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
