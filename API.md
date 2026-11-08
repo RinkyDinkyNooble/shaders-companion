@@ -96,7 +96,7 @@ customTexture.scMirrorInfo = shaderscompanion:mirror_info
 
 ### What it is
 
-Each frame the mod casts a few rays from the camera through a grid over the screen and scores the reflecting surfaces they hit: water surfaces and the faces of blocks drawn in the translucent layer (stained and tinted glass, ice and similar). Minecraft's surfaces are axis-aligned, so each one lies on a plane: an axis, a side and a coordinate. The plane with the most screen area over the last frames is the mirror plane (it changes only when another one clearly covers more). Plain glass is drawn in the cut-out layer and isn't picked.
+Each frame the mod casts a few rays from the camera through a grid over the screen and scores the reflecting surfaces they hit: water surfaces and the faces of blocks drawn in the translucent layer (stained and tinted glass, ice and similar). Minecraft's surfaces are axis-aligned, so each one lies on a plane: an axis, a side and a coordinate. The plane with the most screen area, weighted towards the centre of the screen (the surface you look at), is the mirror plane; it changes only after another one has clearly covered more for half a second, or at once when it leaves the view. Plain glass is drawn in the cut-out layer and isn't picked.
 
 The view is then drawn from the camera mirrored in that plane, with the main view's rotation and a field of view 10% wider, at the screen's resolution (`mirrorScale` in the config). Everything on the far side of the plane, and the mirror surface itself, is cut away. Terrain, water and glass, entities and block entities (as in the cube) and Distant Horizons LODs are drawn, and so is your own player in first person, which the cube can't show. A point on the plane lands on (nearly) the same texel as on screen: the reflection of a flat mirror at a screen pixel is the mirror view's texel there. For bent rays (water waves, rough glass), trace: points along the reflected ray project into the view with the matrix below, and a point is behind a surface when it is farther from the mirrored camera than the distance stored at its texel.
 
@@ -122,6 +122,7 @@ A pixel uses the mirror view when its position lies on the plane (`abs(dot(plane
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
+- 0.4.1: the same protocols. Distant Horizons LODs carry their block and sky light the right way round (0.3.0 and 0.4.0 wrote them swapped).
 - Mirror view protocol 1 (0.4.0): first version.
 - Protocol 2 (0.3.0): `cube_data.b` tells blocks, entities and LODs apart; `cube_data.a` marks glowing entity layers; `cube_info` texel 7 w is the Distant Horizons range.
 - Protocol 1 (0.1.0, 0.2.0): terrain only.

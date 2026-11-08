@@ -1,7 +1,7 @@
 #version 330 core
 
 // Distant Horizons LOD vertices (16 bytes per vertex).
-in uvec4 a_Position; // xyz blocks from the section corner, w = light (low byte) and sub-block offset bits (high byte)
+in uvec4 a_Position; // xyz blocks from the section corner, w = light (low byte: block light << 4 | sky light) and sub-block offset bits (high byte)
 in vec4 a_Color;     // block colour
 in uvec4 a_Data;     // x = Distant Horizons block material, y = face (0 down, 1 up, 2 north, 3 south, 4 west, 5 east)
 
@@ -27,7 +27,9 @@ void main() {
     uint light = a_Position.w & 0xFFu;
 
     v_Color = a_Color;
-    v_Light = vec2(float(light & 15u), float(light >> 4u)) / 15.0;
+    // Block light in the high nibble, sky light in the low one (Distant Horizons samples its lightmap at (high, low),
+    // and the lightmap's first coordinate is block light)
+    v_Light = vec2(float(light >> 4u), float(light & 15u)) / 15.0;
     v_Position = position;
     v_Normal = FACE_NORMALS[min(a_Data.y, 5u)];
     v_Material = a_Data.x;

@@ -60,7 +60,8 @@ public final class DebugOverlay {
                 String.format("Entities: %d, block entities: %d; Distant Horizons: %s", CubeView.entitiesDrawn, CubeView.blockEntitiesDrawn,
                         CubeView.lodRangeForChecks() > 0 ? CubeView.lodContainers + " LOD sections, range " + CubeView.lodRange + " blocks"
                                 : !Config.DISTANT_HORIZONS.get() ? "turned off in the config" : Lods.reason()),
-                String.format("Mirror view: %s%s", MirrorView.status, MirrorView.active() && CubeView.mirrorPlayerDrawn ? ", your player in it" : "")
+                String.format("Mirror view: %s%s", MirrorView.status, MirrorView.active() && CubeView.mirrorPlayerDrawn ? ", your player in it" : ""),
+                "Bundled shader pack: " + BundledPack.status
         };
     }
 

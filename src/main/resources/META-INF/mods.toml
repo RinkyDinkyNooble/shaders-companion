@@ -9,7 +9,7 @@ version="${mod_version}"
 displayName="${mod_name}"
 displayURL="${mod_url}"
 authors="${mod_authors}"
-credits="Draws Embeddium's chunk meshes for shader packs running in Oculus. Embeddium is made by embeddedt; Oculus by NanoLive, dima_dencep and the Iris team. Neither is affiliated with this mod."
+credits="Draws Embeddium's chunk meshes for shader packs running in Oculus. Embeddium is made by embeddedt; Oculus by NanoLive, dima_dencep and the Iris team. Neither is affiliated with this mod. Includes ABZA Shader as a separate file under its own licence (GPL-3.0; a fork of Sundial Lite by GeForceLegend; source at https://github.com/RinkyDinkyNooble/abza-shader-pack)."
 # Client only: a server doesn't need it, and a client with it can join any server.
 displayTest="IGNORE_ALL_VERSION"
 description='''${mod_description}'''

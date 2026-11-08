@@ -57,6 +57,10 @@ minecraft {
             if (project.hasProperty('devWait')) {
                 property 'shaderscompanion.devWait', project.property('devWait')
             }
+            // -PdevQuit: logs the status at the title screen and quits (for checking the bundled pack's install).
+            if (project.hasProperty('devQuit')) {
+                property 'shaderscompanion.devQuit', 'true'
+            }
             // -PdevPitch=25: how far the pool scene looks down, in degrees (50 by default).
             if (project.hasProperty('devPitch')) {
                 property 'shaderscompanion.devPitch', project.property('devPitch')
@@ -91,6 +95,18 @@ dependencies {
 }
 
 tasks.named('processResources', ProcessResources).configure {
+    // The bundled shader pack (see gradle.properties), stored without spaces in its name
+    var bundledPack = file("${bundled_pack_dir}/ABZA Shader v${bundled_pack_version}.zip")
+    inputs.property 'bundled_pack_version', bundled_pack_version
+    doFirst {
+        if (!bundledPack.isFile()) {
+            throw new GradleException("The bundled shader pack is missing: ${bundledPack}. Build it in the ABZA Shader repo (python tools/build.py ${bundled_pack_version}) or set bundled_pack_version.")
+        }
+    }
+    from(bundledPack) {
+        into 'bundled'
+        rename { 'abza-shader.zip' }
+    }
     var replaceProperties = [
             minecraft_version: minecraft_version, minecraft_version_range: minecraft_version_range,
             forge_version: forge_version, forge_version_range: forge_version_range,
@@ -98,10 +114,10 @@ tasks.named('processResources', ProcessResources).configure {
             oculus_version_range: oculus_version_range, embeddium_version_range: embeddium_version_range,
             mod_id: mod_id, mod_name: mod_name, mod_license: mod_license,
             mod_version: mod_version, mod_authors: mod_authors, mod_description: mod_description,
-            mod_url: mod_url, mod_issues: mod_issues,
+            mod_url: mod_url, mod_issues: mod_issues, bundled_pack_version: bundled_pack_version,
     ]
     inputs.properties replaceProperties
-    filesMatching(['META-INF/mods.toml']) {
+    filesMatching(['META-INF/mods.toml', 'bundled/pack.properties']) {
         expand replaceProperties + [project: project]
     }
 }

@@ -19,6 +19,7 @@ public final class Config {
     public static final ForgeConfigSpec.IntValue LOD_DISTANCE;
     public static final ForgeConfigSpec.BooleanValue MIRROR;
     public static final ForgeConfigSpec.IntValue MIRROR_SCALE;
+    public static final ForgeConfigSpec.BooleanValue INSTALL_BUNDLED_PACK;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -64,6 +65,9 @@ public final class Config {
         MIRROR_SCALE = builder
                 .comment("Resolution of the mirror view, in percent of the screen's. Lower is faster and blurrier.")
                 .defineInRange("mirrorScale", 100, 25, 100);
+        INSTALL_BUNDLED_PACK = builder
+                .comment("Install the shader pack this mod comes with (ABZA Shader) as shaderpacks/ABZA Shader.zip at startup, and update it with the mod. A file you put there yourself is never replaced.")
+                .define("installBundledPack", true);
         SPEC = builder.build();
     }
 

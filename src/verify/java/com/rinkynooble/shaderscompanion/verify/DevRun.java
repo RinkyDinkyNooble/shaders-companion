@@ -38,7 +38,18 @@ import net.minecraftforge.fml.common.Mod;
  * <li>-PdevScene=mirror: a wall of black stained glass 3 blocks in front of the camera and still mobs behind it,
  * screenshotted with the mod drawing ("-on") and turned off ("-off"). The mobs, out of the screen, and the player
  * should show in the glass only in "-on"; "-mirror.png" is the mirror view of the glass.</li>
+ * <li>-PdevScene=corner: a block of black stained glass with one vertical edge straight ahead, so two of its faces
+ * cover about the same area, while the view turns slowly across the edge and back. Logs the mirror's plane twice a
+ * second; the plane should be the face under the crosshair and move to the other face once each way (2 switches).</li>
+ * <li>-PdevScene=grass: the black glass wall in front of a lawn of grass (plants that sway with the shader pack), with
+ * two "-on" screenshots a few frames apart and an "-off" one. The grass in the glass should look the same in both
+ * "-on" shots, with no patches.</li>
  * </ul>
+ * -PdevQuit (without -PdevDump) logs the status at the title screen and quits: a quick check of the bundled shader
+ * pack's install (the status line's last part, and Oculus's "Using shaderpack" line in the log).
+ * <p>
+ * In the default scene the log also describes three texels just below the horizon of the +X face: with Distant
+ * Horizons (-PdevDh) they are LODs (id 49152 and up) lit by daylight (sky light 255, block light 0).
  * Logs the status every 10 seconds, so a run that never draws shows why.
  */
 @Mod.EventBusSubscriber(modid = ShadersCompanion.MOD_ID, value = Dist.CLIENT)
@@ -61,6 +72,11 @@ public final class DevRun {
 
     @SubscribeEvent
     public static void onScreenOpening(ScreenEvent.Opening event) {
+        if (Boolean.getBoolean("shaderscompanion.devQuit") && event.getNewScreen() instanceof TitleScreen) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run at the title screen: {}", String.join(" | ", DebugOverlay.statusLines()));
+            Minecraft.getInstance().tell(() -> Minecraft.getInstance().stop());
+            return;
+        }
         if (DUMP_FRAMES <= 0 || worldRequested || !(event.getNewScreen() instanceof TitleScreen)) {
             return;
         }
@@ -85,6 +101,9 @@ public final class DevRun {
         boolean pool = SCENE.equals("pool");
         boolean mirror = SCENE.equals("mirror");
         boolean mobs = SCENE.equals("mobs") || mirror;
+        boolean corner = SCENE.equals("corner");
+        boolean grass = SCENE.equals("grass");
+        boolean glass = mirror || corner || grass;
         if (phase == 0 && mc.player != null && CubeView.framesDrawn() >= START_FRAME) {
             mc.player.getAbilities().flying = true;
             mc.player.onUpdateAbilities();
@@ -120,6 +139,23 @@ public final class DevRun {
                     DebugOverlay.setVisible(true);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: summoned the mobs");
+            } else if (corner || grass) {
+                mc.options.hideGui = true;
+                String[] commands = corner ? new String[]{
+                        "time set noon", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~20 ~ -60 0",
+                        "fill ~-10 ~-1 ~-10 ~10 ~-1 ~10 minecraft:smooth_stone", "fill ~-10 ~ ~-10 ~10 ~6 ~10 minecraft:air",
+                        "fill ~3 ~ ~3 ~6 ~5 ~6 minecraft:black_stained_glass"}
+                        : new String[]{
+                        "time set noon", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~20 ~ 0 10",
+                        "fill ~-10 ~-1 ~-10 ~10 ~-1 ~10 minecraft:grass_block", "fill ~-10 ~ ~-10 ~10 ~6 ~10 minecraft:air",
+                        "fill ~-7 ~ ~-7 ~7 ~ ~2 minecraft:grass",
+                        "fill ~-7 ~ ~3 ~7 ~4 ~3 minecraft:black_stained_glass"};
+                for (String command : commands) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the {} scene", SCENE);
             } else {
                 mc.player.connection.sendCommand("tp @s ~ ~" + LIFT_BLOCKS + " ~ 0 0");
                 DebugOverlay.setVisible(true);
@@ -127,7 +163,18 @@ public final class DevRun {
             }
             phase = 1;
             phaseTick = ticks;
-        } else if (phase == 1 && (pool || mobs ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && corner && ticks - phaseTick < WAIT_TICKS) {
+            // Turn from 60 to 30 degrees right of +Z across the glass block's front edge (at 45 degrees) and back
+            float progress = 2.0F * (ticks - phaseTick) / WAIT_TICKS;
+            float yaw = -60.0F + 30.0F * (progress <= 1.0F ? progress : 2.0F - progress);
+            mc.player.setYRot(yaw);
+            mc.player.yRotO = yaw;
+            if ((ticks - phaseTick) % 10 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, yaw {}: {}", String.format("%.1f", yaw), DebugOverlay.statusLines()[DebugOverlay.statusLines().length - 1]);
+            }
+        } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
+            Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
+        } else if (phase == 1 && (pool || mobs || corner || grass ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             try {
                 prefix = CubeDump.dump();
                 int size = CubeView.faceSizeForChecks();
@@ -144,14 +191,19 @@ public final class DevRun {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, pig (+X): {}", CubeDump.describeTexel(size / 2, size * 7 / 20));
                     // The chest at +X 4, +Z 2 (face 0), its lid about 0.75 blocks below eye level
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, chest (+X): {}", CubeDump.describeTexel(size * 778 / 1000, size * 39 / 100));
+                } else if (!pool && !glass) {
+                    // Just below the horizon of the +X face (face 0: column 0, row 0): far ground, LODs with Distant Horizons
+                    for (int percent : new int[]{46, 43, 40}) {
+                        ShadersCompanion.LOGGER.info("Shaders Companion dev run, +X horizon {}%: {}", percent, CubeDump.describeTexel(size / 2, size * percent / 100));
+                    }
                 }
-                Screenshot.grab(mc.gameDirectory, prefix + (pool || mirror ? "-on.png" : "-main.png"), mc.getMainRenderTarget(), message -> { });
+                Screenshot.grab(mc.gameDirectory, prefix + (pool || glass ? "-on.png" : "-main.png"), mc.getMainRenderTarget(), message -> { });
             } catch (Exception e) {
                 ShadersCompanion.LOGGER.error("Shaders Companion dev run: saving failed", e);
             }
             ShadersCompanion.LOGGER.info("Shaders Companion dev run at {}: {}", mc.player == null ? "?" : mc.player.position(),
                     String.join(" | ", DebugOverlay.statusLines()));
-            if (pool || mirror) {
+            if (pool || glass) {
                 Config.ENABLED.set(false);
                 phase = 2;
                 phaseTick = ticks;

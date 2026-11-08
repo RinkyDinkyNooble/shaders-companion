@@ -2,9 +2,9 @@ package com.rinkynooble.shaderscompanion.client;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import java.nio.FloatBuffer;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
-import java.util.Iterator;
 import java.util.Map;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -36,8 +36,9 @@ import org.lwjgl.system.MemoryUtil;
  * <p>
  * Each frame a few rays from the camera through a grid over the screen find the reflecting surfaces in view (water and
  * blocks drawn in the translucent layer: stained and tinted glass, ice). Every Minecraft surface is axis-aligned, so a
- * surface's plane is an axis, a side and a coordinate. Each plane keeps a score of recent hits, and the plane with the
- * most screen area is mirrored, with a margin before switching to another one.
+ * surface's plane is an axis, a side and a coordinate. Each grid cell remembers the plane its last ray hit, and the
+ * plane with the most screen area, weighted towards the centre of the screen, is mirrored. Another plane takes over
+ * only after it has clearly covered more for half a second, or at once when the current one leaves the view.
  * <p>
  * The view is drawn like the main view, with the world mirrored in the plane and everything on the far side of it cut
  * away, so a point on the plane lands on the same texel as on screen. Its matrix is written to the info texture, so a
@@ -51,11 +52,20 @@ final class MirrorView {
     private static final int CELL_STRIDE = 37;
     private static final int RAYS_PER_FRAME = 16;
     private static final double RAY_DISTANCE = 64.0;
-    /** Each frame's scores keep this much of the last one; a plane covering a fraction f of the screen settles at 160 f. */
-    private static final float DECAY = 0.9F;
-    /** About 1% of the screen. */
-    private static final float MIN_SCORE = 1.5F;
-    private static final float SWITCH_RATIO = 1.25F;
+    /**
+     * A cell's weight falls from 1 at the screen's centre like a bell curve of this width (in half screens), down to
+     * EDGE_WEIGHT, so the surface you look at wins over a larger one off to the side.
+     */
+    private static final float CENTRE_SPREAD = 0.35F;
+    private static final float EDGE_WEIGHT = 0.1F;
+    /** Each frame's shares move this far towards the grid's, smoothing out the noise of the rays' spots in their cells. */
+    private static final float SMOOTHING = 0.2F;
+    /** Share of the weighted screen a plane must cover to be mirrored; the current one stays down to half of it. */
+    private static final float MIN_SCORE = 0.01F;
+    /** Another plane takes over when it covers this much more than the current one... */
+    private static final float SWITCH_RATIO = 1.2F;
+    /** ...for this long. */
+    private static final long SWITCH_DELAY_NANOS = 500_000_000L;
     /** The camera must be at least this far in front of the plane. */
     private static final double MIN_HEIGHT = 0.05;
     /** Geometry closer than this to the plane, on its far side or on it (the mirror itself), is cut from the view. */
@@ -69,12 +79,25 @@ final class MirrorView {
     static long cpuNanos;
     static int width;
     static int height;
+    /** Times the mirror moved straight from one plane to another (for the debug overlay). */
+    static int switches;
 
+    /** The plane each grid cell's last ray hit. */
+    private static final long[] cellPlanes = new long[CELLS];
+    private static final float[] CELL_WEIGHTS = new float[CELLS];
+    /** Each plane's smoothed share of the weighted grid. */
     private static final Map<Long, Float> scores = new HashMap<>();
     private static final Map<BlockState, Boolean> translucent = new IdentityHashMap<>();
     private static ClientLevel scoredLevel;
     private static int rayCursor;
     private static long plane = NO_PLANE;
+    /** A plane that covers clearly more than the current one, and since when. */
+    private static long challenger = NO_PLANE;
+    private static long challengerSince;
+    // For the status line: the mirrored plane's weighted share of the screen, and the next best plane's
+    private static float shownShare;
+    private static long rival = NO_PLANE;
+    private static float rivalShare;
     private static boolean active;
     private static boolean linked;
 
@@ -92,6 +115,20 @@ final class MirrorView {
     private static float maxDistanceSq;
     private static FloatBuffer infoBuffer;
 
+    static {
+        Arrays.fill(cellPlanes, NO_PLANE);
+        float total = 0.0F;
+        for (int cell = 0; cell < CELLS; cell++) {
+            float x = ((cell % GRID_X) + 0.5F) / GRID_X * 2.0F - 1.0F;
+            float y = ((cell / GRID_X) + 0.5F) / GRID_Y * 2.0F - 1.0F;
+            CELL_WEIGHTS[cell] = EDGE_WEIGHT + (1.0F - EDGE_WEIGHT) * (float) Math.exp(-(x * x + y * y) / (CENTRE_SPREAD * CENTRE_SPREAD));
+            total += CELL_WEIGHTS[cell];
+        }
+        for (int cell = 0; cell < CELLS; cell++) {
+            CELL_WEIGHTS[cell] /= total;
+        }
+    }
+
     private MirrorView() {
     }
 
@@ -108,14 +145,12 @@ final class MirrorView {
             active = false;
             if (mc.level != scoredLevel) {
                 scoredLevel = mc.level;
-                scores.clear();
                 translucent.clear();
-                plane = NO_PLANE;
+                forget();
             }
             if (camera.getFluidInCamera() != FogType.NONE) {
                 status = "camera under water";
-                scores.clear();
-                plane = NO_PLANE;
+                forget();
                 return false;
             }
             Vec3 cameraPos = camera.getPosition();
@@ -134,16 +169,14 @@ final class MirrorView {
         }
     }
 
+    private static void forget() {
+        Arrays.fill(cellPlanes, NO_PLANE);
+        scores.clear();
+        plane = NO_PLANE;
+        challenger = NO_PLANE;
+    }
+
     private static void castRays(Minecraft mc, Camera camera, Vec3 cameraPos, Matrix4f view, Matrix4f projection) {
-        for (Iterator<Map.Entry<Long, Float>> it = scores.entrySet().iterator(); it.hasNext(); ) {
-            Map.Entry<Long, Float> entry = it.next();
-            float score = entry.getValue() * DECAY;
-            if (score < 0.05F) {
-                it.remove();
-            } else {
-                entry.setValue(score);
-            }
-        }
         Entity entity = camera.getEntity() != null ? camera.getEntity() : mc.player;
         if (entity == null) {
             return;
@@ -165,12 +198,7 @@ final class MirrorView {
             direction.set(x * tanX, y * tanY, -1.0F, 0.0F).mul(toWorld);
             Vec3 end = cameraPos.add(new Vec3(direction.x, direction.y, direction.z).normalize().scale(RAY_DISTANCE));
             BlockHitResult hit = mc.level.clip(new ClipContext(cameraPos, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.WATER, entity));
-            if (hit.getType() != HitResult.Type.MISS) {
-                long key = reflectingPlane(mc, hit);
-                if (key != NO_PLANE) {
-                    scores.merge(key, 1.0F, Float::sum);
-                }
-            }
+            cellPlanes[cell] = hit.getType() == HitResult.Type.MISS ? NO_PLANE : reflectingPlane(mc, hit);
         }
     }
 
@@ -234,6 +262,13 @@ final class MirrorView {
     }
 
     private static void choosePlane(Vec3 cameraPos) {
+        scores.replaceAll((key, share) -> share * (1.0F - SMOOTHING));
+        for (int cell = 0; cell < CELLS; cell++) {
+            if (cellPlanes[cell] != NO_PLANE) {
+                scores.merge(cellPlanes[cell], CELL_WEIGHTS[cell] * SMOOTHING, Float::sum);
+            }
+        }
+        scores.values().removeIf(share -> share < 1.0E-4F);
         long best = NO_PLANE;
         float bestScore = 0.0F;
         for (Map.Entry<Long, Float> entry : scores.entrySet()) {
@@ -247,8 +282,32 @@ final class MirrorView {
             plane = NO_PLANE;
             currentScore = 0.0F;
         }
-        if (best != NO_PLANE && best != plane && bestScore >= MIN_SCORE && (plane == NO_PLANE || bestScore > currentScore * SWITCH_RATIO)) {
+        if (best == NO_PLANE || best == plane || bestScore < MIN_SCORE) {
+            challenger = NO_PLANE;
+        } else if (plane == NO_PLANE) {
             plane = best;
+            challenger = NO_PLANE;
+        } else if (bestScore > currentScore * SWITCH_RATIO) {
+            long now = System.nanoTime();
+            if (challenger != best) {
+                challenger = best;
+                challengerSince = now;
+            } else if (now - challengerSince >= SWITCH_DELAY_NANOS) {
+                plane = best;
+                challenger = NO_PLANE;
+                switches++;
+            }
+        } else {
+            challenger = NO_PLANE;
+        }
+        shownShare = plane == NO_PLANE ? 0.0F : scores.getOrDefault(plane, 0.0F);
+        rival = NO_PLANE;
+        rivalShare = 0.0F;
+        for (Map.Entry<Long, Float> entry : scores.entrySet()) {
+            if (entry.getKey() != plane && entry.getValue() > rivalShare) {
+                rival = entry.getKey();
+                rivalShare = entry.getValue();
+            }
         }
     }
 
@@ -279,7 +338,8 @@ final class MirrorView {
 
     private static String describePlane() {
         String name = axis == 0 ? "x" : axis == 1 ? "y" : "z";
-        return String.format("mirroring %s = %.3f (%s side), %d x %d px", name, coordinate, side > 0 ? "+" : "-", width, height);
+        String next = rival == NO_PLANE ? "" : String.format(", next %s = %.3f %.2f", "xyz".charAt(keyAxis(rival)), keyCoordinate(rival), rivalShare);
+        return String.format("mirroring %s = %.3f (%s side, share %.2f%s), %d x %d px, %d switches", name, coordinate, side > 0 ? "+" : "-", shownShare, next, width, height, switches);
     }
 
     static boolean active() {
