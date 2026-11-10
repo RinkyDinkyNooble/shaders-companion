@@ -19,12 +19,13 @@ public final class Config {
     public static final ForgeConfigSpec.IntValue LOD_DISTANCE;
     public static final ForgeConfigSpec.BooleanValue MIRROR;
     public static final ForgeConfigSpec.IntValue MIRROR_SCALE;
+    public static final ForgeConfigSpec.BooleanValue MIRROR_SHADOWS;
     public static final ForgeConfigSpec.BooleanValue INSTALL_BUNDLED_PACK;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
         ENABLED = builder
-                .comment("Render the view around the camera while a shader pack is active.")
+                .comment("Draw the extra views (the cube around the camera and the mirror view) while a shader pack reads them. Off stops all of the mod's drawing; /shaderscompanion on and off change this in game.")
                 .define("enabled", true);
         FACE_SIZE = builder
                 .comment("Pixels per side of each of the six cube faces. Higher is sharper and costs more.")
@@ -65,6 +66,9 @@ public final class Config {
         MIRROR_SCALE = builder
                 .comment("Resolution of the mirror view, in percent of the screen's. Lower is faster and blurrier.")
                 .defineInRange("mirrorScale", 100, 25, 100);
+        MIRROR_SHADOWS = builder
+                .comment("Keep the shadows of what the mirror view shows. Oculus draws only the shadows that can fall into your own view, so without this, things behind you lose their shadows in reflections, and the shadows come and go as you move. Off draws fewer shadows while a mirror is on screen.")
+                .define("mirrorShadows", true);
         INSTALL_BUNDLED_PACK = builder
                 .comment("Install the shader pack this mod comes with (ABZA Shader) as shaderpacks/ABZA Shader.zip at startup, and update it with the mod. A file you put there yourself is never replaced.")
                 .define("installBundledPack", true);

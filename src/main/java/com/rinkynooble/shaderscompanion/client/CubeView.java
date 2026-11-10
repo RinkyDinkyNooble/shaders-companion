@@ -2,14 +2,10 @@ package com.rinkynooble.shaderscompanion.client;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferUploader;
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
-import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
@@ -48,7 +44,6 @@ import org.lwjgl.opengl.GL15C;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL32C;
-import org.lwjgl.opengl.GL33C;
 import org.lwjgl.system.MemoryUtil;
 
 /**
@@ -68,7 +63,6 @@ public final class CubeView {
 
     private static final String[] ATTRIBUTE_NAMES = {"a_PosId", "a_Color", "a_TexCoord", "a_LightCoord", "a_Normal", "a_BlockId", "a_MidBlock"};
     private static final int[] ATTRIBUTE_LOCATIONS = {1, 2, 3, 4, 10, 11, 14};
-    private static final String[] OUTPUT_NAMES = {"outAlbedo", "outData", "outDistance", "outPreview"};
     private static final String[] ENTITY_ATTRIBUTES = {"a_Position", "a_Color", "a_TexCoord", "a_Light", "a_Normal", "a_Meta"};
     private static final String[] LOD_ATTRIBUTES = {"a_Position", "a_Color", "a_Data"};
     /** Frames without the active pack binding the cube textures before the mod stops drawing. */
@@ -77,7 +71,6 @@ public final class CubeView {
     private static final long ENTITY_BUDGET_NANOS = 1_000_000L;
     private static final long BLOCK_ENTITY_BUDGET_NANOS = 500_000L;
     private static final int MAX_DRAWS = 256 * ModelQuadFacing.COUNT;
-    private static final int QUERY_COUNT = 4;
     private static final int DREW_CUBE = 1;
     private static final int DREW_MIRROR = 2;
     private static final float[] NO_CLIP = {0.0F, 0.0F, 0.0F, 1.0F};
@@ -98,7 +91,6 @@ public final class CubeView {
     static long cpuNanos;
     static long entityNanos;
     static long mirrorNanos;
-    static long gpuNanos = -1;
     static int sectionsDrawn;
     static int drawCalls;
     static long quadsDrawn;
@@ -129,25 +121,20 @@ public final class CubeView {
     private static boolean lodsCollected;
 
     // GL objects, created on first use.
-    private static int program;
-    private static int uViewProjection;
+    private static ViewProgram program;
     private static int uRegionOffset;
-    private static int uBlockAtlas;
     private static int uTranslucent;
     private static int framebuffer;
     private static int depthBuffer;
     private static int vertexArray;
     private static int indexBuffer;
     private static int indexCapacityQuads;
-    private static int entityProgram;
-    private static int uEntityViewProjection;
-    private static int uEntityTexture;
+    private static ViewProgram entityProgram;
     private static int uEntityTranslucent;
     private static int entityVertexArray;
     private static int entityBuffer;
     private static ByteBuffer entityStaging;
-    private static int lodProgram;
-    private static int uLodViewProjection;
+    private static ViewProgram lodProgram;
     private static int uLodModelOffset;
     private static int uLodTranslucent;
     private static int uLodClipDistance;
@@ -157,9 +144,6 @@ public final class CubeView {
     private static int mirrorDepthBuffer;
     private static int mirrorWidth;
     private static int mirrorHeight;
-    private static final int[] queries = new int[QUERY_COUNT];
-    private static final boolean[] queryPending = new boolean[QUERY_COUNT];
-    private static int queryIndex;
 
     private static IntBuffer drawCounts;
     private static IntBuffer drawBaseVertices;
@@ -205,7 +189,7 @@ public final class CubeView {
     private static int renderFrameUnguarded(Camera camera, float partialTick, Matrix4f view) throws IllegalAccessException {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || !Config.ENABLED.get()) {
-            status = mc.level == null ? "no world loaded" : "turned off in the config";
+            status = mc.level == null ? "no world loaded" : "turned off (/shaderscompanion on, or enabled in the config)";
             return 0;
         }
         if (!IrisApi.getInstance().isShaderPackInUse()) {
@@ -249,15 +233,14 @@ public final class CubeView {
             return 0;
         }
 
-        SavedState saved = null;
+        GlState saved = null;
         try {
             Vec3 cameraPos = camera.getPosition();
             int size = Config.FACE_SIZE.get();
-            saved = SavedState.capture();
+            saved = GlState.capture();
             long start = System.nanoTime();
             ensureResources(size);
-            readGpuTime();
-            beginQuery();
+            GpuTimer.begin();
             sectionsDrawn = 0;
             drawCalls = 0;
             quadsDrawn = 0;
@@ -299,7 +282,7 @@ public final class CubeView {
             }
             mirrorNanos = System.nanoTime() - mirrorStart;
             Lods.clear();
-            endQuery();
+            GpuTimer.end();
             cpuNanos = System.nanoTime() - start;
             frameCounter++;
             int drew = 0;
@@ -315,7 +298,7 @@ public final class CubeView {
             status = wantCube ? "drawing" : "drawing the mirror view only";
             return drew;
         } catch (Throwable t) {
-            endQuery();
+            GpuTimer.end();
             throw t;
         } finally {
             if (saved != null) {
@@ -402,12 +385,10 @@ public final class CubeView {
     }
 
     private static void ensureResources(int size) {
-        if (program == 0) {
-            program = createProgram("cube_terrain", ATTRIBUTE_NAMES, ATTRIBUTE_LOCATIONS);
-            uViewProjection = GL20C.glGetUniformLocation(program, "u_ViewProjection");
-            uRegionOffset = GL20C.glGetUniformLocation(program, "u_RegionOffset");
-            uBlockAtlas = GL20C.glGetUniformLocation(program, "u_BlockAtlas");
-            uTranslucent = GL20C.glGetUniformLocation(program, "u_Translucent");
+        if (program == null) {
+            program = new ViewProgram("cube_terrain", ATTRIBUTE_NAMES, ATTRIBUTE_LOCATIONS);
+            uRegionOffset = program.uniform("u_RegionOffset");
+            uTranslucent = program.uniform("u_Translucent");
             vertexArray = GL30C.glGenVertexArrays();
             indexBuffer = GL15C.glGenBuffers();
             GlStateManager._glBindVertexArray(vertexArray);
@@ -416,10 +397,8 @@ public final class CubeView {
             }
             GL15C.glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
 
-            entityProgram = createProgram("cube_entity", ENTITY_ATTRIBUTES, new int[]{0, 1, 2, 3, 4, 5});
-            uEntityViewProjection = GL20C.glGetUniformLocation(entityProgram, "u_ViewProjection");
-            uEntityTexture = GL20C.glGetUniformLocation(entityProgram, "u_Texture");
-            uEntityTranslucent = GL20C.glGetUniformLocation(entityProgram, "u_Translucent");
+            entityProgram = new ViewProgram("cube_entity", ENTITY_ATTRIBUTES, new int[]{0, 1, 2, 3, 4, 5});
+            uEntityTranslucent = entityProgram.uniform("u_Translucent");
             entityBuffer = GL15C.glGenBuffers();
             entityVertexArray = GL30C.glGenVertexArrays();
             GlStateManager._glBindVertexArray(entityVertexArray);
@@ -436,27 +415,23 @@ public final class CubeView {
             }
             GL15C.glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
 
-            lodProgram = createProgram("cube_lod", LOD_ATTRIBUTES, new int[]{0, 1, 2});
-            uLodViewProjection = GL20C.glGetUniformLocation(lodProgram, "u_ViewProjection");
-            uLodModelOffset = GL20C.glGetUniformLocation(lodProgram, "u_ModelOffset");
-            uLodTranslucent = GL20C.glGetUniformLocation(lodProgram, "u_Translucent");
-            uLodClipDistance = GL20C.glGetUniformLocation(lodProgram, "u_ClipDistance");
+            lodProgram = new ViewProgram("cube_lod", LOD_ATTRIBUTES, new int[]{0, 1, 2});
+            uLodModelOffset = lodProgram.uniform("u_ModelOffset");
+            uLodTranslucent = lodProgram.uniform("u_Translucent");
+            uLodClipDistance = lodProgram.uniform("u_ClipDistance");
             lodVertexArray = GL30C.glGenVertexArrays();
             GlStateManager._glBindVertexArray(lodVertexArray);
             for (int location = 0; location < 3; location++) {
                 GL20C.glEnableVertexAttribArray(location);
             }
             GlStateManager._glBindVertexArray(0);
-            GlStateManager._glUseProgram(program);
-            GL20C.glUniform1i(GL20C.glGetUniformLocation(program, "u_BlockAtlas"), 0);
-            GlStateManager._glUseProgram(entityProgram);
-            GL20C.glUniform1i(uEntityTexture, 0);
+            GlStateManager._glUseProgram(program.id);
+            GL20C.glUniform1i(program.uniform("u_BlockAtlas"), 0);
+            GlStateManager._glUseProgram(entityProgram.id);
+            GL20C.glUniform1i(entityProgram.uniform("u_Texture"), 0);
 
             framebuffer = GL30C.glGenFramebuffers();
             depthBuffer = GL30C.glGenRenderbuffers();
-            for (int i = 0; i < QUERY_COUNT; i++) {
-                queries[i] = GL15C.glGenQueries();
-            }
             drawCounts = MemoryUtil.memAllocInt(MAX_DRAWS);
             drawBaseVertices = MemoryUtil.memAllocInt(MAX_DRAWS);
             drawOffsets = MemoryUtil.memCallocPointer(MAX_DRAWS);
@@ -585,7 +560,7 @@ public final class CubeView {
         if (entityBatches.isEmpty()) {
             return;
         }
-        useProgram(entityProgram, uEntityViewProjection);
+        use(entityProgram);
         GL20C.glUniform1i(uEntityTranslucent, translucent ? 1 : 0);
         GlStateManager._glBindVertexArray(entityVertexArray);
         // Overlay layers (eyes, armour, clothing) sit exactly on the model's surface
@@ -613,7 +588,7 @@ public final class CubeView {
         if (!lodsCollected) {
             return;
         }
-        useProgram(lodProgram, uLodViewProjection);
+        use(lodProgram);
         GL20C.glUniform1i(uLodTranslucent, opaque ? 0 : 1);
         // The chunk terrain covers the render distance; LODs fill in from a little inside its edge.
         float clipDistance = Math.max(0.0F, maxDistance - 16.0F);
@@ -636,7 +611,7 @@ public final class CubeView {
         GlStateManager._viewport(x, y, size, size);
         GlStateManager._scissorBox(x, y, size, size);
         float[] zero = {0.0F, 0.0F, 0.0F, 0.0F};
-        for (int i = 0; i < OUTPUT_NAMES.length; i++) {
+        for (int i = 0; i < ViewProgram.OUTPUTS.length; i++) {
             GL30C.glClearBufferfv(GL11C.GL_COLOR, i, zero);
         }
         GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[]{1.0F});
@@ -735,13 +710,8 @@ public final class CubeView {
     }
 
     /** Binds a program with the current view's projection, depth scale, cut plane and camera offset. */
-    private static void useProgram(int id, int uMatrix) {
-        GlStateManager._glUseProgram(id);
-        GL20C.glUniformMatrix4fv(uMatrix, false, matrixBuffer);
-        GL20C.glUniform1f(GL20C.glGetUniformLocation(id, "u_LogDepth"), logDepth);
-        GL20C.glUniform1f(GL20C.glGetUniformLocation(id, "u_Near"), NEAR);
-        GL20C.glUniform4f(GL20C.glGetUniformLocation(id, "u_ClipPlane"), viewClipPlane[0], viewClipPlane[1], viewClipPlane[2], viewClipPlane[3]);
-        GL20C.glUniform3f(GL20C.glGetUniformLocation(id, "u_Camera"), viewCamera[0], viewCamera[1], viewCamera[2]);
+    private static void use(ViewProgram viewProgram) {
+        viewProgram.use(matrixBuffer, logDepth, NEAR, viewClipPlane, viewCamera);
     }
 
     /**
@@ -749,7 +719,7 @@ public final class CubeView {
      * view's origin: the camera for the cube, the mirrored camera for the mirror view.
      */
     private static void drawTerrain(BoxTest seen, Vec3 camera, Vec3 origin, RenderRegionManager regions, boolean translucent) {
-        useProgram(program, uViewProjection);
+        use(program);
         GlStateManager._depthFunc(GL11C.GL_LESS);
         GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
         GlStateManager._bindTexture(Minecraft.getInstance().getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getId());
@@ -997,134 +967,5 @@ public final class CubeView {
         int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
         GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, CubeTextures.INFO_WIDTH, 1, GL11C.GL_RGBA, GL11C.GL_FLOAT, infoBuffer);
         CompanionTexture.restorePixelBuffers(pixelBuffers);
-    }
-
-    private static void beginQuery() {
-        int q = queryIndex;
-        if (queryPending[q]) {
-            return;
-        }
-        GL15C.glBeginQuery(GL33C.GL_TIME_ELAPSED, queries[q]);
-        queryPending[q] = true;
-        queryIndex = -1 - q;
-    }
-
-    private static void endQuery() {
-        if (queryIndex < 0) {
-            int q = -1 - queryIndex;
-            GL15C.glEndQuery(GL33C.GL_TIME_ELAPSED);
-            queryIndex = (q + 1) % QUERY_COUNT;
-        }
-    }
-
-    private static void readGpuTime() {
-        for (int i = 0; i < QUERY_COUNT; i++) {
-            if (queryPending[i] && GL15C.glGetQueryObjecti(queries[i], GL15C.GL_QUERY_RESULT_AVAILABLE) != 0) {
-                gpuNanos = GL33C.glGetQueryObjectui64(queries[i], GL15C.GL_QUERY_RESULT);
-                queryPending[i] = false;
-            }
-        }
-    }
-
-    private static int createProgram(String name, String[] attributes, int[] locations) {
-        int vertex = compile(GL20C.GL_VERTEX_SHADER, name + ".vsh");
-        int fragment = compile(GL20C.GL_FRAGMENT_SHADER, name + ".fsh");
-        int id = GL20C.glCreateProgram();
-        GL20C.glAttachShader(id, vertex);
-        GL20C.glAttachShader(id, fragment);
-        for (int i = 0; i < attributes.length; i++) {
-            GL20C.glBindAttribLocation(id, locations[i], attributes[i]);
-        }
-        for (int i = 0; i < OUTPUT_NAMES.length; i++) {
-            GL30C.glBindFragDataLocation(id, i, OUTPUT_NAMES[i]);
-        }
-        GL20C.glLinkProgram(id);
-        GL20C.glDetachShader(id, vertex);
-        GL20C.glDetachShader(id, fragment);
-        GL20C.glDeleteShader(vertex);
-        GL20C.glDeleteShader(fragment);
-        if (GL20C.glGetProgrami(id, GL20C.GL_LINK_STATUS) == 0) {
-            String log = GL20C.glGetProgramInfoLog(id);
-            GL20C.glDeleteProgram(id);
-            throw new IllegalStateException(name + " program failed to link: " + log);
-        }
-        return id;
-    }
-
-    private static int compile(int type, String name) {
-        String source;
-        try (InputStream in = CubeView.class.getResourceAsStream("/assets/shaderscompanion/shaders/" + name)) {
-            if (in == null) {
-                throw new IllegalStateException("missing shader " + name);
-            }
-            source = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new IllegalStateException("can't read shader " + name, e);
-        }
-        int id = GL20C.glCreateShader(type);
-        GL20C.glShaderSource(id, source);
-        GL20C.glCompileShader(id);
-        if (GL20C.glGetShaderi(id, GL20C.GL_COMPILE_STATUS) == 0) {
-            String log = GL20C.glGetShaderInfoLog(id);
-            GL20C.glDeleteShader(id);
-            throw new IllegalStateException(name + " failed to compile: " + log);
-        }
-        return id;
-    }
-
-    /** The GL state this class changes, read before drawing and put back afterwards through GlStateManager. */
-    private record SavedState(int drawFramebuffer, int readFramebuffer, int[] viewport, int[] scissorBox, int program, int activeTexture,
-                              int texture0, boolean depthTest, boolean cull, boolean blend, boolean scissor, int depthFunc, boolean depthMask,
-                              boolean[] colorMask) {
-        static SavedState capture() {
-            int[] viewport = new int[4];
-            GL11C.glGetIntegerv(GL11C.GL_VIEWPORT, viewport);
-            int[] scissorBox = new int[4];
-            GL11C.glGetIntegerv(GL11C.GL_SCISSOR_BOX, scissorBox);
-            int activeTexture = GlStateManager._getActiveTexture();
-            GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
-            int texture0 = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-            GlStateManager._activeTexture(activeTexture);
-            byte[] mask = new byte[4];
-            try (var stack = org.lwjgl.system.MemoryStack.stackPush()) {
-                var buffer = stack.malloc(4);
-                GL11C.glGetBooleanv(GL11C.GL_COLOR_WRITEMASK, buffer);
-                buffer.get(mask);
-            }
-            return new SavedState(
-                    GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING),
-                    GL11C.glGetInteger(GL30C.GL_READ_FRAMEBUFFER_BINDING),
-                    viewport, scissorBox,
-                    GL11C.glGetInteger(GL20C.GL_CURRENT_PROGRAM),
-                    activeTexture, texture0,
-                    GL11C.glIsEnabled(GL11C.GL_DEPTH_TEST),
-                    GL11C.glIsEnabled(GL11C.GL_CULL_FACE),
-                    GL11C.glIsEnabled(GL11C.GL_BLEND),
-                    GL11C.glIsEnabled(GL11C.GL_SCISSOR_TEST),
-                    GL11C.glGetInteger(GL11C.GL_DEPTH_FUNC),
-                    GL11C.glGetBoolean(GL11C.GL_DEPTH_WRITEMASK),
-                    new boolean[]{mask[0] != 0, mask[1] != 0, mask[2] != 0, mask[3] != 0});
-        }
-
-        void restore() {
-            GlStateManager._glBindVertexArray(0);
-            BufferUploader.invalidate();
-            GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, 0);
-            GlStateManager._glUseProgram(this.program);
-            GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
-            GlStateManager._bindTexture(this.texture0);
-            GlStateManager._activeTexture(this.activeTexture);
-            GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, this.drawFramebuffer);
-            GlStateManager._glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, this.readFramebuffer);
-            GlStateManager._viewport(this.viewport[0], this.viewport[1], this.viewport[2], this.viewport[3]);
-            GlStateManager._scissorBox(this.scissorBox[0], this.scissorBox[1], this.scissorBox[2], this.scissorBox[3]);
-            if (this.scissor) GlStateManager._enableScissorTest(); else GlStateManager._disableScissorTest();
-            if (this.depthTest) GlStateManager._enableDepthTest(); else GlStateManager._disableDepthTest();
-            if (this.cull) GlStateManager._enableCull(); else GlStateManager._disableCull();
-            if (this.blend) GlStateManager._enableBlend(); else GlStateManager._disableBlend();
-            GlStateManager._depthFunc(this.depthFunc);
-            GlStateManager._depthMask(this.depthMask);
-            GlStateManager._colorMask(this.colorMask[0], this.colorMask[1], this.colorMask[2], this.colorMask[3]);
-        }
     }
 }

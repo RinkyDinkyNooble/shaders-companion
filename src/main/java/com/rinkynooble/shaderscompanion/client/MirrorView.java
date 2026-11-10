@@ -165,6 +165,9 @@ final class MirrorView {
             status = describePlane();
             return true;
         } finally {
+            if (!active) {
+                MirrorShadows.clear();
+            }
             cpuNanos = System.nanoTime() - start;
         }
     }
@@ -329,6 +332,11 @@ final class MirrorView {
         packMatrix.set(drawMatrix).translate(-origin.x, -origin.y, -origin.z);
         frustum.set(packMatrix);
         maxDistanceSq = maxDistance * maxDistance;
+        if (Config.MIRROR_SHADOWS.get()) {
+            MirrorShadows.set(packMatrix, normal, (float) heightAbove);
+        } else {
+            MirrorShadows.clear();
+        }
 
         var target = mc.getMainRenderTarget();
         int scale = Config.MIRROR_SCALE.get();
@@ -339,7 +347,8 @@ final class MirrorView {
     private static String describePlane() {
         String name = axis == 0 ? "x" : axis == 1 ? "y" : "z";
         String next = rival == NO_PLANE ? "" : String.format(", next %s = %.3f %.2f", "xyz".charAt(keyAxis(rival)), keyCoordinate(rival), rivalShare);
-        return String.format("mirroring %s = %.3f (%s side, share %.2f%s), %d x %d px, %d switches", name, coordinate, side > 0 ? "+" : "-", shownShare, next, width, height, switches);
+        return String.format("mirroring %s = %.3f (%s side, share %.2f%s), %d x %d px, %d switches, %d shadow casters kept for it", name, coordinate,
+                side > 0 ? "+" : "-", shownShare, next, width, height, switches, MirrorShadows.keptLastFrame);
     }
 
     static boolean active() {
@@ -405,11 +414,12 @@ final class MirrorView {
 
     /** Marks the mirror view unusable (size 0) after a frame without drawing. */
     static void unlink() {
+        active = false;
+        MirrorShadows.clear();
         if (!linked) {
             return;
         }
         linked = false;
-        active = false;
         if (infoBuffer == null) {
             return;
         }

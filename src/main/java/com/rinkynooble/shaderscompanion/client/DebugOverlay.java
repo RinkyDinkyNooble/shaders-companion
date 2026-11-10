@@ -10,7 +10,10 @@ import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraftforge.client.gui.overlay.ForgeGui;
 
-/** {@code /shaderscompanion debug} shows the cube faces in a corner; {@code /shaderscompanion status} prints the state. */
+/**
+ * {@code /shaderscompanion debug} shows the cube faces in a corner, {@code status} prints the state, {@code dump} saves
+ * the views as pictures, and {@code on} and {@code off} start and stop all drawing.
+ */
 public final class DebugOverlay {
     private static boolean visible;
 
@@ -23,6 +26,8 @@ public final class DebugOverlay {
 
     static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("shaderscompanion")
+                .then(Commands.literal("on").executes(context -> setEnabled(context.getSource(), true)))
+                .then(Commands.literal("off").executes(context -> setEnabled(context.getSource(), false)))
                 .then(Commands.literal("debug").executes(context -> {
                     visible = !visible;
                     context.getSource().sendSuccess(() -> Component.literal("Shaders Companion view " + (visible ? "shown" : "hidden")), false);
@@ -48,8 +53,18 @@ public final class DebugOverlay {
                 })));
     }
 
+    /** Turns all of the mod's drawing on or off, now and in the config file. */
+    private static int setEnabled(CommandSourceStack source, boolean enabled) {
+        Config.ENABLED.set(enabled);
+        Config.ENABLED.save();
+        source.sendSuccess(() -> Component.literal(enabled
+                ? "Shaders Companion on: the extra views are drawn while the shader pack reads them"
+                : "Shaders Companion off: no extra views are drawn, and reflections fall back to the shader pack's own"), false);
+        return 1;
+    }
+
     public static String[] statusLines() {
-        String gpu = CubeView.gpuNanos < 0 ? "n/a" : String.format("%.2f ms", CubeView.gpuNanos / 1.0e6);
+        String gpu = GpuTimer.nanos < 0 ? "n/a" : String.format("%.2f ms", GpuTimer.nanos / 1.0e6);
         return new String[]{
                 "Shaders Companion: " + (CubeView.hookCalled ? CubeView.status : "frame hook not running (another mod may block it)"),
                 String.format("Faces %d px, %d per frame; CPU %.2f ms (entities %.2f, mirror view %.2f + plane search %.2f), GPU %s", CubeView.faceSize,

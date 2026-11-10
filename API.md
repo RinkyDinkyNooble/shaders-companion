@@ -102,6 +102,10 @@ The view is then drawn from the camera mirrored in that plane, with the main vie
 
 No mirror view is drawn while the camera is under water or when no reflecting surface covers about 1% of the screen.
 
+### Shadows
+
+Oculus draws into a pack's shadow map only what can cast a shadow into the main view, unless the pack sets `shadow.culling = false`. While a mirror view is drawn, the mod (0.6.1) also keeps whatever can cast a shadow into the mirror view (`mirrorShadows` in the config), within the pack's shadow distance, so a pack can look the mirror view's surfaces up in its shadow map like the screen's. The cube has no such help: its surfaces behind the camera may be missing from the shadow map.
+
 ### Contents
 
 `mirror_albedo` (RGBA8), `mirror_data` (RGBA16) and `mirror_distance` (R32F) hold the same fields as the cube's textures, one texel per pixel of the view (`width` x `height` from the info texture; 1 x 1 before the first mirror view). The distance is measured from the mirrored camera.
@@ -122,6 +126,7 @@ A pixel uses the mirror view when its position lies on the plane (`abs(dot(plane
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
+- 0.6.1: the same protocols. The shadow pass keeps what can cast a shadow into the mirror view.
 - 0.4.1: the same protocols. Distant Horizons LODs carry their block and sky light the right way round (0.3.0 and 0.4.0 wrote them swapped).
 - Mirror view protocol 1 (0.4.0): first version.
 - Protocol 2 (0.3.0): `cube_data.b` tells blocks, entities and LODs apart; `cube_data.a` marks glowing entity layers; `cube_info` texel 7 w is the Distant Horizons range.
