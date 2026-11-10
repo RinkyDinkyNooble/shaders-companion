@@ -5,6 +5,10 @@ uniform float u_ClipDistance;  // LODs closer than this to the camera (horizonta
 uniform vec3 u_Camera;         // the camera relative to the view's origin
 uniform vec4 u_ClipPlane; // drawn where dot(xyz, position) + w >= 0 (the mirror view cuts away what is behind its mirror)
 
+// LODs this close in front of the mirror are cut too: Distant Horizons draws water a block high, up to 1/9 block
+// above the water surface the chunk terrain mirrors
+const float MIRROR_LOD_MARGIN = 0.25;
+
 uniform float u_LogDepth; // 1 / log2(far / near): depth from the distance to the origin, even across the LOD range
 uniform float u_Near;
 
@@ -30,7 +34,7 @@ float pack88(float hi, float lo) {
 }
 
 void main() {
-    if (length(v_Position.xz - u_Camera.xz) < u_ClipDistance || v_Color.a < 0.05 || dot(u_ClipPlane.xyz, v_Position) + u_ClipPlane.w < 0.0) {
+    if (length(v_Position.xz - u_Camera.xz) < u_ClipDistance || v_Color.a < 0.05 || dot(u_ClipPlane.xyz, v_Position) + u_ClipPlane.w < MIRROR_LOD_MARGIN) {
         discard;
     }
     vec2 oct = octEncode(v_Normal);

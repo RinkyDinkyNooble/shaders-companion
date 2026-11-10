@@ -65,6 +65,15 @@ minecraft {
             if (project.hasProperty('devPitch')) {
                 property 'shaderscompanion.devPitch', project.property('devPitch')
             }
+            // -PdevYaw=90: which way the ocean scene looks, in degrees (by default the way the ocean runs farthest).
+            if (project.hasProperty('devYaw')) {
+                property 'shaderscompanion.devYaw', project.property('devYaw')
+            }
+            // -PdevSize=1920x1009: the game window's size (854 x 480 by default).
+            if (project.hasProperty('devSize')) {
+                var size = project.property('devSize').toString().split('x')
+                args '--width', size[0], '--height', size[1]
+            }
         }
     }
 }

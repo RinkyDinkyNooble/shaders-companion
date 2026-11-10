@@ -8,10 +8,14 @@ import com.rinkynooble.shaderscompanion.client.DebugOverlay;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.tags.BiomeTags;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.LevelSettings;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.WorldDataConfiguration;
 import net.minecraft.world.level.levelgen.WorldOptions;
 import net.minecraft.world.level.levelgen.presets.WorldPresets;
@@ -20,6 +24,8 @@ import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+import org.lwjgl.opengl.GL15C;
+import org.lwjgl.opengl.GL33C;
 
 /**
  * Dev-run check, never shipped (gradlew runClient -PdevDump=N, see README). The client makes a fresh world and then:
@@ -44,13 +50,21 @@ import net.minecraftforge.fml.common.Mod;
  * <li>-PdevScene=grass: the black glass wall in front of a lawn of grass (plants that sway with the shader pack), with
  * two "-on" screenshots a few frames apart and an "-off" one. The grass in the glass should look the same in both
  * "-on" shots, with no patches.</li>
+ * <li>-PdevScene=match: a black glass wall seen at an angle, with bricks, logs, wool, leaves and a roof's shadow beside
+ * it in the morning sun, so the same surfaces show on screen and in the glass (shots "-on" and "-off"). For checking
+ * that reflections light surfaces as the screen does.</li>
+ * <li>-PdevScene=ocean: the nearest deep ocean, the camera about 2.7 blocks above the water (standing on a barrier) looking out to the horizon
+ * (-PdevPitch, 5 degrees down by default here; -PdevYaw, by default the way the ocean runs farthest), screenshotted with the mod drawing ("-on") and turned off ("-off").
+ * With Distant Horizons (-PdevDh -PdevWait=1400) the far water is LOD water: distant water should look the same in
+ * both shots, with no stripes.</li>
  * </ul>
  * -PdevQuit (without -PdevDump) logs the status at the title screen and quits: a quick check of the bundled shader
  * pack's install (the status line's last part, and Oculus's "Using shaderpack" line in the log).
  * <p>
  * In the default scene the log also describes three texels just below the horizon of the +X face: with Distant
  * Horizons (-PdevDh) they are LODs (id 49152 and up) lit by daylight (sky light 255, block light 0).
- * Logs the status every 10 seconds, so a run that never draws shows why.
+ * Logs the status every 10 seconds, so a run that never draws shows why, and the frame time and the GPU's time per
+ * frame (medians of the last 120 frames) at each screenshot.
  */
 @Mod.EventBusSubscriber(modid = ShadersCompanion.MOD_ID, value = Dist.CLIENT)
 public final class DevRun {
@@ -66,6 +80,15 @@ public final class DevRun {
     private static int phaseTick;
     private static int ticks;
     private static String prefix = "devrun";
+    // Frame timing: GPU time between timestamps at the start and end of each frame (read 4 frames later), and the
+    // time between frame starts
+    private static final int TIMED_FRAMES = 120;
+    private static final int[] frameQueries = new int[8];
+    private static final double[] gpuMillis = new double[TIMED_FRAMES];
+    private static final double[] frameMillis = new double[TIMED_FRAMES];
+    private static int framesTimed;
+    private static int frameSlot;
+    private static long lastFrameStart;
 
     private DevRun() {
     }
@@ -90,6 +113,46 @@ public final class DevRun {
     }
 
     @SubscribeEvent
+    public static void onRenderTick(TickEvent.RenderTickEvent event) {
+        if (DUMP_FRAMES <= 0 || phase < 0) {
+            return;
+        }
+        if (frameQueries[0] == 0) {
+            GL15C.glGenQueries(frameQueries);
+        }
+        int slot = frameSlot % 4;
+        if (event.phase == TickEvent.Phase.START) {
+            long now = System.nanoTime();
+            if (frameSlot >= 4) {
+                long start = GL33C.glGetQueryObjecti64(frameQueries[slot * 2], GL15C.GL_QUERY_RESULT);
+                long end = GL33C.glGetQueryObjecti64(frameQueries[slot * 2 + 1], GL15C.GL_QUERY_RESULT);
+                gpuMillis[framesTimed % TIMED_FRAMES] = (end - start) / 1.0E6;
+                frameMillis[framesTimed % TIMED_FRAMES] = (now - lastFrameStart) / 1.0E6;
+                framesTimed++;
+            }
+            lastFrameStart = now;
+            GL33C.glQueryCounter(frameQueries[slot * 2], GL33C.GL_TIMESTAMP);
+        } else {
+            GL33C.glQueryCounter(frameQueries[slot * 2 + 1], GL33C.GL_TIMESTAMP);
+            frameSlot++;
+        }
+    }
+
+    private static double median(double[] values) {
+        int n = Math.min(framesTimed, values.length);
+        if (n == 0) {
+            return 0.0;
+        }
+        double[] sorted = java.util.Arrays.copyOf(values, n);
+        java.util.Arrays.sort(sorted);
+        return sorted[n / 2];
+    }
+
+    private static String frameTiming() {
+        return String.format("frame %.2f ms, GPU %.2f ms (medians of the last %d frames)", median(frameMillis), median(gpuMillis), Math.min(framesTimed, TIMED_FRAMES));
+    }
+
+    @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (DUMP_FRAMES <= 0 || phase < 0 || event.phase != TickEvent.Phase.END) {
             return;
@@ -103,7 +166,9 @@ public final class DevRun {
         boolean mobs = SCENE.equals("mobs") || mirror;
         boolean corner = SCENE.equals("corner");
         boolean grass = SCENE.equals("grass");
-        boolean glass = mirror || corner || grass;
+        boolean glass = mirror || corner || grass || SCENE.equals("match");
+        boolean ocean = SCENE.equals("ocean");
+        boolean match = SCENE.equals("match");
         if (phase == 0 && mc.player != null && CubeView.framesDrawn() >= START_FRAME) {
             mc.player.getAbilities().flying = true;
             mc.player.onUpdateAbilities();
@@ -119,6 +184,42 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the pool scene");
+            } else if (ocean) {
+                mc.options.hideGui = true;
+                for (String command : new String[]{"time set noon", "weather clear", "gamerule doDaylightCycle false"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                MinecraftServer server = mc.getSingleplayerServer();
+                BlockPos from = mc.player.blockPosition();
+                int pitch = Integer.getInteger("shaderscompanion.devPitch", 5);
+                int fixedYaw = Integer.getInteger("shaderscompanion.devYaw", -1);
+                server.execute(() -> {
+                    var found = server.overworld().findClosestBiome3d(biome -> biome.is(BiomeTags.IS_DEEP_OCEAN), from, 6400, 32, 64);
+                    BlockPos at = found == null ? from : found.getFirst();
+                    // Without -PdevYaw, look the way the ocean runs farthest (by biome, without generating chunks)
+                    int yaw = fixedYaw;
+                    if (yaw < 0) {
+                        int best = -1;
+                        for (int candidate = 0; candidate < 360; candidate += 45) {
+                            double dx = -Math.sin(Math.toRadians(candidate));
+                            double dz = Math.cos(Math.toRadians(candidate));
+                            int run = 0;
+                            while (run < 48 && server.overworld().getBiome(at.offset((int) (dx * 16 * (run + 1)), 0, (int) (dz * 16 * (run + 1)))).is(BiomeTags.IS_OCEAN)) {
+                                run++;
+                            }
+                            if (run > best) {
+                                best = run;
+                                yaw = candidate;
+                            }
+                        }
+                    }
+                    int finalYaw = yaw;
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run: deep ocean at {}, looking at yaw {}", at, yaw);
+                    // Placed by the server, which loads the chunk (a setblock command fails while it isn't loaded)
+                    server.overworld().setBlock(new BlockPos(at.getX(), 63, at.getZ()), Blocks.BARRIER.defaultBlockState(), 3);
+                    mc.tell(() -> mc.player.connection.sendCommand("tp @s " + (at.getX() + 0.5) + " 64 " + (at.getZ() + 0.5) + " " + finalYaw + " " + pitch));
+                });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the ocean scene");
             } else if (mobs) {
                 for (String command : new String[]{
                         "time set noon", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
@@ -139,6 +240,19 @@ public final class DevRun {
                     DebugOverlay.setVisible(true);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: summoned the mobs");
+            } else if (match) {
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set 2000", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~20 ~ -35 12",
+                        "fill ~-10 ~-1 ~-10 ~12 ~-1 ~10 minecraft:smooth_stone", "fill ~-10 ~ ~-10 ~12 ~8 ~10 minecraft:air",
+                        "fill ~-6 ~ ~6 ~3 ~4 ~6 minecraft:black_stained_glass",
+                        "fill ~6 ~ ~0 ~6 ~3 ~4 minecraft:bricks", "fill ~5 ~ ~-1 ~5 ~2 ~-1 minecraft:oak_log",
+                        "setblock ~4 ~ ~3 minecraft:white_wool", "setblock ~4 ~ ~1 minecraft:red_wool", "setblock ~4 ~1 ~1 minecraft:oak_leaves[persistent=true]",
+                        "fill ~3 ~3 ~0 ~6 ~3 ~4 minecraft:oak_planks", "fill ~2 ~ ~-2 ~2 ~1 ~-2 minecraft:cobblestone"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the match scene");
             } else if (corner || grass) {
                 mc.options.hideGui = true;
                 String[] commands = corner ? new String[]{
@@ -174,7 +288,7 @@ public final class DevRun {
             }
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || mobs || corner || grass ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || mobs || corner || grass || ocean || match ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             try {
                 prefix = CubeDump.dump();
                 int size = CubeView.faceSizeForChecks();
@@ -191,19 +305,20 @@ public final class DevRun {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, pig (+X): {}", CubeDump.describeTexel(size / 2, size * 7 / 20));
                     // The chest at +X 4, +Z 2 (face 0), its lid about 0.75 blocks below eye level
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, chest (+X): {}", CubeDump.describeTexel(size * 778 / 1000, size * 39 / 100));
-                } else if (!pool && !glass) {
+                } else if (!pool && !glass && !ocean) {
                     // Just below the horizon of the +X face (face 0: column 0, row 0): far ground, LODs with Distant Horizons
                     for (int percent : new int[]{46, 43, 40}) {
                         ShadersCompanion.LOGGER.info("Shaders Companion dev run, +X horizon {}%: {}", percent, CubeDump.describeTexel(size / 2, size * percent / 100));
                     }
                 }
-                Screenshot.grab(mc.gameDirectory, prefix + (pool || glass ? "-on.png" : "-main.png"), mc.getMainRenderTarget(), message -> { });
+                Screenshot.grab(mc.gameDirectory, prefix + (pool || glass || ocean ? "-on.png" : "-main.png"), mc.getMainRenderTarget(), message -> { });
             } catch (Exception e) {
                 ShadersCompanion.LOGGER.error("Shaders Companion dev run: saving failed", e);
             }
             ShadersCompanion.LOGGER.info("Shaders Companion dev run at {}: {}", mc.player == null ? "?" : mc.player.position(),
                     String.join(" | ", DebugOverlay.statusLines()));
-            if (pool || glass) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod on: {}", frameTiming());
+            if (pool || glass || ocean) {
                 Config.ENABLED.set(false);
                 phase = 2;
                 phaseTick = ticks;
@@ -212,6 +327,7 @@ public final class DevRun {
             }
         } else if (phase == 2 && ticks - phaseTick >= 40) {
             Screenshot.grab(mc.gameDirectory, prefix + "-off.png", mc.getMainRenderTarget(), message -> { });
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod off: {}", frameTiming());
             Config.ENABLED.set(true);
             finish(mc);
         }
