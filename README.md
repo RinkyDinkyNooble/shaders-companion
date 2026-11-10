@@ -2,7 +2,7 @@
 
 A client-side Forge mod for Minecraft 1.20.1 that gives shader packs a second view. Screen-space reflections can only show what is on screen; with this mod a shader pack can also reflect what is behind or beside the player.
 
-Status: prototype (0.6.1). It draws terrain, water, glass, mobs, players, block entities and Distant Horizons' far terrain into a cube around the camera, and a mirror view: the world mirrored in the largest water surface or glass wall on screen, at screen resolution, with your own player in it. ABZA Shader (bundled, 1.0.21) reads both for reflections.
+Status: prototype (0.6.2). It draws terrain, water, glass, mobs, players, block entities and Distant Horizons' far terrain into a cube around the camera, and a mirror view: the world mirrored in the largest water surface or glass wall on screen, at screen resolution, with your own player in it. ABZA Shader (bundled, 1.0.22) reads both for reflections.
 
 ## How it works
 
