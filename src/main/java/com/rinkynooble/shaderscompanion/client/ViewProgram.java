@@ -77,6 +77,11 @@ final class ViewProgram {
         GL20C.glUniform3f(this.camera, offset[0], offset[1], offset[2]);
     }
 
+    /** Moves the bound program's camera offset (the camera relative to the view's origin). */
+    void setCamera(float x, float y, float z) {
+        GL20C.glUniform3f(this.camera, x, y, z);
+    }
+
     private static int compile(int type, String name) {
         String source;
         try (InputStream in = ViewProgram.class.getResourceAsStream("/assets/shaderscompanion/shaders/" + name)) {

@@ -39,7 +39,7 @@ import org.lwjgl.system.MemoryUtil;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
 
 /**
- * Collects the entities near the camera as surface geometry for the cube, once per frame. Each entity is drawn through
+ * Collects the entities near the camera as surface geometry for the cube and the mirror view. Each entity is drawn through
  * Minecraft's own {@link EntityRenderDispatcher} into this buffer source, which keeps each render type's texture and
  * stores the vertices in the cube's entity layout instead of drawing them. Render types without a texture or with
  * another vertex layout (name tags, leads, enchantment glint, shadows) are dropped. Oculus only wraps its own buffer
@@ -88,11 +88,38 @@ final class EntityCapture implements MultiBufferSource {
     boolean mirrorPlayerDrawn;
 
     /**
-     * Draws the entities within range that a view can see ({@code seen}, boxes relative to the camera) into this frame's
-     * sinks, nearest first. In first person the local player is drawn only for the mirror view ({@code mirrorSeen}),
-     * first and marked as mirror-only: the cube's camera sits inside its head.
+     * Draws the local player in first person into the sinks, for the mirror view only ({@code mirrorSeen}, boxes
+     * relative to the camera): the cube's camera sits inside its head. The game doesn't draw that player itself, so
+     * this can run before the world is drawn and show this frame's pose.
      */
-    void collect(Minecraft mc, Camera camera, float partialTick, BoxTest seen, BoxTest mirrorSeen, double maxDistance, int maxCount, long budgetNanos) {
+    void collectLocalPlayer(Minecraft mc, Camera camera, float partialTick, BoxTest mirrorSeen) {
+        this.mirrorPlayerDrawn = false;
+        EntityRenderDispatcher dispatcher = mc.getEntityRenderDispatcher();
+        Entity entity = camera.getEntity();
+        if (mc.level == null || dispatcher.camera == null || entity == null || camera.isDetached() || entity.isInvisible()
+                || this.failures.getOrDefault(entity.getType(), 0) >= 3) {
+            return;
+        }
+        Vec3 origin = camera.getPosition();
+        AABB box = entity.getBoundingBoxForCulling().move(-origin.x, -origin.y, -origin.z).inflate(0.5);
+        if (!mirrorSeen.visible(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) {
+            return;
+        }
+        this.candidates.clear();
+        this.candidates.add(entity);
+        this.drawCandidates(dispatcher, origin, partialTick, 1, Long.MAX_VALUE);
+        this.mirrorPlayerDrawn = this.entitiesDrawn > 0;
+        this.entitiesDrawn = 0;
+        this.markMirrorOnly();
+    }
+
+    /**
+     * Draws the entities within range that a view can see ({@code seen}, boxes relative to the camera) into the sinks,
+     * nearest first, leaving out the local player in first person. Meant to run after the world is drawn, for the
+     * next frame's views: renderers that keep animation state per frame (GeckoLib's share one clock per model) then
+     * see the game's own draw first, as without this mod.
+     */
+    void collect(Minecraft mc, Camera camera, float partialTick, BoxTest seen, double maxDistance, int maxCount, long budgetNanos) {
         this.entitiesDrawn = 0;
         EntityRenderDispatcher dispatcher = mc.getEntityRenderDispatcher();
         if (mc.level == null || maxCount <= 0 || dispatcher.camera == null) {
@@ -102,16 +129,11 @@ final class EntityCapture implements MultiBufferSource {
         Entity cameraEntity = camera.getEntity();
         double maxDistanceSq = maxDistance * maxDistance;
         this.candidates.clear();
-        Entity mirrorOnly = null;
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity.isInvisible() || this.failures.getOrDefault(entity.getType(), 0) >= 3) {
                 continue;
             }
             if (entity == cameraEntity && !camera.isDetached()) {
-                AABB box = entity.getBoundingBoxForCulling().move(-origin.x, -origin.y, -origin.z).inflate(0.5);
-                if (mirrorSeen.visible(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) {
-                    mirrorOnly = entity;
-                }
                 continue;
             }
             double x = Mth.lerp(partialTick, entity.xOld, entity.getX()) - origin.x;
@@ -125,21 +147,22 @@ final class EntityCapture implements MultiBufferSource {
                 this.candidates.add(entity);
             }
         }
-        if (this.candidates.isEmpty() && mirrorOnly == null) {
+        if (this.candidates.isEmpty()) {
             return;
         }
         this.candidates.sort((a, b) -> Double.compare(a.distanceToSqr(origin), b.distanceToSqr(origin)));
-        if (mirrorOnly != null) {
-            this.candidates.add(0, mirrorOnly);
-        }
+        this.drawCandidates(dispatcher, origin, partialTick, maxCount, budgetNanos);
+    }
 
+    /** Draws the first candidates into the sinks, relative to {@code origin}, until the count or the time budget runs out. */
+    private void drawCandidates(EntityRenderDispatcher dispatcher, Vec3 origin, float partialTick, int maxCount, long budgetNanos) {
         Object2IntFunction<NamespacedId> entityIds = WorldRenderingSettings.INSTANCE.getEntityIds();
         boolean shadows = readShadowSetting(dispatcher);
         dispatcher.setRenderShadow(false);
         long start = System.nanoTime();
         try {
             PoseStack poseStack = new PoseStack();
-            int count = Math.min(maxCount + (mirrorOnly != null ? 1 : 0), this.candidates.size());
+            int count = Math.min(maxCount, this.candidates.size());
             for (int i = 0; i < count && System.nanoTime() - start < budgetNanos; i++) {
                 Entity entity = this.candidates.get(i);
                 double x = Mth.lerp(partialTick, entity.xOld, entity.getX()) - origin.x;
@@ -151,11 +174,7 @@ final class EntityCapture implements MultiBufferSource {
                 try {
                     this.currentLight = dispatcher.getPackedLightCoords(entity, partialTick);
                     dispatcher.render(entity, x, y, z, yaw, partialTick, poseStack, this, this.currentLight);
-                    if (entity != mirrorOnly) {
-                        this.entitiesDrawn++;
-                    } else {
-                        this.mirrorPlayerDrawn = true;
-                    }
+                    this.entitiesDrawn++;
                 } catch (Throwable t) {
                     this.rollBack(marks);
                     int failed = this.failures.merge(entity.getType(), 1, Integer::sum);
@@ -164,9 +183,6 @@ final class EntityCapture implements MultiBufferSource {
                                 failed == 3 ? "; leaving it out from now on" : "", t);
                     }
                     poseStack = new PoseStack();
-                }
-                if (entity == mirrorOnly) {
-                    this.markMirrorOnly();
                 }
             }
         } finally {
@@ -181,7 +197,7 @@ final class EntityCapture implements MultiBufferSource {
         }
     }
 
-    /** Starts a frame: empties every sink. */
+    /** Starts a collection: empties every sink. */
     void begin() {
         for (Sink sink : this.sinkList) {
             sink.vertices = 0;
@@ -303,7 +319,7 @@ final class EntityCapture implements MultiBufferSource {
     }
 
     /**
-     * Copies this frame's vertices to {@code target} (at least {@link #vertexCount()} * STRIDE bytes) and returns the
+     * Copies the collected vertices to {@code target} (at least {@link #vertexCount()} * STRIDE bytes) and returns the
      * batches, opaque ones first; each sink's mirror-only vertices (its first ones) form a batch of their own.
      */
     List<Batch> write(ByteBuffer target) {

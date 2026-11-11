@@ -116,8 +116,22 @@ public final class CubeView {
     /** The view being drawn: its cut plane and the camera relative to its origin (none and zero for the cube). */
     private static float[] viewClipPlane = NO_CLIP;
     private static float[] viewCamera = NO_OFFSET;
+    /** Mobs and block entities, collected after the world is drawn for the next frame's views. */
     private static final EntityCapture entities = new EntityCapture();
     private static List<EntityCapture.Batch> entityBatches = List.of();
+    /** The camera those vertices are relative to, and the frame hook's count when they were collected. */
+    private static Vec3 entityCamera = Vec3.ZERO;
+    private static long entityHookFrame = -2;
+    private static Object entityLevel;
+    /** The local player in first person, collected before the world is drawn for this frame's mirror view. */
+    private static final EntityCapture playerEntities = new EntityCapture();
+    private static List<EntityCapture.Batch> playerBatches = List.of();
+    private static long hookFrame;
+    /** Set while this frame drew views, so entities are collected after it for the next one. */
+    private static boolean collectAfterFrame;
+    private static boolean cubeWanted;
+    /** The offset that takes the collected entities' vertices to this frame's camera. */
+    private static final float[] entityOffset = {0.0F, 0.0F, 0.0F};
     private static boolean lodsCollected;
 
     // GL objects, created on first use.
@@ -133,6 +147,8 @@ public final class CubeView {
     private static int uEntityTranslucent;
     private static int entityVertexArray;
     private static int entityBuffer;
+    private static int playerVertexArray;
+    private static int playerBuffer;
     private static ByteBuffer entityStaging;
     private static ViewProgram lodProgram;
     private static int uLodModelOffset;
@@ -163,6 +179,8 @@ public final class CubeView {
      */
     public static void renderFrame(Camera camera, float partialTick, Matrix4f view) {
         hookCalled = true;
+        hookFrame++;
+        collectAfterFrame = false;
         if (failed) {
             return;
         }
@@ -179,6 +197,51 @@ public final class CubeView {
         }
         if ((drew & DREW_MIRROR) == 0) {
             MirrorView.unlink();
+        }
+        collectAfterFrame = drew != 0 && !failed;
+        cubeWanted = (drew & DREW_CUBE) != 0;
+    }
+
+    /**
+     * Called from the frame hook after the world is rendered: collects the mobs and block entities for the next
+     * frame's views. Drawing them here, after the game's own draw, leaves entity renderers that keep per-frame
+     * animation state as they are without this mod.
+     */
+    public static void collectEntitiesAfterFrame(Camera camera, float partialTick) {
+        if (!collectAfterFrame || failed) {
+            return;
+        }
+        collectAfterFrame = false;
+        Minecraft mc = Minecraft.getInstance();
+        GlState saved = null;
+        long start = System.nanoTime();
+        try {
+            SodiumWorldRenderer worldRenderer = SodiumWorldRenderer.instanceNullable();
+            RenderSectionManager sections = worldRenderer == null ? null : EmbeddiumAccess.sectionManager(worldRenderer);
+            if (mc.level == null || sections == null) {
+                return;
+            }
+            saved = GlState.capture();
+            // The faces the next frame draws, and this frame's mirror view (the next one's is close to it)
+            int faces = cubeWanted ? Config.FACES_PER_FRAME.get() : 0;
+            BoxTest seen = MirrorView.active() ? MirrorView.seen() : BoxTest.NONE;
+            for (int i = 0; i < faces; i++) {
+                int face = (nextFace + i) % 6;
+                seen = seen.or((minX, minY, minZ, maxX, maxY, maxZ) -> boxInFace(face, minX, minY, minZ, maxX, maxY, maxZ));
+            }
+            collectEntities(mc, camera, partialTick, seen, EmbeddiumAccess.regions(sections));
+            entityCamera = camera.getPosition();
+            entityHookFrame = hookFrame;
+            entityLevel = mc.level;
+        } catch (Throwable t) {
+            failed = true;
+            status = "stopped after an error: " + t;
+            ShadersCompanion.LOGGER.error("Shaders Companion stopped drawing after an error", t);
+        } finally {
+            if (saved != null) {
+                saved.restore();
+            }
+            entityNanos += System.nanoTime() - start;
         }
     }
 
@@ -249,11 +312,6 @@ public final class CubeView {
             RenderRegionManager regions = EmbeddiumAccess.regions(sections);
             requestBuilds(sections, regions, cameraPos, maxDistance);
             int faces = wantCube ? Config.FACES_PER_FRAME.get() : 0;
-            BoxTest cubeSeen = BoxTest.NONE;
-            for (int i = 0; i < faces; i++) {
-                int face = (nextFace + i) % 6;
-                cubeSeen = cubeSeen.or((minX, minY, minZ, maxX, maxY, maxZ) -> boxInFace(face, minX, minY, minZ, maxX, maxY, maxZ));
-            }
 
             float lodDistance = collectLods(mc);
             lodRange = (int) lodDistance;
@@ -263,7 +321,17 @@ public final class CubeView {
             lastMaxDistance = maxDistance;
             boolean mirror = wantMirror && MirrorView.update(mc, camera, view, new Matrix4f(RenderSystem.getProjectionMatrix()), NEAR, far, maxDistance);
             long entityStart = System.nanoTime();
-            collectEntities(mc, camera, partialTick, cubeSeen, mirror ? MirrorView.seen() : BoxTest.NONE, regions);
+            collectLocalPlayer(mc, camera, partialTick, mirror ? MirrorView.seen() : BoxTest.NONE);
+            // The mobs and block entities collected after the last frame, when that was the frame before this one
+            boolean current = entityHookFrame == hookFrame - 1 && entityLevel == mc.level;
+            if (!current) {
+                entityBatches = List.of();
+                entitiesDrawn = 0;
+                blockEntitiesDrawn = 0;
+            }
+            entityOffset[0] = (float) (entityCamera.x - cameraPos.x);
+            entityOffset[1] = (float) (entityCamera.y - cameraPos.y);
+            entityOffset[2] = (float) (entityCamera.z - cameraPos.z);
             entityNanos = System.nanoTime() - entityStart;
 
             setupDrawState(size);
@@ -414,6 +482,20 @@ public final class CubeView {
                 GL20C.glEnableVertexAttribArray(location);
             }
             GL15C.glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+            playerBuffer = GL15C.glGenBuffers();
+            playerVertexArray = GL30C.glGenVertexArrays();
+            GlStateManager._glBindVertexArray(playerVertexArray);
+            GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, playerBuffer);
+            GL20C.glVertexAttribPointer(0, 3, GL11C.GL_FLOAT, false, stride, 0L);
+            GL20C.glVertexAttribPointer(1, 4, GL11C.GL_UNSIGNED_BYTE, true, stride, 12L);
+            GL20C.glVertexAttribPointer(2, 2, GL11C.GL_FLOAT, false, stride, 16L);
+            GL30C.glVertexAttribIPointer(3, 2, GL11C.GL_UNSIGNED_SHORT, stride, 24L);
+            GL20C.glVertexAttribPointer(4, 3, GL11C.GL_BYTE, true, stride, 28L);
+            GL30C.glVertexAttribIPointer(5, 2, GL11C.GL_UNSIGNED_SHORT, stride, 32L);
+            for (int location = 0; location < 6; location++) {
+                GL20C.glEnableVertexAttribArray(location);
+            }
+            GL15C.glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
 
             lodProgram = new ViewProgram("cube_lod", LOD_ATTRIBUTES, new int[]{0, 1, 2});
             uLodModelOffset = lodProgram.uniform("u_ModelOffset");
@@ -485,22 +567,33 @@ public final class CubeView {
         GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
     }
 
+    /** Collects the local player in first person for this frame's mirror view (boxes relative to the camera) and uploads it. */
+    private static void collectLocalPlayer(Minecraft mc, Camera camera, float partialTick, BoxTest mirrorSeen) {
+        playerBatches = List.of();
+        mirrorPlayerDrawn = false;
+        playerEntities.begin();
+        if (mirrorSeen == BoxTest.NONE || !Config.ENTITIES.get()) {
+            return;
+        }
+        playerEntities.collectLocalPlayer(mc, camera, partialTick, mirrorSeen);
+        mirrorPlayerDrawn = playerEntities.mirrorPlayerDrawn;
+        playerBatches = upload(playerEntities, playerVertexArray, playerBuffer);
+    }
+
     /**
-     * Collects this frame's entities for the cube faces and the mirror view drawn this frame (boxes relative to the
-     * camera) and uploads them once; each view then draws them.
+     * Collects the mobs and block entities the given views can see (boxes relative to the camera) and uploads them
+     * once; the next frame's views then draw them.
      */
-    private static void collectEntities(Minecraft mc, Camera camera, float partialTick, BoxTest cubeSeen, BoxTest mirrorSeen, RenderRegionManager regions) {
+    private static void collectEntities(Minecraft mc, Camera camera, float partialTick, BoxTest seen, RenderRegionManager regions) {
         entityBatches = List.of();
         entitiesDrawn = 0;
         blockEntitiesDrawn = 0;
-        mirrorPlayerDrawn = false;
         entities.begin();
-        BoxTest seen = cubeSeen.or(mirrorSeen);
         if (seen == BoxTest.NONE) {
             return;
         }
         if (Config.ENTITIES.get()) {
-            entities.collect(mc, camera, partialTick, seen, mirrorSeen, Config.ENTITY_DISTANCE.get(), Config.MAX_ENTITIES.get(), ENTITY_BUDGET_NANOS);
+            entities.collect(mc, camera, partialTick, seen, Config.ENTITY_DISTANCE.get(), Config.MAX_ENTITIES.get(), ENTITY_BUDGET_NANOS);
         }
         if (Config.BLOCK_ENTITIES.get()) {
             entities.collectBlockEntities(mc, camera, partialTick, seen, regions.getLoadedRegions(),
@@ -508,10 +601,14 @@ public final class CubeView {
         }
         entitiesDrawn = entities.entitiesDrawn;
         blockEntitiesDrawn = entities.blockEntitiesDrawn;
-        mirrorPlayerDrawn = entities.mirrorPlayerDrawn;
-        int vertices = entities.vertexCount();
+        entityBatches = upload(entities, entityVertexArray, entityBuffer);
+    }
+
+    /** Uploads a collection's vertices to its buffer and returns its batches. */
+    private static List<EntityCapture.Batch> upload(EntityCapture capture, int vertexArray, int buffer) {
+        int vertices = capture.vertexCount();
         if (vertices == 0) {
-            return;
+            return List.of();
         }
         int bytes = vertices * EntityCapture.STRIDE;
         if (entityStaging == null || entityStaging.capacity() < bytes) {
@@ -520,18 +617,19 @@ public final class CubeView {
             }
             entityStaging = MemoryUtil.memAlloc(Math.max(bytes, 1 << 20));
         }
-        entityBatches = entities.write(entityStaging);
+        List<EntityCapture.Batch> batches = capture.write(entityStaging);
         entityStaging.position(0).limit(bytes);
-        GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, entityBuffer);
+        GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, buffer);
         GL15C.glBufferData(GL15C.GL_ARRAY_BUFFER, entityStaging, GL15C.GL_STREAM_DRAW);
         entityStaging.clear();
         int maxQuads = 0;
-        for (EntityCapture.Batch batch : entityBatches) {
+        for (EntityCapture.Batch batch : batches) {
             maxQuads = Math.max(maxQuads, batch.vertexCount() / 4);
         }
-        GlStateManager._glBindVertexArray(entityVertexArray);
+        GlStateManager._glBindVertexArray(vertexArray);
         GL15C.glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
         ensureIndexCapacity(maxQuads);
+        return batches;
     }
 
     /** Collects Distant Horizons' LOD buffers for this frame; returns the LOD range in blocks, 0 when there are none. */
@@ -555,20 +653,35 @@ public final class CubeView {
         }
     }
 
-    /** Draws the collected entities: opaque and glowing layers, or translucent ones; the mirror view also draws the mirror-only ones. */
+    /**
+     * Draws the collected entities: opaque and glowing layers, or translucent ones. The mobs and block entities were
+     * collected after the last frame, relative to its camera; the mirror view also draws the local player.
+     */
     private static void drawEntities(boolean translucent, boolean mirror) {
-        if (entityBatches.isEmpty()) {
+        if (entityBatches.isEmpty() && (!mirror || playerBatches.isEmpty())) {
             return;
         }
         use(entityProgram);
         GL20C.glUniform1i(uEntityTranslucent, translucent ? 1 : 0);
-        GlStateManager._glBindVertexArray(entityVertexArray);
         // Overlay layers (eyes, armour, clothing) sit exactly on the model's surface
         GlStateManager._depthFunc(GL11C.GL_LEQUAL);
+        if (mirror && !playerBatches.isEmpty()) {
+            GlStateManager._glBindVertexArray(playerVertexArray);
+            drawEntityBatches(playerBatches, translucent);
+        }
+        if (!entityBatches.isEmpty()) {
+            entityProgram.setCamera(viewCamera[0] + entityOffset[0], viewCamera[1] + entityOffset[1], viewCamera[2] + entityOffset[2]);
+            GlStateManager._glBindVertexArray(entityVertexArray);
+            drawEntityBatches(entityBatches, translucent);
+        }
+        GlStateManager._depthFunc(GL11C.GL_LESS);
+    }
+
+    private static void drawEntityBatches(List<EntityCapture.Batch> batches, boolean translucent) {
         TextureManager textures = Minecraft.getInstance().getTextureManager();
         ResourceLocation bound = null;
-        for (EntityCapture.Batch batch : entityBatches) {
-            if ((batch.kind() == EntityCapture.KIND_TRANSLUCENT) != translucent || (batch.mirrorOnly() && !mirror)) {
+        for (EntityCapture.Batch batch : batches) {
+            if ((batch.kind() == EntityCapture.KIND_TRANSLUCENT) != translucent) {
                 continue;
             }
             if (!batch.texture().equals(bound)) {
@@ -580,7 +693,6 @@ public final class CubeView {
             drawCalls++;
             quadsDrawn += batch.vertexCount() / 4;
         }
-        GlStateManager._depthFunc(GL11C.GL_LESS);
     }
 
     /** Draws Distant Horizons' LODs beyond the chunk terrain's range that a view can see (boxes relative to the camera). */

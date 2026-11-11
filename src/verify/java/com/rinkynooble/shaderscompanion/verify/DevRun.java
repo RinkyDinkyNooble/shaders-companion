@@ -5,6 +5,7 @@ import com.rinkynooble.shaderscompanion.client.Config;
 import com.rinkynooble.shaderscompanion.client.CubeDump;
 import com.rinkynooble.shaderscompanion.client.CubeView;
 import com.rinkynooble.shaderscompanion.client.DebugOverlay;
+import net.irisshaders.iris.Iris;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -54,9 +55,10 @@ import org.lwjgl.opengl.GL33C;
  * it in the morning sun, so the same surfaces show on screen and in the glass (shots "-on" and "-off"). For checking
  * that reflections light surfaces as the screen does.</li>
  * <li>-PdevScene=ocean: the nearest deep ocean, the camera about 2.7 blocks above the water (standing on a barrier) looking out to the horizon
- * (-PdevPitch, 5 degrees down by default here; -PdevYaw, by default the way the ocean runs farthest), screenshotted with the mod drawing ("-on") and turned off ("-off").
+ * (-PdevLift=6 stands that many blocks higher; -PdevPitch, 5 degrees down by default here; -PdevYaw, by default the way the ocean runs farthest), screenshotted with the mod drawing ("-on") and turned off ("-off").
  * With Distant Horizons (-PdevDh -PdevWait=1400) the far water is LOD water: distant water should look the same in
- * both shots, with no stripes.</li>
+ * both shots, with no stripes. -PdevToggle=WATER_WAVE_FILTER then times that shader pack option off and on in six
+ * alternating rounds (for costs measured while other programs use the GPU) instead of the "-off" shot.</li>
  * </ul>
  * <ul>
  * <li>-PdevScene=shadows: the black glass wall in front, and behind the camera pillars, a roof and two mobs in the low
@@ -64,6 +66,10 @@ import org.lwjgl.opengl.GL33C;
  * degrees right, then left; shots "-pose0" to "-pose2") and a fourth a step to the side ("-on"): every pillar must
  * keep its shadow in the glass in all of them. Then four timing rounds with the mirror view's shadows off and on.</li>
  * </ul>
+ * -PdevScene=move: the black glass wall seen at an angle across a lawn with plants, a fence post and pillars in the
+ * low morning sun, on foot: a still shot, two while strafing, one while walking forward and one settled after
+ * ("shaderscompanion-move-&lt;-PdevTag&gt;-still.png" and so on). The glass must look the same moving as standing still.
+ * <p>
  * -PdevScene=bright: a platform of white concrete, grass and stone bricks with a white wall, a quartz pillar and a
  * black glass wall, screenshotted at midnight and at noon, each with the mod drawing and turned off
  * ("shaderscompanion-bright-&lt;-PdevTag&gt;-night-on.png" and so on): for comparing the brightness of shader pack versions.
@@ -86,6 +92,11 @@ public final class DevRun {
     private static final String SCENE = System.getProperty("shaderscompanion.devScene", "");
     private static final int PITCH = Integer.getInteger("shaderscompanion.devPitch", 50);
     private static final int WAIT_TICKS = Integer.getInteger("shaderscompanion.devWait", 160);
+    /** A shader pack on/off option to time in alternating rounds after the ocean scene's shot (-PdevToggle). */
+    private static final String TOGGLE = System.getProperty("shaderscompanion.devToggle", "");
+    private static final int TOGGLE_ROUNDS = 6;
+    /** Ticks a round waits after the pack reloads before its timed ticks. */
+    private static final int TOGGLE_SETTLE_TICKS = 100;
     private static final int START_FRAME = 60;
     /** Ticks per timing round: long enough for the 120 timed frames to be all from that round. */
     private static final int TIMING_TICKS = 120;
@@ -187,6 +198,7 @@ public final class DevRun {
         boolean grass = SCENE.equals("grass");
         boolean shadows = SCENE.equals("shadows");
         boolean bright = SCENE.equals("bright");
+        boolean move = SCENE.equals("move");
         boolean glass = mirror || corner || grass || shadows || SCENE.equals("match");
         boolean ocean = SCENE.equals("ocean");
         boolean match = SCENE.equals("match");
@@ -219,6 +231,7 @@ public final class DevRun {
                 BlockPos from = mc.player.blockPosition();
                 int pitch = Integer.getInteger("shaderscompanion.devPitch", 5);
                 int fixedYaw = Integer.getInteger("shaderscompanion.devYaw", -1);
+                int lift = Integer.getInteger("shaderscompanion.devLift", 0);
                 server.execute(() -> {
                     var found = server.overworld().findClosestBiome3d(biome -> biome.is(BiomeTags.IS_DEEP_OCEAN), from, 6400, 32, 64);
                     BlockPos at = found == null ? from : found.getFirst();
@@ -242,8 +255,8 @@ public final class DevRun {
                     int finalYaw = yaw;
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run: deep ocean at {}, looking at yaw {}", at, yaw);
                     // Placed by the server, which loads the chunk (a setblock command fails while it isn't loaded)
-                    server.overworld().setBlock(new BlockPos(at.getX(), 63, at.getZ()), Blocks.BARRIER.defaultBlockState(), 3);
-                    mc.tell(() -> mc.player.connection.sendCommand("tp @s " + (at.getX() + 0.5) + " 64 " + (at.getZ() + 0.5) + " " + finalYaw + " " + pitch));
+                    server.overworld().setBlock(new BlockPos(at.getX(), 63 + lift, at.getZ()), Blocks.BARRIER.defaultBlockState(), 3);
+                    mc.tell(() -> mc.player.connection.sendCommand("tp @s " + (at.getX() + 0.5) + " " + (64 + lift) + " " + (at.getZ() + 0.5) + " " + finalYaw + " " + pitch));
                 });
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the ocean scene");
             } else if (mobs) {
@@ -279,6 +292,22 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the match scene");
+            } else if (move) {
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set 2000", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~20 ~ -35 8",
+                        "fill ~-14 ~-1 ~-16 ~16 ~-1 ~10 minecraft:smooth_stone", "fill ~-14 ~ ~-16 ~16 ~8 ~10 minecraft:air",
+                        "fill ~-10 ~ ~6 ~6 ~4 ~6 minecraft:black_stained_glass",
+                        "fill ~-10 ~-1 ~2 ~12 ~-1 ~4 minecraft:grass_block",
+                        "setblock ~1 ~ ~3 minecraft:grass", "setblock ~3 ~ ~4 minecraft:fern", "setblock ~-2 ~ ~3 minecraft:grass",
+                        "fill ~5 ~ ~2 ~5 ~1 ~2 minecraft:oak_fence", "setblock ~7 ~ ~3 minecraft:grass",
+                        "fill ~9 ~ ~-2 ~9 ~4 ~-2 minecraft:bricks", "fill ~-4 ~ ~-6 ~-4 ~3 ~-6 minecraft:oak_log",
+                        "fill ~4 ~ ~-9 ~4 ~4 ~-9 minecraft:red_wool",
+                        "summon minecraft:husk ~2 ~ ~-4 {NoAI:1b,PersistenceRequired:1b}"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the move scene");
             } else if (bright) {
                 mc.options.hideGui = true;
                 for (String command : new String[]{
@@ -340,6 +369,26 @@ public final class DevRun {
             mc.player.yRotO = yaw;
             if ((ticks - phaseTick) % 10 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, yaw {}: {}", String.format("%.1f", yaw), DebugOverlay.statusLines()[DebugOverlay.statusLines().length - 1]);
+            }
+        } else if (phase == 1 && move) {
+            // On foot: a still shot, two while strafing left, one while walking forward, and one settled after
+            int t = ticks - phaseTick;
+            int s = t - WAIT_TICKS;
+            String tag = System.getProperty("shaderscompanion.devTag", "run");
+            if (t == 20) {
+                mc.player.getAbilities().flying = false;
+                mc.player.onUpdateAbilities();
+            }
+            mc.options.keyLeft.setDown(s >= 0 && s < 26);
+            mc.options.keyUp.setDown(s >= 40 && s < 60);
+            String name = s == 0 ? "still" : s == 14 ? "strafe1" : s == 20 ? "strafe2" : s == 52 ? "forward" : s == 130 ? "settled" : null;
+            if (name != null) {
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-move-" + tag + "-" + name + ".png", mc.getMainRenderTarget(), message -> { });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, {} {} at {}: {}", tag, name, mc.player.position(), DebugOverlay.statusLines()[DebugOverlay.statusLines().length - 1]);
+            }
+            if (s == 131) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod on: {}", frameTiming());
+                finish(mc);
             }
         } else if (phase == 1 && bright) {
             // Midnight with the mod drawing and turned off, then noon the same way
@@ -411,7 +460,13 @@ public final class DevRun {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run at {}: {}", mc.player == null ? "?" : mc.player.position(),
                     String.join(" | ", DebugOverlay.statusLines()));
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod on: {}", frameTiming());
-            if (shadows) {
+            if (ocean && !TOGGLE.isEmpty()) {
+                // Timing rounds with the pack's option off, on, off, on...
+                timingRound = 0;
+                setPackOption(false);
+                phase = 4;
+                phaseTick = ticks;
+            } else if (shadows) {
                 // Four timing rounds first: the mirror view's shadows off, on, off, on
                 Config.MIRROR_SHADOWS.set(false);
                 timingRound = 0;
@@ -434,11 +489,30 @@ public final class DevRun {
                 Config.ENABLED.set(false);
                 phase = 2;
             }
+        } else if (phase == 4 && ticks - phaseTick >= TOGGLE_SETTLE_TICKS + TIMING_TICKS) {
+            boolean on = timingRound % 2 == 1;
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with {} {}: {}", TOGGLE, on ? "on" : "off", frameTiming());
+            phaseTick = ticks;
+            if (++timingRound < TOGGLE_ROUNDS) {
+                setPackOption(!on);
+            } else {
+                finish(mc);
+            }
         } else if (phase == 2 && ticks - phaseTick >= 40) {
             Screenshot.grab(mc.gameDirectory, prefix + "-off.png", mc.getMainRenderTarget(), message -> { });
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod off: {}", frameTiming());
             Config.ENABLED.set(true);
             finish(mc);
+        }
+    }
+
+    /** Sets the shader pack's on/off option named by -PdevToggle and reloads the pack. */
+    private static void setPackOption(boolean on) {
+        try {
+            Iris.getShaderPackOptionQueue().put(TOGGLE, Boolean.toString(on));
+            Iris.reload();
+        } catch (Exception e) {
+            ShadersCompanion.LOGGER.error("Shaders Companion dev run: setting {} failed", TOGGLE, e);
         }
     }
 

@@ -75,7 +75,7 @@ Faces are redrawn in turn (`facesPerFrame` in the config, 2 by default), so each
 ## What is drawn in the cube (0.4.0)
 
 - Terrain from Embeddium's built chunk meshes within the render distance: solid and cut-out blocks, then translucent blocks (water, glass) over them, nearest surface first (texels with alpha below 0.1, such as clear glass, are left out). Chunks Embeddium hasn't built yet are queued for building.
-- Entities within 48 blocks (mobs, other players, items, minecarts; at most 48, nearest first) and block entities within 24 blocks (chests, signs, banners, modded machines; at most 32), through Minecraft's own renderers with their textures and light. Name tags, sign text, enchantment glint and shadows are left out. The local player is left out in first person (the camera is inside its head).
+- Entities within 48 blocks (mobs, other players, items, minecarts; at most 48, nearest first) and block entities within 24 blocks (chests, signs, banners, modded machines; at most 32), through Minecraft's own renderers with their textures and light. Name tags, sign text, enchantment glint and shadows are left out. The local player is left out in first person (the camera is inside its head). Since 0.6.3 they are collected after the world is drawn and shown in the next frame's views, a frame late and moved to that frame's camera: entity renderers that keep animation state per frame (GeckoLib) then see the game's own draw first.
 - Distant Horizons LODs (3.3.2, when installed) beyond the chunk terrain, up to Distant Horizons' own range: its block colour, light and face direction, no textures.
 - Not yet: particles. The local player in first person is drawn only in the mirror view (the cube's camera sits inside its head).
 
@@ -108,7 +108,9 @@ Oculus draws into a pack's shadow map only what can cast a shadow into the main 
 
 ### Contents
 
-`mirror_albedo` (RGBA8), `mirror_data` (RGBA16) and `mirror_distance` (R32F) hold the same fields as the cube's textures, one texel per pixel of the view (`width` x `height` from the info texture; 1 x 1 before the first mirror view). The distance is measured from the mirrored camera.
+`mirror_albedo` (RGBA8), `mirror_data` (RGBA16) and `mirror_distance` (R32F) hold the same fields as the cube's textures, one texel per pixel of the view (`width` x `height` from the info texture; 1 x 1 before the first mirror view). The distance is measured from the mirrored camera (the view's origin, texel 2).
+
+The view's rays don't always start at that origin: with view bobbing on, Oculus puts the bobbing into the view matrix, so while the player walks the view's eye sits up to about 0.1 block off the origin (as the main view's eye sits off the camera position). Projecting a point into the view with the matrix is exact either way. To turn a texel back into a position, use the texel's own ray: with `m` the matrix for points relative to the origin (the matrix below with its last column replaced by `matrix * vec4(origin, 1.0)`), the eye is `e = inverse(m) * vec4(0.0, 0.0, 1.0, 0.0)`, `e.xyz / e.w`; the ray runs from it through the texel's point on the near plane (`inverse(m) * vec4(ndc.xy, -1.0, 1.0)`), and the surface is the point on it at the stored distance from the origin. A direction taken from the origin through the near-plane point is far off while walking (the near plane is 0.05 blocks from the eye).
 
 `mirror_info` (RGBA32F, 8 x 1), relative to this frame's camera, written every frame before the world renders:
 
@@ -126,6 +128,7 @@ A pixel uses the mirror view when its position lies on the plane (`abs(dot(plane
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
+- 0.6.3: the same protocols. Mobs and block entities are a frame late in the views (collected after the world is drawn); the local player in the mirror view is not.
 - 0.6.1: the same protocols. The shadow pass keeps what can cast a shadow into the mirror view.
 - 0.4.1: the same protocols. Distant Horizons LODs carry their block and sky light the right way round (0.3.0 and 0.4.0 wrote them swapped).
 - Mirror view protocol 1 (0.4.0): first version.

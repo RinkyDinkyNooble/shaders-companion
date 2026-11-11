@@ -69,6 +69,10 @@ minecraft {
             if (project.hasProperty('devYaw')) {
                 property 'shaderscompanion.devYaw', project.property('devYaw')
             }
+            // -PdevToggle=WATER_WAVE_FILTER: a shader pack on/off option the ocean scene times in alternating rounds.
+            if (project.hasProperty('devToggle')) {
+                property 'shaderscompanion.devToggle', project.property('devToggle')
+            }
             // -PdevTag=p19: a name for the bright scene's screenshots.
             if (project.hasProperty('devTag')) {
                 property 'shaderscompanion.devTag', project.property('devTag')
