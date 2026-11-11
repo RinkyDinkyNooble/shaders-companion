@@ -77,6 +77,7 @@ public final class DebugOverlay {
                                 : !Config.DISTANT_HORIZONS.get() ? "turned off in the config" : Lods.reason()),
                 String.format("Mirror view: %s%s", MirrorView.status, MirrorView.active() && CubeView.mirrorPlayerDrawn ? ", your player in it" : ""),
                 "Bundled shader pack: " + BundledPack.status
+                        + (Gl.mismatches == 0 ? "" : "; GL state out of step with Minecraft's record " + Gl.mismatches + " times (see the log)")
         };
     }
 

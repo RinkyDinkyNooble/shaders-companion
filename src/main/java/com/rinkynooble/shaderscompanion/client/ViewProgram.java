@@ -69,7 +69,7 @@ final class ViewProgram {
      * @param offset    the camera relative to the view's origin
      */
     void use(FloatBuffer matrix, float depth, float nearPlane, float[] plane, float[] offset) {
-        GlStateManager._glUseProgram(this.id);
+        Gl.useProgram(this.id);
         GL20C.glUniformMatrix4fv(this.viewProjection, false, matrix);
         GL20C.glUniform1f(this.logDepth, depth);
         GL20C.glUniform1f(this.near, nearPlane);

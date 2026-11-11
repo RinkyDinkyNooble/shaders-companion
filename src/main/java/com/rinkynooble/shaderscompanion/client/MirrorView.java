@@ -429,15 +429,21 @@ final class MirrorView {
             infoBuffer.put(0.0F);
         }
         infoBuffer.flip();
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
         upload();
-        GlStateManager._bindTexture(previous);
     }
 
+    /** Whether the info texture says a mirror view may be there (so {@link #unlink} would write to it). */
+    static boolean linked() {
+        return linked;
+    }
+
+    /** Writes the info texture and puts back the texture that was bound: this mod's textures never stay bound. */
     private static void upload() {
-        GlStateManager._bindTexture(CubeTextures.MIRROR_INFO.glId());
+        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+        Gl.bindTexture(CubeTextures.MIRROR_INFO.glId());
         int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
         GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, CubeTextures.MIRROR_INFO_WIDTH, 1, GL11C.GL_RGBA, GL11C.GL_FLOAT, infoBuffer);
         CompanionTexture.restorePixelBuffers(pixelBuffers);
+        Gl.bindTextureIfAlive(previous);
     }
 }

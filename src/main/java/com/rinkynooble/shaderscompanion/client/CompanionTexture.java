@@ -115,7 +115,7 @@ final class CompanionTexture extends AbstractTexture {
         }
         int id = this.glId();
         int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        GlStateManager._bindTexture(id);
+        Gl.bindTexture(id);
         int[] pixelBuffers = preparePixelTransfer();
         // Small textures (the info texture) start zero-filled, so nothing reads as a valid cube before the first frame
         ByteBuffer zeros = width * height <= 4096 ? MemoryUtil.memCalloc(width * height * 16) : null;
@@ -132,7 +132,7 @@ final class CompanionTexture extends AbstractTexture {
         GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_WRAP_S, GL12C.GL_CLAMP_TO_EDGE);
         GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_WRAP_T, GL12C.GL_CLAMP_TO_EDGE);
         GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL12C.GL_TEXTURE_MAX_LEVEL, 0);
-        GlStateManager._bindTexture(previous);
+        Gl.bindTextureIfAlive(previous);
         this.width = width;
         this.height = height;
     }

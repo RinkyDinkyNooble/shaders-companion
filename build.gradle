@@ -77,6 +77,14 @@ minecraft {
             if (project.hasProperty('devTag')) {
                 property 'shaderscompanion.devTag', project.property('devTag')
             }
+            // -PdevBoat=minecraft:oak_boat: the boat scene's vehicle (Superb Warfare's speed boat by default, with -PdevSbw).
+            if (project.hasProperty('devBoat')) {
+                property 'shaderscompanion.devBoat', project.property('devBoat')
+            }
+            // -PdevRain: rain from 30 ticks into a scene (the ocean scene's biome has rain).
+            if (project.hasProperty('devRain')) {
+                property 'shaderscompanion.devRain', 'true'
+            }
             // -PdevSize=1920x1009: the game window's size (854 x 480 by default).
             if (project.hasProperty('devSize')) {
                 var size = project.property('devSize').toString().split('x')
@@ -108,6 +116,19 @@ dependencies {
     compileOnly files("libs/distanthorizons-${distanthorizons_version}.jar")
     if (project.hasProperty('devDh')) {
         runtimeOnly fg.deobf("local:distanthorizons:${distanthorizons_version}")
+    }
+    // Superb Warfare is loaded in dev runs only with -PdevSbw (the boat scene): its jar without the nested ones, and
+    // the mods it needs (SimpleBedrockModel, GeckoLib, Curios, Cloth Config, Ponder, Flywheel) remapped, its script
+    // library as it is. Kotlin for Forge goes in run/mods. HANDOFF "Build and test" says where each jar comes from.
+    if (project.hasProperty('devSbw')) {
+        runtimeOnly fg.deobf("local:superbwarfare:0.8.9.2")
+        runtimeOnly fg.deobf("local:simplebedrockmodel:2.5.1")
+        runtimeOnly fg.deobf("local:geckolib:4.8.4")
+        runtimeOnly fg.deobf("local:curios:5.14.1")
+        runtimeOnly fg.deobf("local:clothconfig:11.1.136")
+        runtimeOnly fg.deobf("local:ponder:1.0.91")
+        runtimeOnly fg.deobf("local:flywheel:1.0.5")
+        minecraftLibrary files('libs/rhino-1.8.1-SNAPSHOT.jar')
     }
 }
 

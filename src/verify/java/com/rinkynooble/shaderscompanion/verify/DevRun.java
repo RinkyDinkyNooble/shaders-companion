@@ -70,6 +70,16 @@ import org.lwjgl.opengl.GL33C;
  * low morning sun, on foot: a still shot, two while strafing, one while walking forward and one settled after
  * ("shaderscompanion-move-&lt;-PdevTag&gt;-still.png" and so on). The glass must look the same moving as standing still.
  * <p>
+ * -PdevScene=boat: stands beside a vehicle on a pool (-PdevBoat, Superb Warfare's speed boat by default, which needs
+ * -PdevSbw; -PdevBoat=superbwarfare:tiny_speedboat for the small one), rides it for three seconds, leaves it and
+ * returns: shots "shaderscompanion-boat-&lt;-PdevTag&gt;-before", "-riding", "-after-early", "-after", then
+ * "-after-noentities" (the mod's entities off), "-after-off" (the mod off) and "-after-on". With -PdevRain the scene
+ * moves to the nearest deep ocean, where it rains. Every shot must look the same with the mod on and off apart from
+ * reflections.
+ * <p>
+ * -PdevRain: rain from 30 ticks into any scene (it doesn't rain where the world starts; the ocean scene's biome has
+ * rain).
+ * <p>
  * -PdevScene=bright: a platform of white concrete, grass and stone bricks with a white wall, a quartz pillar and a
  * black glass wall, screenshotted at midnight and at noon, each with the mod drawing and turned off
  * ("shaderscompanion-bright-&lt;-PdevTag&gt;-night-on.png" and so on): for comparing the brightness of shader pack versions.
@@ -110,6 +120,12 @@ public final class DevRun {
     /** Ticks in the world without the mod drawing before a run gives up and logs why. */
     private static final int IDLE_TICKS = 300;
     private static String prefix = "devrun";
+    /** The boat scene's vehicle (-PdevBoat; Superb Warfare's speed boat needs -PdevSbw). */
+    private static final String BOAT = System.getProperty("shaderscompanion.devBoat", "superbwarfare:speedboat");
+    private static net.minecraft.world.phys.Vec3 boatStand;
+    private static float boatYaw;
+    private static float boatPitch;
+    private static volatile String boatSummon;
     // Frame timing: GPU time between timestamps at the start and end of each frame (read 4 frames later), and the
     // time between frame starts
     private static final int TIMED_FRAMES = 120;
@@ -199,9 +215,14 @@ public final class DevRun {
         boolean shadows = SCENE.equals("shadows");
         boolean bright = SCENE.equals("bright");
         boolean move = SCENE.equals("move");
+        boolean boat = SCENE.equals("boat");
         boolean glass = mirror || corner || grass || shadows || SCENE.equals("match");
         boolean ocean = SCENE.equals("ocean");
         boolean match = SCENE.equals("match");
+        if (phase == 1 && ticks - phaseTick == 30 && Boolean.getBoolean("shaderscompanion.devRain") && mc.player != null) {
+            // -PdevRain: rain for the rest of the run (needs a biome where it rains: the ocean scene's)
+            mc.player.connection.sendCommand("weather rain");
+        }
         if (phase == 0 && mc.player != null && CubeView.framesDrawn() < START_FRAME && ++worldTicks >= IDLE_TICKS) {
             // The mod never drew (a shader pack setting that reads none of its views, say): log why and quit
             ShadersCompanion.LOGGER.info("Shaders Companion dev run, nothing drawn after {} ticks in the world: {}", IDLE_TICKS, String.join(" | ", DebugOverlay.statusLines()));
@@ -292,6 +313,33 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the match scene");
+            } else if (boat && Boolean.getBoolean("shaderscompanion.devRain")) {
+                // In the rain: on the nearest deep ocean (it doesn't rain where the world starts), the boat summoned later
+                for (String command : new String[]{"time set 9000", "gamerule doDaylightCycle false", "gamerule doMobSpawning false"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                MinecraftServer server = mc.getSingleplayerServer();
+                BlockPos from = mc.player.blockPosition();
+                server.execute(() -> {
+                    var found = server.overworld().findClosestBiome3d(biome -> biome.is(BiomeTags.IS_DEEP_OCEAN), from, 6400, 32, 64);
+                    BlockPos at = found == null ? from : found.getFirst();
+                    server.overworld().setBlock(new BlockPos(at.getX(), 64, at.getZ()), Blocks.BARRIER.defaultBlockState(), 3);
+                    boatSummon = "summon " + BOAT + " " + (at.getX() + 3.5) + " 63 " + (at.getZ() + 7.5) + " {Energy:100000}";
+                    mc.tell(() -> mc.player.connection.sendCommand("tp @s " + (at.getX() + 0.5) + " 65 " + (at.getZ() + 0.5) + " 0 "
+                            + Integer.getInteger("shaderscompanion.devPitch", 25)));
+                });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the boat scene on the ocean");
+            } else if (boat) {
+                for (String command : new String[]{
+                        "time set 9000", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~30 ~ 0 " + Integer.getInteger("shaderscompanion.devPitch", 25),
+                        "fill ~-14 ~-5 ~-6 ~14 ~-4 ~24 minecraft:stone", "fill ~-13 ~-3 ~-5 ~13 ~-3 ~23 minecraft:water",
+                        "fill ~-14 ~-3 ~-6 ~14 ~-3 ~-6 minecraft:stone", "fill ~-14 ~-3 ~24 ~14 ~-3 ~24 minecraft:stone",
+                        "fill ~-14 ~-3 ~-6 ~-14 ~-3 ~24 minecraft:stone", "fill ~14 ~-3 ~-6 ~14 ~-3 ~24 minecraft:stone",
+                        "summon " + BOAT + " ~3 ~-2 ~7"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the boat scene");
             } else if (move) {
                 mc.options.hideGui = true;
                 for (String command : new String[]{
@@ -369,6 +417,49 @@ public final class DevRun {
             mc.player.yRotO = yaw;
             if ((ticks - phaseTick) % 10 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, yaw {}: {}", String.format("%.1f", yaw), DebugOverlay.statusLines()[DebugOverlay.statusLines().length - 1]);
+            }
+        } else if (phase == 1 && boat) {
+            // Stand beside the boat, ride it, leave it, and stand where the run began: shots before, riding and after,
+            // then after with the mod's entities off, with the mod off, and with it on again
+            int t = ticks - phaseTick;
+            int s = t - WAIT_TICKS;
+            String tag = System.getProperty("shaderscompanion.devTag", "run");
+            if (t == 40 && boatSummon != null) {
+                mc.player.connection.sendCommand(boatSummon);
+            }
+            if (t == 20) {
+                boatStand = mc.player.position();
+                boatYaw = mc.player.getYRot();
+                boatPitch = mc.player.getXRot();
+            }
+            String back = boatStand == null ? null : "tp @s " + boatStand.x + " " + boatStand.y + " " + boatStand.z + " " + boatYaw + " " + boatPitch;
+            // Driven forward for two seconds while riding
+            mc.options.keyUp.setDown(s >= 6 && s < 46);
+            if (s == 1) {
+                mc.player.connection.sendCommand("ride @s mount @e[type=" + BOAT + ",limit=1,sort=nearest]");
+            } else if (s == 61) {
+                mc.player.connection.sendCommand("ride @s dismount");
+            } else if (s == 63 && back != null) {
+                mc.player.connection.sendCommand(back);
+                mc.player.getAbilities().flying = true;
+                mc.player.onUpdateAbilities();
+            } else if (s == 121) {
+                Config.ENTITIES.set(false);
+            } else if (s == 161) {
+                Config.ENTITIES.set(true);
+                Config.ENABLED.set(false);
+            } else if (s == 201) {
+                Config.ENABLED.set(true);
+            }
+            String name = s == 0 ? "before" : s == 60 ? "riding" : s == 72 ? "after-early" : s == 120 ? "after" : s == 160 ? "after-noentities"
+                    : s == 200 ? "after-off" : s == 260 ? "after-on" : null;
+            if (name != null) {
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-boat-" + tag + "-" + name + ".png", mc.getMainRenderTarget(), message -> { });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, {} {} at {} (vehicle {}): {}", tag, name, mc.player.position(),
+                        mc.player.getVehicle(), String.join(" | ", DebugOverlay.statusLines()));
+            }
+            if (s == 261) {
+                finish(mc);
             }
         } else if (phase == 1 && move) {
             // On foot: a still shot, two while strafing left, one while walking forward, and one settled after

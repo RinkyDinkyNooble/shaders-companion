@@ -9,7 +9,10 @@ import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
 import org.lwjgl.system.MemoryStack;
 
-/** The GL state the mod's drawing changes, read before drawing and put back afterwards through GlStateManager. */
+/**
+ * The GL state the mod's drawing changes, read from GL before drawing and put back afterwards, in GL and in
+ * Minecraft's record alike (see {@link Gl}). From capture to restore texture unit 0 is the active one.
+ */
 record GlState(int drawFramebuffer, int readFramebuffer, int[] viewport, int[] scissorBox, int program, int activeTexture,
                int texture0, boolean depthTest, boolean cull, boolean blend, boolean scissor, int depthFunc, boolean depthMask,
                boolean[] colorMask) {
@@ -18,10 +21,12 @@ record GlState(int drawFramebuffer, int readFramebuffer, int[] viewport, int[] s
         GL11C.glGetIntegerv(GL11C.GL_VIEWPORT, viewport);
         int[] scissorBox = new int[4];
         GL11C.glGetIntegerv(GL11C.GL_SCISSOR_BOX, scissorBox);
-        int activeTexture = GlStateManager._getActiveTexture();
-        GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
+        int activeTexture = GL11C.glGetInteger(GL13C.GL_ACTIVE_TEXTURE);
+        GL13C.glActiveTexture(GL13C.GL_TEXTURE0);
         int texture0 = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        GlStateManager._activeTexture(activeTexture);
+        GL13C.glActiveTexture(activeTexture);
+        Gl.checkRecord(activeTexture, texture0);
+        Gl.activeTexture(GL13C.GL_TEXTURE0);
         byte[] mask = new byte[4];
         try (MemoryStack stack = MemoryStack.stackPush()) {
             var buffer = stack.malloc(4);
@@ -47,12 +52,13 @@ record GlState(int drawFramebuffer, int readFramebuffer, int[] viewport, int[] s
         GlStateManager._glBindVertexArray(0);
         BufferUploader.invalidate();
         GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, 0);
-        GlStateManager._glUseProgram(this.program);
-        GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
-        GlStateManager._bindTexture(this.texture0);
-        GlStateManager._activeTexture(this.activeTexture);
-        GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, this.drawFramebuffer);
-        GlStateManager._glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, this.readFramebuffer);
+        // Whatever was bound may be gone by now: entity renderers drawn in between can delete textures
+        Gl.useProgram(this.program != 0 && GL20C.glIsProgram(this.program) ? this.program : 0);
+        Gl.activeTexture(GL13C.GL_TEXTURE0);
+        Gl.bindTextureIfAlive(this.texture0);
+        Gl.activeTexture(this.activeTexture);
+        Gl.bindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, this.drawFramebuffer != 0 && GL30C.glIsFramebuffer(this.drawFramebuffer) ? this.drawFramebuffer : 0);
+        Gl.bindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, this.readFramebuffer != 0 && GL30C.glIsFramebuffer(this.readFramebuffer) ? this.readFramebuffer : 0);
         GlStateManager._viewport(this.viewport[0], this.viewport[1], this.viewport[2], this.viewport[3]);
         GlStateManager._scissorBox(this.scissorBox[0], this.scissorBox[1], this.scissorBox[2], this.scissorBox[3]);
         if (this.scissor) GlStateManager._enableScissorTest(); else GlStateManager._disableScissorTest();

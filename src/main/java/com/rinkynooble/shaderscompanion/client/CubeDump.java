@@ -41,7 +41,7 @@ public final class CubeDump {
             }
         } finally {
             CompanionTexture.restorePixelBuffers(pixelBuffers);
-            GlStateManager._bindTexture(previous);
+            Gl.bindTextureIfAlive(previous);
         }
         ShadersCompanion.LOGGER.info("Shaders Companion: cube saved as screenshots/{}-*.png", prefix);
         return prefix;
@@ -58,11 +58,11 @@ public final class CubeDump {
             FloatBuffer distance = MemoryUtil.memAllocFloat(width * height);
             java.nio.ByteBuffer albedo = MemoryUtil.memAlloc(width * height * 4);
             try {
-                GlStateManager._bindTexture(CubeTextures.DATA.glId());
+                Gl.bindTexture(CubeTextures.DATA.glId());
                 GL11C.glGetTexImage(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_SHORT, data);
-                GlStateManager._bindTexture(CubeTextures.DISTANCE.glId());
+                Gl.bindTexture(CubeTextures.DISTANCE.glId());
                 GL11C.glGetTexImage(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_RED, GL11C.GL_FLOAT, distance);
-                GlStateManager._bindTexture(CubeTextures.ALBEDO.glId());
+                Gl.bindTexture(CubeTextures.ALBEDO.glId());
                 GL11C.glGetTexImage(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, albedo);
                 int i = y * width + x;
                 int normal = data.get(i * 4) & 0xFFFF;
@@ -79,12 +79,12 @@ public final class CubeDump {
             }
         } finally {
             CompanionTexture.restorePixelBuffers(pixelBuffers);
-            GlStateManager._bindTexture(previous);
+            Gl.bindTextureIfAlive(previous);
         }
     }
 
     private static void saveColor(CompanionTexture texture, File file) throws IOException {
-        GlStateManager._bindTexture(texture.glId());
+        Gl.bindTexture(texture.glId());
         try (NativeImage image = new NativeImage(texture.width(), texture.height(), false)) {
             image.downloadTexture(0, false);
             image.flipY();
@@ -99,7 +99,7 @@ public final class CubeDump {
         int height = texture.height();
         FloatBuffer data = MemoryUtil.memAllocFloat(width * height);
         try (NativeImage image = new NativeImage(width, height, false)) {
-            GlStateManager._bindTexture(texture.glId());
+            Gl.bindTexture(texture.glId());
             GL11C.glGetTexImage(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_RED, GL11C.GL_FLOAT, data);
             float limit = Math.max(1.0F, CubeView.lastMaxDistance());
             for (int y = 0; y < height; y++) {

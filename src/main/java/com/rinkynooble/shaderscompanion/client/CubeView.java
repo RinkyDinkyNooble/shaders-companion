@@ -192,10 +192,22 @@ public final class CubeView {
             status = "stopped after an error: " + t;
             ShadersCompanion.LOGGER.error("Shaders Companion stopped drawing after an error", t);
         }
-        if ((drew & DREW_CUBE) == 0) {
-            unlink();
-        }
-        if ((drew & DREW_MIRROR) == 0) {
+        boolean cubeGone = (drew & DREW_CUBE) == 0;
+        boolean mirrorGone = (drew & DREW_MIRROR) == 0;
+        if (cubeGone && linked || mirrorGone && MirrorView.linked()) {
+            // Marking a view as gone writes its info texture: with the GL state saved, like the drawing
+            GlState saved = GlState.capture();
+            try {
+                if (cubeGone) {
+                    unlink();
+                }
+                if (mirrorGone) {
+                    MirrorView.unlink();
+                }
+            } finally {
+                saved.restore();
+            }
+        } else if (mirrorGone) {
             MirrorView.unlink();
         }
         collectAfterFrame = drew != 0 && !failed;
@@ -413,11 +425,11 @@ public final class CubeView {
             infoBuffer.put(0.0F).put(0.0F).put(0.0F).put(-1.0F);
         }
         infoBuffer.flip();
-        GlStateManager._bindTexture(CubeTextures.INFO.glId());
+        Gl.bindTexture(CubeTextures.INFO.glId());
         int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
         GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, CubeTextures.INFO_WIDTH, 1, GL11C.GL_RGBA, GL11C.GL_FLOAT, infoBuffer);
         CompanionTexture.restorePixelBuffers(pixelBuffers);
-        GlStateManager._bindTexture(previous);
+        Gl.bindTextureIfAlive(previous);
     }
 
     private static boolean checkVertexType(ChunkVertexType type) {
@@ -507,9 +519,9 @@ public final class CubeView {
                 GL20C.glEnableVertexAttribArray(location);
             }
             GlStateManager._glBindVertexArray(0);
-            GlStateManager._glUseProgram(program.id);
+            Gl.useProgram(program.id);
             GL20C.glUniform1i(program.uniform("u_BlockAtlas"), 0);
-            GlStateManager._glUseProgram(entityProgram.id);
+            Gl.useProgram(entityProgram.id);
             GL20C.glUniform1i(entityProgram.uniform("u_Texture"), 0);
 
             framebuffer = GL30C.glGenFramebuffers();
@@ -530,7 +542,7 @@ public final class CubeView {
             CubeTextures.INFO.allocate(CubeTextures.INFO_WIDTH, 1);
 
             int previousFramebuffer = GL11C.glGetInteger(GL30C.GL_FRAMEBUFFER_BINDING);
-            GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
+            Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
             GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, depthBuffer);
             GL30C.glRenderbufferStorage(GL30C.GL_RENDERBUFFER, GL30C.GL_DEPTH_COMPONENT24, width, height);
             GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, 0);
@@ -543,7 +555,7 @@ public final class CubeView {
             GL30C.glFramebufferRenderbuffer(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL30C.GL_RENDERBUFFER, depthBuffer);
             GL20C.glDrawBuffers(buffers);
             int complete = GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER);
-            GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, previousFramebuffer);
+            Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, previousFramebuffer);
             if (complete != GL30C.GL_FRAMEBUFFER_COMPLETE) {
                 throw new IllegalStateException("cube framebuffer incomplete: 0x" + Integer.toHexString(complete));
             }
@@ -556,7 +568,7 @@ public final class CubeView {
     }
 
     private static void setupDrawState(int size) {
-        GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
+        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
         GlStateManager._disableBlend();
         GlStateManager._disableCull();
         GlStateManager._enableDepthTest();
@@ -564,7 +576,7 @@ public final class CubeView {
         GlStateManager._depthMask(true);
         GlStateManager._colorMask(true, true, true, true);
         GlStateManager._enableScissorTest();
-        GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
+        Gl.activeTexture(GL13C.GL_TEXTURE0);
     }
 
     /** Collects the local player in first person for this frame's mirror view (boxes relative to the camera) and uploads it. */
@@ -680,19 +692,40 @@ public final class CubeView {
     private static void drawEntityBatches(List<EntityCapture.Batch> batches, boolean translucent) {
         TextureManager textures = Minecraft.getInstance().getTextureManager();
         ResourceLocation bound = null;
+        boolean skip = false;
         for (EntityCapture.Batch batch : batches) {
             if ((batch.kind() == EntityCapture.KIND_TRANSLUCENT) != translucent) {
                 continue;
             }
             if (!batch.texture().equals(bound)) {
-                AbstractTexture texture = textures.getTexture(batch.texture());
-                GlStateManager._bindTexture(texture.getId());
+                skip = !bindEntityTexture(textures, batch.texture());
                 bound = batch.texture();
+            }
+            if (skip) {
+                continue;
             }
             GL32C.glDrawElementsBaseVertex(GL11C.GL_TRIANGLES, batch.vertexCount() / 4 * 6, GL11C.GL_UNSIGNED_INT, 0L, batch.firstVertex());
             drawCalls++;
             quadsDrawn += batch.vertexCount() / 4;
         }
+    }
+
+    /**
+     * Binds an entity texture by name; false when there is none to draw with. The batches are a frame old, and a
+     * texture a mod made in memory (a health bar, a name plate) may have been released since: asking the texture
+     * manager for it the usual way would try to load it as a file, fail, and register the missing texture under its
+     * name. Only a texture that is registered, or that is a file the game hasn't used yet, is bound.
+     */
+    private static boolean bindEntityTexture(TextureManager textures, ResourceLocation location) {
+        AbstractTexture texture = textures.getTexture(location, null);
+        if (texture == null) {
+            if (Minecraft.getInstance().getResourceManager().getResource(location).isEmpty()) {
+                return false;
+            }
+            texture = textures.getTexture(location);
+        }
+        Gl.bindTexture(texture.getId());
+        return true;
     }
 
     /** Draws Distant Horizons' LODs beyond the chunk terrain's range that a view can see (boxes relative to the camera). */
@@ -759,7 +792,7 @@ public final class CubeView {
         int width = MirrorView.width;
         int height = MirrorView.height;
         ensureMirrorResources(width, height);
-        GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, mirrorFramebuffer);
+        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, mirrorFramebuffer);
         GlStateManager._viewport(0, 0, width, height);
         GlStateManager._scissorBox(0, 0, width, height);
         float[] zero = {0.0F, 0.0F, 0.0F, 0.0F};
@@ -800,7 +833,7 @@ public final class CubeView {
         CubeTextures.MIRROR_DATA.allocate(width, height);
         CubeTextures.MIRROR_DISTANCE.allocate(width, height);
         int previousFramebuffer = GL11C.glGetInteger(GL30C.GL_FRAMEBUFFER_BINDING);
-        GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, mirrorFramebuffer);
+        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, mirrorFramebuffer);
         GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, mirrorDepthBuffer);
         GL30C.glRenderbufferStorage(GL30C.GL_RENDERBUFFER, GL30C.GL_DEPTH_COMPONENT24, width, height);
         GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, 0);
@@ -812,7 +845,7 @@ public final class CubeView {
         // The programs' fourth output (the cube's debug preview) goes nowhere
         GL20C.glDrawBuffers(new int[]{GL30C.GL_COLOR_ATTACHMENT0, GL30C.GL_COLOR_ATTACHMENT1, GL30C.GL_COLOR_ATTACHMENT2, GL11C.GL_NONE});
         int complete = GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER);
-        GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, previousFramebuffer);
+        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, previousFramebuffer);
         if (complete != GL30C.GL_FRAMEBUFFER_COMPLETE) {
             throw new IllegalStateException("mirror framebuffer incomplete: 0x" + Integer.toHexString(complete));
         }
@@ -833,8 +866,8 @@ public final class CubeView {
     private static void drawTerrain(BoxTest seen, Vec3 camera, Vec3 origin, RenderRegionManager regions, boolean translucent) {
         use(program);
         GlStateManager._depthFunc(GL11C.GL_LESS);
-        GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
-        GlStateManager._bindTexture(Minecraft.getInstance().getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getId());
+        Gl.activeTexture(GL13C.GL_TEXTURE0);
+        Gl.bindTexture(Minecraft.getInstance().getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getId());
         GlStateManager._glBindVertexArray(vertexArray);
         GL15C.glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
 
@@ -1075,9 +1108,12 @@ public final class CubeView {
         }
         infoBuffer.put(NEAR).put(lastFar).put(lastMaxDistance).put(lodsCollected ? (float) lodRange : 0.0F);
         infoBuffer.flip();
-        GlStateManager._bindTexture(CubeTextures.INFO.glId());
+        // The texture that was bound is put back: this mod's textures never stay bound
+        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+        Gl.bindTexture(CubeTextures.INFO.glId());
         int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
         GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, CubeTextures.INFO_WIDTH, 1, GL11C.GL_RGBA, GL11C.GL_FLOAT, infoBuffer);
         CompanionTexture.restorePixelBuffers(pixelBuffers);
+        Gl.bindTextureIfAlive(previous);
     }
 }
