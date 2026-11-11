@@ -181,3 +181,43 @@ tasks.named('jar', Jar).configure {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
+
+// The mixin refmap is written only when the mixin classes are compiled, and deleted every time compileJava runs. An
+// incremental compile that recompiles nothing (a build after a run with -PdevSbw, which changes the classpath) left
+// the jar without it: 0.6.4 loaded, but its frame hook never attached outside the dev client. So always compile in
+// full, compile again when the refmap is gone, and stop the build if the jar's refmap is missing or doesn't name the
+// game's own methods.
+tasks.named('compileJava', JavaCompile).configure {
+    options.incremental = false
+    var refmap = new File(temporaryDir, "${mod_id}.refmap.json")
+    outputs.upToDateWhen { refmap.isFile() }
+}
+
+tasks.register('checkJar') {
+    dependsOn 'jar', 'reobfJar'
+    doLast {
+        var jarFile = tasks.named('jar', Jar).get().archiveFile.get().asFile
+        var refmapName = "${mod_id}.refmap.json"
+        var zip = new java.util.zip.ZipFile(jarFile)
+        try {
+            var entry = zip.getEntry(refmapName)
+            if (entry == null) {
+                throw new GradleException("${jarFile.name} has no ${refmapName}: its mixins would do nothing in the real game. Run gradlew clean build.")
+            }
+            var refmap = zip.getInputStream(entry).getText('UTF-8')
+            // GameRenderer.renderLevel and LevelRenderer.renderLevel, the frame hook's method and call
+            for (name in ['m_109089_', 'm_109599_']) {
+                if (!refmap.contains(name)) {
+                    throw new GradleException("${refmapName} in ${jarFile.name} doesn't map ${name}: the frame hook would not attach in the real game.")
+                }
+            }
+        } finally {
+            zip.close()
+        }
+        logger.lifecycle("checkJar: ${jarFile.name} has its mixin refmap.")
+    }
+}
+
+tasks.named('build').configure {
+    dependsOn 'checkJar'
+}
