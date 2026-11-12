@@ -2,7 +2,17 @@
 
 A client-side Forge mod for Minecraft 1.20.1 that gives shader packs a second view. Screen-space reflections can only show what is on screen; with this mod a shader pack can also reflect what is behind or beside the player.
 
-Status: prototype (0.6.2). It draws terrain, water, glass, mobs, players, block entities and Distant Horizons' far terrain into a cube around the camera, and a mirror view: the world mirrored in the largest water surface or glass wall on screen, at screen resolution, with your own player in it. ABZA Shader (bundled, 1.0.22) reads both for reflections.
+Version 0.6.5, the first public release. It draws terrain, water, glass, mobs, players, block entities and Distant Horizons' far terrain into a cube around the camera, and a mirror view: the world mirrored in the largest water surface or glass wall on screen, at screen resolution, with your own player in it. ABZA Shader (bundled, 1.0.23) reads both for reflections.
+
+![A wall of dark glass reflecting the player and the city behind them](curseforge/images/reflection-distant-horizons.jpg)
+
+| Without the mod | With the mod |
+|---|---|
+| ![A black glass wall without the mod](curseforge/images/mirror-without.jpg) | ![The same wall with the mod](curseforge/images/mirror-with.jpg) |
+
+## Install
+
+Put the jar in `mods` next to Oculus and Embeddium, start the game and choose "ABZA Shader.zip" under Options, Video Settings, Shader Packs. The mod is client only. Downloads are on CurseForge; the public description and changelog are in [curseforge/](curseforge/).
 
 ## How it works
 
@@ -55,7 +65,7 @@ Minecraft 1.20.1, Forge 47, Oculus 1.8.0, Embeddium 0.3.31; Distant Horizons 3.3
 
 ## Not yet
 
-Particles; textured Distant Horizons LODs; more than one mirror plane at a time; a second layer for water and glass, so tinted glass doesn't hide what is behind it in reflections.
+Guns from TaCZ and some modded armour in reflections; particles; textured Distant Horizons LODs; more than one mirror plane at a time; a second layer for water and glass, so tinted glass doesn't hide what is behind it in reflections.
 
 ## License
 
