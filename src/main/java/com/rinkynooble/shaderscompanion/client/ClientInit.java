@@ -24,6 +24,7 @@ public final class ClientInit {
     private static void onLevelUnload(LevelEvent.Unload event) {
         if (event.getLevel().isClientSide()) {
             CubeView.forgetWorld();
+            RainCover.forgetWorld();
         }
     }
 

@@ -7,7 +7,7 @@ import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL30C;
 
 /**
- * The textures shader packs read, by resource location (see API.md): the cube around the camera and the mirror view. A pack binds them with
+ * The textures shader packs read, by resource location (see API.md): the cube around the camera, the mirror view and the rain cover. A pack binds them with
  * {@code customTexture.<sampler> = shaderscompanion:<name>} in shaders.properties.
  */
 public final class CubeTextures {
@@ -34,6 +34,7 @@ public final class CubeTextures {
     public static final ResourceLocation MIRROR_BEHIND_ALBEDO_ID = id("mirror_behind_albedo");
     public static final ResourceLocation MIRROR_BEHIND_DATA_ID = id("mirror_behind_data");
     public static final ResourceLocation MIRROR_BEHIND_DISTANCE_ID = id("mirror_behind_distance");
+    public static final ResourceLocation RAIN_COVER_ID = id("rain_cover");
 
     static final CompanionTexture ALBEDO = new CompanionTexture(CompanionTexture.CUBE, GL11C.GL_RGBA8, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, GL11C.GL_LINEAR);
     static final CompanionTexture DATA = new CompanionTexture(CompanionTexture.CUBE, GL11C.GL_RGBA16, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_SHORT, GL11C.GL_NEAREST);
@@ -48,6 +49,8 @@ public final class CubeTextures {
     static final CompanionTexture MIRROR_BEHIND_ALBEDO = new CompanionTexture(CompanionTexture.MIRROR_BEHIND, GL11C.GL_RGBA8, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, GL11C.GL_LINEAR);
     static final CompanionTexture MIRROR_BEHIND_DATA = new CompanionTexture(CompanionTexture.MIRROR_BEHIND, GL11C.GL_RGBA16, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_SHORT, GL11C.GL_NEAREST);
     static final CompanionTexture MIRROR_BEHIND_DISTANCE = new CompanionTexture(CompanionTexture.MIRROR_BEHIND, GL30C.GL_R32F, GL11C.GL_RED, GL11C.GL_FLOAT, GL11C.GL_NEAREST);
+    /** The height rain falls to around the camera ({@link RainCover}). */
+    static final CompanionTexture RAIN_COVER = new CompanionTexture(CompanionTexture.RAIN, GL30C.GL_R32F, GL11C.GL_RED, GL11C.GL_FLOAT, GL11C.GL_NEAREST);
 
     private CubeTextures() {
     }
@@ -70,6 +73,7 @@ public final class CubeTextures {
         manager.register(MIRROR_BEHIND_ALBEDO_ID, MIRROR_BEHIND_ALBEDO);
         manager.register(MIRROR_BEHIND_DATA_ID, MIRROR_BEHIND_DATA);
         manager.register(MIRROR_BEHIND_DISTANCE_ID, MIRROR_BEHIND_DISTANCE);
+        manager.register(RAIN_COVER_ID, RAIN_COVER);
         INFO.allocate(INFO_WIDTH, 1);
         MIRROR_INFO.allocate(MIRROR_INFO_WIDTH, 1);
         // Until the mirror view is first drawn, its textures are 1 x 1, so a pack binding them never gets Minecraft's missing texture
@@ -79,6 +83,8 @@ public final class CubeTextures {
         MIRROR_BEHIND_ALBEDO.allocate(1, 1);
         MIRROR_BEHIND_DATA.allocate(1, 1);
         MIRROR_BEHIND_DISTANCE.allocate(1, 1);
-        ShadersCompanion.LOGGER.info("Shaders Companion: cube textures registered (protocol {}), mirror view textures (protocol {})", PROTOCOL, MIRROR_PROTOCOL);
+        RAIN_COVER.allocate(1, 1);
+        ShadersCompanion.LOGGER.info("Shaders Companion: cube textures registered (protocol {}), mirror view textures (protocol {}), rain cover (protocol {})",
+                PROTOCOL, MIRROR_PROTOCOL, RainCover.PROTOCOL);
     }
 }

@@ -1,4 +1,4 @@
-# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 2)
+# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 2, rain cover protocol 1)
 
 Shaders Companion draws two views for the active shader pack and hands them over as textures:
 
@@ -134,10 +134,27 @@ The mirror view as it was after its opaque surfaces (terrain, entities, LODs) an
 
 A pixel uses the mirror view when its position lies on the plane (`abs(dot(plane.xyz, p) + plane.w)` within a few hundredths of a block, more with distance for depth precision) and its geometry normal is the plane's. Other reflecting surfaces fall back to whatever the pack did before.
 
+## Rain cover (0.9.1)
+
+```properties
+customTexture.scRainCover = shaderscompanion:rain_cover
+```
+
+Where rain falls to: Minecraft's `MOTION_BLOCKING` heightmap, the one the game stops rain and its splashes at, for the 512 x 512 block columns around the camera. Glass and every other block that stops movement count, so a pack can keep the ground under a glass roof dry, which sky light can't tell (glass lets full sky light through).
+
+`R32F`, 512 x 513. The column at block coordinates `(x, z)` is at texel `(x & 511, z & 511)` (`texelFetch`; the window follows the camera without moving data). Read `int v = int(texel.r)`:
+
+- `texel.r < 0`: unknown (the column's chunk isn't loaded): fall back to whatever the pack did before.
+- `v >> 12` is a tag, `((x >> 9) & 15) | (((z >> 9) & 15) << 4)` of the column the texel holds; when it isn't the tag of the column you asked for, the texel holds a column 512 blocks away: unknown.
+- `(v & 4095) - 2048` is the lowest free height above the column's highest block that stops rain (Minecraft's `getFirstAvailable`). A surface point is in the rain when it is at or above that height minus half a block (the top of a bottom slab is half a block below it); test a point pushed a little off the surface along its normal, so side faces read the column in front of them.
+
+Row 512 is the header: texel 0 is 4242 (0 while the mod isn't writing it), texel 1 the protocol (1), texel 2 the window size (512). Check the texture's size first: without the mod, Oculus binds Minecraft's 16 x 16 missing texture. Chunks entering the window are read at once and every chunk again within 32 frames, for blocks placed or broken; written only while the pack binds it.
+
 ## Versions
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
+- 0.9.1: the same protocols. `rain_cover` (protocol 1): where rain falls to.
 - 0.9.0: the same protocols. `mirror_behind_*`: the mirror view's surfaces behind water and glass. The plane search follows rays going down past its 64 blocks to the water levels it has seen and the sea level, so a lake far below counts.
 - 0.8.0: the same protocols. The mirror's plane search runs in real time (as quick at 60 frames a second as at 260); mobs and block entities are collected for the whole mirror view, not only its drawn part; far ones are redrawn less often (`entityLod`).
 - 0.7.0: mirror view protocol 2: only the mirror's part of the view is drawn, -1 in the distance texture elsewhere; the view's size can change with `mirrorLod`. The plane is chosen ahead of the camera's turn.

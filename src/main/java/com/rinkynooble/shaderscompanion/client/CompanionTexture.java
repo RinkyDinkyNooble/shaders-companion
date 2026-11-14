@@ -22,9 +22,11 @@ final class CompanionTexture extends AbstractTexture {
     static final int MIRROR = 2;
     /** The mirror view's copy of what lies behind water and glass ({@link CubeTextures#MIRROR_BEHIND_ALBEDO}). */
     static final int MIRROR_BEHIND = 3;
+    /** Where rain falls to ({@link RainCover}). */
+    static final int RAIN = 4;
 
     /** Per group: how often a texture's id was asked for from outside the mod (render thread only). */
-    private static final long[] requests = new long[4];
+    private static final long[] requests = new long[5];
 
     private final int group;
     private final int internalFormat;

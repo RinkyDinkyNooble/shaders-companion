@@ -1,4 +1,4 @@
-// Shaders Companion reference functions: cube protocol 2, mirror view protocol 1 (see API.md).
+// Shaders Companion reference functions: cube protocol 2, mirror view protocol 2, rain cover protocol 1 (see API.md).
 // 0BSD: copy, change and ship freely.
 //
 // The cube (default; define SC_NO_CUBE to leave it out). Before including, declare:
@@ -11,6 +11,8 @@
 //   uniform sampler2D scMirrorData;
 //   uniform sampler2D scMirrorDistance;
 //   uniform sampler2D scMirrorInfo;
+// The rain cover (define SC_RAIN_COVER). Before including, declare:
+//   uniform sampler2D scRainCover;
 
 #ifndef SHADERS_COMPANION_GLSL
 #define SHADERS_COMPANION_GLSL
@@ -175,6 +177,35 @@ ScSurface sc_mirrorFetch(vec2 coord) {
     return s;
 }
 
+#endif
+
+#ifdef SC_RAIN_COVER
+const int SC_RAIN_PROTOCOL = 1;
+
+// True when the rain cover texture is the mod's and the mod is writing it
+bool sc_rainLinked() {
+    if (textureSize(scRainCover, 0) != ivec2(512, 513)) {
+        return false;
+    }
+    return abs(texelFetch(scRainCover, ivec2(0, 512), 0).r - 4242.0) < 0.5
+        && abs(texelFetch(scRainCover, ivec2(1, 512), 0).r - float(SC_RAIN_PROTOCOL)) < 0.5;
+}
+
+// The lowest free height above the highest block that stops rain in a block column, or -10000 when unknown (check
+// sc_rainLinked first)
+float sc_rainHeight(ivec2 column) {
+    float texel = texelFetch(scRainCover, column & 511, 0).r;
+    int v = int(texel);
+    int tag = ((column.x >> 9) & 15) | (((column.y >> 9) & 15) << 4);
+    return texel < 0.0 || (v >> 12) != tag ? -10000.0 : float((v & 4095) - 2048);
+}
+
+// 1 where rain reaches a surface point (world position, world-space normal), 0 under a roof, -1 when unknown
+float sc_rainReaches(vec3 worldPos, vec3 normal) {
+    vec3 p = worldPos + normal * 0.05;
+    float height = sc_rainHeight(ivec2(floor(p.xz)));
+    return height < -9999.0 ? -1.0 : float(p.y >= height - 0.5);
+}
 #endif
 
 #endif

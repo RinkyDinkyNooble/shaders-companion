@@ -81,6 +81,9 @@ import org.lwjgl.opengl.GL33C;
  * moves to the nearest deep ocean, where it rains. Every shot must look the same with the mod on and off apart from
  * reflections.
  * <p>
+ * -PdevScene=raincover -PdevRain: a smooth stone floor on the ocean, half under a glass roof, in the rain (with
+ * -PdevToggle=COMPANION_RAIN_COVER for the pack's rain cover off and on): only the open half should be wet and rippled.
+ * <p>
  * -PdevRain: rain from 30 ticks into any scene (it doesn't rain where the world starts; the ocean scene's biome has
  * rain).
  * <p>
@@ -247,6 +250,7 @@ public final class DevRun {
         boolean shore = SCENE.equals("shore");
         boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
+        boolean rainCover = SCENE.equals("raincover");
         if (phase == 1 && ticks - phaseTick == 30 && Boolean.getBoolean("shaderscompanion.devRain") && mc.player != null) {
             // -PdevRain: rain for the rest of the run (needs a biome where it rains: the ocean scene's)
             mc.player.connection.sendCommand("weather rain");
@@ -329,6 +333,33 @@ public final class DevRun {
                     mc.tell(() -> mc.player.connection.sendCommand("tp @s " + (at.getX() + 0.5) + " " + (64 + lift) + " " + (at.getZ() + 0.5) + " " + finalYaw + " " + pitch));
                 });
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the ocean scene");
+            } else if (rainCover) {
+                // A smooth stone floor on the nearest deep ocean (it rains there, with -PdevRain), its left half under a
+                // glass roof (plain glass near, light grey stained glass far), its right half open
+                mc.options.hideGui = true;
+                for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "gamerule doDaylightCycle false",
+                        "gamerule doMobSpawning false"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                MinecraftServer server = mc.getSingleplayerServer();
+                BlockPos from = mc.player.blockPosition();
+                server.execute(() -> {
+                    var found = server.overworld().findClosestBiome3d(biome -> biome.is(BiomeTags.IS_DEEP_OCEAN), from, 6400, 32, 64);
+                    BlockPos at = found == null ? from : found.getFirst();
+                    for (int dx = -8; dx <= 8; dx++) {
+                        for (int dz = 0; dz <= 16; dz++) {
+                            server.overworld().setBlock(new BlockPos(at.getX() + dx, 64, at.getZ() + dz), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
+                            if (dx >= 1) {
+                                server.overworld().setBlock(new BlockPos(at.getX() + dx, 69, at.getZ() + dz),
+                                        (dz < 8 ? Blocks.GLASS : Blocks.LIGHT_GRAY_STAINED_GLASS).defaultBlockState(), 3);
+                            }
+                        }
+                    }
+                    server.overworld().setBlock(new BlockPos(at.getX(), 66, at.getZ() - 4), Blocks.BARRIER.defaultBlockState(), 3);
+                    mc.tell(() -> mc.player.connection.sendCommand("tp @s " + (at.getX() + 0.5) + " 67 " + (at.getZ() - 3.5) + " 0 "
+                            + Integer.getInteger("shaderscompanion.devPitch", 20)));
+                });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the raincover scene");
             } else if (mobs) {
                 for (String command : new String[]{
                         "time set noon", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
