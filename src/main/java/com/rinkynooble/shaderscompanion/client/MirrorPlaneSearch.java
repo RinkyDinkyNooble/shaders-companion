@@ -1,5 +1,6 @@
 package com.rinkynooble.shaderscompanion.client;
 
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -37,6 +38,10 @@ import org.joml.Vector4f;
  * The search runs in real time, not per frame: rays per second and smoothing by time, so the mirror is as quick at 40
  * frames a second as at 200 (the rates were tuned at about 260 frames a second).
  * <p>
+ * Rays are traced block by block for RAY_DISTANCE blocks. A ray going down that reaches nothing in that distance is
+ * followed on to the water levels seen so far and the sea level, checked for solid blocks along the way, so a lake far
+ * below (seen from a tower) still counts.
+ * <p>
  * Screen positions here are in screen halves: -1 to 1 across the screen, as a tangent of the view's angle.
  */
 final class MirrorPlaneSearch {
@@ -58,6 +63,11 @@ final class MirrorPlaneSearch {
     /** How far ahead the camera's turn is followed when weighting the grid. */
     private static final float LOOKAHEAD_SECONDS = 0.2F;
     private static final double RAY_DISTANCE = 64.0;
+    /** Farthest a ray is followed to a water level, and the spacing of its checks for solid blocks on the way. */
+    private static final double FAR_WATER_DISTANCE = 512.0;
+    private static final double FAR_WATER_STEP = 16.0;
+    /** Water levels remembered for far rays (besides the sea level), the most recent first. */
+    private static final int WATER_LEVELS = 6;
     /**
      * A cell's weight falls from 1 at the screen's centre like a bell curve of this width (in half screens), down to
      * EDGE_WEIGHT, so the surface you look at wins over a larger one off to the side.
@@ -98,6 +108,7 @@ final class MirrorPlaneSearch {
     /** Each plane's smoothed share of the weighted grid. */
     private static final Map<Long, Float> scores = new HashMap<>();
     private static final Map<BlockState, Boolean> translucent = new IdentityHashMap<>();
+    private static final ArrayDeque<Double> waterLevels = new ArrayDeque<>();
     private static ClientLevel scoredLevel;
     private static int rayCursor;
     private static long lastFindNanos;
@@ -135,6 +146,7 @@ final class MirrorPlaneSearch {
     /** Forgets every plane seen, so the next frames start the search from nothing. */
     static void forget() {
         Arrays.fill(cellPlanes, NO_PLANE);
+        waterLevels.clear();
         lastForwardNanos = 0L;
         lastFindNanos = 0L;
         scores.clear();
@@ -164,11 +176,6 @@ final class MirrorPlaneSearch {
         lastFindNanos = now;
         lastStep = seconds;
         return seconds;
-    }
-
-    /** How far a value smoothed with a time constant moves towards its target in a step of this many seconds. */
-    static float follow(float seconds, float timeConstant) {
-        return 1.0F - (float) Math.exp(-seconds / timeConstant);
     }
 
     /** The time step of the last search, in seconds. */
@@ -296,7 +303,7 @@ final class MirrorPlaneSearch {
         lastForward.set(forward);
         lastForwardNanos = now;
         // Eased so a single uneven frame moves the weights only part way
-        float easing = follow(stepSeconds, EASING_SECONDS);
+        float easing = Smoothing.follow(stepSeconds, EASING_SECONDS);
         aheadX += (targetX - aheadX) * easing;
         aheadY += (targetY - aheadY) * easing;
         for (int cell = 0; cell < CELLS; cell++) {
@@ -324,9 +331,74 @@ final class MirrorPlaneSearch {
             float x = (((cell % GRID_X) + jx) / GRID_X * 2.0F - 1.0F) * REACH;
             float y = (((cell / GRID_X) + jy) / GRID_Y * 2.0F - 1.0F) * REACH;
             direction.set(x * tanX, y * tanY, -1.0F, 0.0F).mul(toWorld);
-            Vec3 end = cameraPos.add(new Vec3(direction.x, direction.y, direction.z).normalize().scale(RAY_DISTANCE));
+            Vec3 rayDir = new Vec3(direction.x, direction.y, direction.z).normalize();
+            Vec3 end = cameraPos.add(rayDir.scale(RAY_DISTANCE));
             BlockHitResult hit = mc.level.clip(new ClipContext(cameraPos, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.WATER, entity));
-            cellPlanes[cell] = hit.getType() == HitResult.Type.MISS ? NO_PLANE : reflectingPlane(mc, hit);
+            cellPlanes[cell] = hit.getType() == HitResult.Type.MISS ? farWater(mc.level, cameraPos, rayDir, farReach(mc)) : reflectingPlane(mc, hit);
+        }
+    }
+
+    /** How far rays are followed to far water: the chunk terrain's range, at most FAR_WATER_DISTANCE. */
+    private static double farReach(Minecraft mc) {
+        return Math.min(FAR_WATER_DISTANCE, mc.options.getEffectiveRenderDistance() * 16.0);
+    }
+
+    /**
+     * The plane of a water level a ray going down reaches past RAY_DISTANCE (within reach): the first level below the
+     * camera, of the remembered ones and the sea level, where the ray meets water; NO_PLANE when it meets anything solid
+     * first (checked every FAR_WATER_STEP blocks) or no water.
+     */
+    private static long farWater(ClientLevel level, Vec3 from, Vec3 rayDir, double reach) {
+        if (rayDir.y > -0.01) {
+            return NO_PLANE;
+        }
+        double seaSurface = level.getSeaLevel() - 1 + 8.0 / 9.0;
+        double checked = RAY_DISTANCE;
+        // The levels in the order the ray reaches them, highest first: each round takes the highest one below the last
+        double below = from.y;
+        while (true) {
+            double next = seaSurface < below ? seaSurface : Double.NEGATIVE_INFINITY;
+            for (double waterLevel : waterLevels) {
+                if (waterLevel < below && waterLevel > next) {
+                    next = waterLevel;
+                }
+            }
+            if (next == Double.NEGATIVE_INFINITY) {
+                return NO_PLANE;
+            }
+            below = next;
+            double t = (from.y - next) / -rayDir.y;
+            if (t > reach) {
+                return NO_PLANE;
+            }
+            if (t <= RAY_DISTANCE) {
+                continue;
+            }
+            for (; checked < t; checked += FAR_WATER_STEP) {
+                if (level.getBlockState(BlockPos.containing(from.add(rayDir.scale(checked)))).canOcclude()) {
+                    return NO_PLANE;
+                }
+            }
+            BlockPos at = BlockPos.containing(from.x + rayDir.x * t, next - 0.05, from.z + rayDir.z * t);
+            if (level.getFluidState(at).is(FluidTags.WATER)) {
+                return key(Direction.Axis.Y, 1, next);
+            }
+            if (level.getBlockState(at).canOcclude()) {
+                return NO_PLANE;
+            }
+            // Neither water nor solid at this level (air over lower ground): on down to the next one
+        }
+    }
+
+    /** Remembers a water level a ray hit, for far rays. */
+    private static void rememberWaterLevel(double surface) {
+        if (!waterLevels.isEmpty() && waterLevels.peekFirst() == surface) {
+            return;
+        }
+        waterLevels.remove(surface);
+        waterLevels.addFirst(surface);
+        if (waterLevels.size() > WATER_LEVELS) {
+            waterLevels.removeLast();
         }
     }
 
@@ -339,6 +411,7 @@ final class MirrorPlaneSearch {
         if (!fluid.isEmpty() && fluid.is(FluidTags.WATER)) {
             double surface = pos.getY() + fluid.getHeight(mc.level, pos);
             if (face == Direction.UP && Math.abs(location.y - surface) < 1.0E-3) {
+                rememberWaterLevel(surface);
                 return key(Direction.Axis.Y, 1, surface);
             }
         }
@@ -366,7 +439,7 @@ final class MirrorPlaneSearch {
     }
 
     private static void choosePlane(Vec3 cameraPos, float seconds) {
-        float smoothing = follow(seconds, SMOOTHING_SECONDS);
+        float smoothing = Smoothing.follow(seconds, SMOOTHING_SECONDS);
         scores.replaceAll((key, value) -> value * (1.0F - smoothing));
         for (int cell = 0; cell < CELLS; cell++) {
             if (cellPlanes[cell] != NO_PLANE) {

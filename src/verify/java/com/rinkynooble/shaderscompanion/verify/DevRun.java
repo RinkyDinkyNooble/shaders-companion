@@ -106,9 +106,16 @@ public final class DevRun {
     private static final String SCENE = System.getProperty("shaderscompanion.devScene", "");
     private static final int PITCH = Integer.getInteger("shaderscompanion.devPitch", 50);
     private static final int WAIT_TICKS = Integer.getInteger("shaderscompanion.devWait", 160);
-    /** A shader pack on/off option, or config.<name> for the mod's own, to time in alternating rounds (-PdevToggle). */
-    private static final String TOGGLE = System.getProperty("shaderscompanion.devToggle", "");
+    /**
+     * A shader pack on/off option, or config.<name> for the mod's own, to time in alternating rounds (-PdevToggle);
+     * NAME:a:b switches an option with values between a ("off" rounds) and b ("on" rounds).
+     */
+    private static final String TOGGLE_SPEC = System.getProperty("shaderscompanion.devToggle", "");
+    private static final String TOGGLE = TOGGLE_SPEC.split(":")[0];
+    private static final String[] TOGGLE_VALUES = TOGGLE_SPEC.contains(":") ? TOGGLE_SPEC.substring(TOGGLE.length() + 1).split(":") : null;
     private static final int TOGGLE_ROUNDS = 6;
+    /** Shots per toggle round, on consecutive ticks (-PdevBurst). */
+    private static final int BURST = Integer.getInteger("shaderscompanion.devBurst", 1);
     /** Ticks a round waits after the pack reloads before its timed ticks. */
     private static final int TOGGLE_SETTLE_TICKS = 100;
     private static final int START_FRAME = 60;
@@ -143,6 +150,7 @@ public final class DevRun {
     private static int framesTimed;
     private static int frameSlot;
     private static long lastFrameStart;
+    private static boolean frameStarted;
 
     private DevRun() {
     }
@@ -188,8 +196,11 @@ public final class DevRun {
             }
             lastFrameStart = now;
             GL33C.glQueryCounter(frameQueries[slot * 2], GL33C.GL_TIMESTAMP);
-        } else {
+            frameStarted = true;
+        } else if (frameStarted) {
+            // Only a frame whose start was timed (the first event can be a frame's end)
             GL33C.glQueryCounter(frameQueries[slot * 2 + 1], GL33C.GL_TIMESTAMP);
+            frameStarted = false;
             frameSlot++;
         }
     }
@@ -231,8 +242,10 @@ public final class DevRun {
         boolean overlay = SCENE.equals("overlay");
         boolean turn = SCENE.equals("turn");
         boolean city = SCENE.equals("city");
-        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || SCENE.equals("match");
-        boolean ocean = SCENE.equals("ocean");
+        boolean reflectPool = SCENE.equals("reflectpool");
+        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || SCENE.equals("match");
+        boolean shore = SCENE.equals("shore");
+        boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
         if (phase == 1 && ticks - phaseTick == 30 && Boolean.getBoolean("shaderscompanion.devRain") && mc.player != null) {
             // -PdevRain: rain for the rest of the run (needs a biome where it rains: the ocean scene's)
@@ -266,14 +279,14 @@ public final class DevRun {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the pool scene");
             } else if (ocean) {
                 mc.options.hideGui = true;
-                for (String command : new String[]{"time set noon", "weather clear", "gamerule doDaylightCycle false"}) {
+                for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false"}) {
                     mc.player.connection.sendCommand(command);
                 }
                 MinecraftServer server = mc.getSingleplayerServer();
                 BlockPos from = mc.player.blockPosition();
-                int pitch = Integer.getInteger("shaderscompanion.devPitch", 5);
-                int fixedYaw = Integer.getInteger("shaderscompanion.devYaw", -1);
-                int lift = Integer.getInteger("shaderscompanion.devLift", 0);
+                int pitch = Integer.getInteger("shaderscompanion.devPitch", shore ? 14 : 5);
+                int fixedYaw = Integer.getInteger("shaderscompanion.devYaw", shore ? 0 : -1);
+                int lift = Integer.getInteger("shaderscompanion.devLift", shore ? 40 : 0);
                 server.execute(() -> {
                     var found = server.overworld().findClosestBiome3d(biome -> biome.is(BiomeTags.IS_DEEP_OCEAN), from, 6400, 32, 64);
                     BlockPos at = found == null ? from : found.getFirst();
@@ -309,6 +322,9 @@ public final class DevRun {
                                 }
                             }
                         }
+                    }
+                    if (shore) {
+                        buildShore(server.overworld(), at, lift);
                     }
                     mc.tell(() -> mc.player.connection.sendCommand("tp @s " + (at.getX() + 0.5) + " " + (64 + lift) + " " + (at.getZ() + 0.5) + " " + finalYaw + " " + pitch));
                 });
@@ -448,6 +464,21 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the overlay scene");
+            } else if (reflectPool) {
+                // A black glass wall ahead and, behind the camera, a pool (2 deep over coloured wool, 6 deep in its far
+                // half) and a stone pillar standing in it: the pool shows only in the glass, for water in reflections
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 2000), "weather clear", "gamerule doDaylightCycle false",
+                        "gamerule doMobSpawning false", "tp @s ~ ~30 ~ 0 " + Integer.getInteger("shaderscompanion.devPitch", 8),
+                        "fill ~-12 ~-8 ~-20 ~12 ~-1 ~6 minecraft:stone", "fill ~-12 ~ ~-20 ~12 ~8 ~8 minecraft:air",
+                        "fill ~-10 ~-3 ~-18 ~10 ~-3 ~-2 minecraft:orange_wool", "fill ~-10 ~-3 ~-8 ~10 ~-3 ~-6 minecraft:lime_wool",
+                        "fill ~-10 ~-7 ~-18 ~10 ~-7 ~-11 minecraft:magenta_wool", "fill ~-10 ~-6 ~-18 ~10 ~-4 ~-11 minecraft:water",
+                        "fill ~-10 ~-2 ~-18 ~10 ~-1 ~-2 minecraft:water", "fill ~3 ~-7 ~-9 ~3 ~2 ~-9 minecraft:stone_bricks",
+                        "fill ~-8 ~ ~5 ~8 ~6 ~5 minecraft:black_stained_glass"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the reflectpool scene");
             } else if (aquarium) {
                 // Water 7 deep over coloured wool, half of it seen through a light grey stained glass wall
                 mc.options.hideGui = true;
@@ -564,7 +595,7 @@ public final class DevRun {
             mc.player.setYRot(yaw);
             mc.player.yRotO = yaw;
             if ((ticks - phaseTick) % 10 == 0) {
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, yaw {}: {}", String.format("%.1f", yaw), DebugOverlay.statusLines()[DebugOverlay.statusLines().length - 1]);
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, yaw {}: {}", String.format("%.1f", yaw), mirrorStatus());
             }
         } else if (phase == 1 && turn && ticks - phaseTick >= WAIT_TICKS) {
             // Three quick turns from facing away from the glass wall (yaw -90, the water is mirrored) to facing it (yaw 90)
@@ -574,15 +605,7 @@ public final class DevRun {
             float yaw = cycle < 6 ? -90.0F + 30.0F * (cycle + 1) : cycle < 30 ? 90.0F : cycle < 36 ? 90.0F - 30.0F * (cycle - 29) : -90.0F;
             // yRotO keeps the last tick's yaw, so frames turn smoothly between ticks as with a mouse
             mc.player.setYRot(yaw);
-            String[] lines = DebugOverlay.statusLines();
-            String mirrorLine = "";
-            for (String line : lines) {
-                int at = line.indexOf("Mirror view: ");
-                if (at >= 0) {
-                    mirrorLine = line.substring(at + 13);
-                }
-            }
-            ShadersCompanion.LOGGER.info("Shaders Companion dev run, turn tick {} yaw {}: {}", t, yaw, mirrorLine);
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, turn tick {} yaw {}: {}", t, yaw, mirrorStatus());
             if (t == 2 || t == 4 || t == 6) {
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-turn-" + System.getProperty("shaderscompanion.devTag", "run") + "-t" + t + ".png", mc.getMainRenderTarget(), message -> { });
             }
@@ -647,7 +670,7 @@ public final class DevRun {
             String name = s == 0 ? "still" : s == 14 ? "strafe1" : s == 20 ? "strafe2" : s == 52 ? "forward" : s == 130 ? "settled" : null;
             if (name != null) {
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-move-" + tag + "-" + name + ".png", mc.getMainRenderTarget(), message -> { });
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, {} {} at {}: {}", tag, name, mc.player.position(), DebugOverlay.statusLines()[DebugOverlay.statusLines().length - 1]);
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, {} {} at {}: {}", tag, name, mc.player.position(), mirrorStatus());
             }
             if (s == 131) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod on: {}", frameTiming());
@@ -681,7 +704,7 @@ public final class DevRun {
                 mc.player.yRotO = yaws[pose];
                 if (left == 101 || left == 51 || left == 1) {
                     Screenshot.grab(mc.gameDirectory, "shaderscompanion-shadows-" + System.currentTimeMillis() + "-pose" + pose + ".png", mc.getMainRenderTarget(), message -> { });
-                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, pose {} (yaw {}): {}", pose, yaws[pose], DebugOverlay.statusLines()[DebugOverlay.statusLines().length - 1]);
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, pose {} (yaw {}): {}", pose, yaws[pose], mirrorStatus());
                 }
                 if (left == 1) {
                     mc.player.setYRot(0.0F);
@@ -693,7 +716,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city || reflectPool ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {
@@ -787,7 +810,13 @@ public final class DevRun {
             }
         } else if (phase == 4 && ticks - phaseTick >= TOGGLE_SETTLE_TICKS + TIMING_TICKS) {
             boolean on = timingRound % 2 == 1;
-            Screenshot.grab(mc.gameDirectory, prefix + "-" + TOGGLE + "-" + (on ? "on" : "off") + timingRound + ".png", mc.getMainRenderTarget(), message -> { });
+            // -PdevBurst=N: N shots on consecutive ticks at the round's end (for flicker: the camera holds still)
+            int shot = ticks - phaseTick - TOGGLE_SETTLE_TICKS - TIMING_TICKS;
+            Screenshot.grab(mc.gameDirectory, prefix + "-" + TOGGLE + "-" + (on ? "on" : "off") + timingRound + (BURST > 1 ? "-b" + shot : "") + ".png",
+                    mc.getMainRenderTarget(), message -> { });
+            if (shot + 1 < BURST) {
+                return;
+            }
             String[] lines = DebugOverlay.statusLines();
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with {} {}: {} | {}", TOGGLE, on ? "on" : "off", frameTiming(),
                     lines.length > 3 ? lines[1] + " | " + lines[3] : "");
@@ -803,6 +832,57 @@ public final class DevRun {
             Config.ENABLED.set(true);
             finish(mc);
         }
+    }
+
+    /**
+     * The shore scene's build, on the ocean at {@code at} with the camera {@code lift} blocks up, looking +Z: a far shore
+     * 90 to 104 blocks away (a low white wall at the waterline, towers with lit windows behind it) and a black glass
+     * facade to the camera's left, like a tall building beside a lake.
+     */
+    private static void buildShore(net.minecraft.server.level.ServerLevel level, BlockPos at, int lift) {
+        var wall = Blocks.WHITE_CONCRETE.defaultBlockState();
+        var light = Blocks.GLOWSTONE.defaultBlockState();
+        for (int x = -70; x <= 70; x++) {
+            for (int z = 90; z <= 104; z++) {
+                for (int y = 40; y <= 62; y++) {
+                    level.setBlock(at.offset(x, y - at.getY(), z), Blocks.STONE.defaultBlockState(), 2);
+                }
+            }
+            // The low wall at the waterline: three blocks high, its top lit every 8 blocks
+            for (int y = 63; y <= 65; y++) {
+                level.setBlock(at.offset(x, y - at.getY(), 90), y == 65 && Math.floorMod(x, 8) == 0 ? light : wall, 2);
+            }
+        }
+        for (int tx = -60; tx <= 60; tx += 10) {
+            int height = 10 + Math.floorMod(tx * 7, 4) * 5;
+            for (int y = 63; y < 63 + height; y++) {
+                for (int x = 0; x < 3; x++) {
+                    for (int z = 0; z < 3; z++) {
+                        boolean window = y % 3 == 0 && x == 1 && z == 0;
+                        level.setBlock(at.offset(tx + x, y - at.getY(), 96 + z), window ? light : wall, 2);
+                    }
+                }
+            }
+        }
+        // The facade to the left (+X looking +Z is to the left): black glass from the water to above the camera
+        // (-PdevNoFacade leaves it out, so the water is mirrored)
+        for (int y = 63; y <= (Boolean.getBoolean("shaderscompanion.devNoFacade") ? 62 : 70 + lift); y++) {
+            for (int z = -8; z <= 8; z++) {
+                level.setBlock(at.offset(3, y - at.getY(), z), Blocks.BLACK_STAINED_GLASS.defaultBlockState(), 2);
+            }
+        }
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the shore at {}", at);
+    }
+
+    /** The status overlay's mirror view line, without its label. */
+    private static String mirrorStatus() {
+        for (String line : DebugOverlay.statusLines()) {
+            int at = line.indexOf("Mirror view: ");
+            if (at >= 0) {
+                return line.substring(at + "Mirror view: ".length());
+            }
+        }
+        return "";
     }
 
     /** Logs what the overlay scene's container shows: the held item, the block and its block entity. */
@@ -834,12 +914,18 @@ public final class DevRun {
      * boolean setting of that name instead.
      */
     private static void setPackOption(boolean on) {
+        String text = TOGGLE_VALUES == null ? Boolean.toString(on) : TOGGLE_VALUES[on ? 1 : 0];
         if (TOGGLE.startsWith("config.")) {
             String name = TOGGLE.substring("config.".length());
             for (java.lang.reflect.Field field : Config.class.getFields()) {
                 try {
-                    if (field.get(null) instanceof net.minecraftforge.common.ForgeConfigSpec.BooleanValue value && value.getPath().get(value.getPath().size() - 1).equals(name)) {
-                        value.set(on);
+                    if (field.get(null) instanceof net.minecraftforge.common.ForgeConfigSpec.ConfigValue<?> value
+                            && value.getPath().get(value.getPath().size() - 1).equals(name)) {
+                        if (value instanceof net.minecraftforge.common.ForgeConfigSpec.BooleanValue bool) {
+                            bool.set(Boolean.parseBoolean(text));
+                        } else if (value instanceof net.minecraftforge.common.ForgeConfigSpec.IntValue integer) {
+                            integer.set(Integer.parseInt(text));
+                        }
                         return;
                     }
                 } catch (IllegalAccessException e) {
@@ -850,7 +936,7 @@ public final class DevRun {
             return;
         }
         try {
-            Iris.getShaderPackOptionQueue().put(TOGGLE, Boolean.toString(on));
+            Iris.getShaderPackOptionQueue().put(TOGGLE, text);
             Iris.reload();
         } catch (Exception e) {
             ShadersCompanion.LOGGER.error("Shaders Companion dev run: setting {} failed", TOGGLE, e);

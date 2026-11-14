@@ -31,6 +31,9 @@ public final class CubeTextures {
     public static final ResourceLocation MIRROR_DATA_ID = id("mirror_data");
     public static final ResourceLocation MIRROR_DISTANCE_ID = id("mirror_distance");
     public static final ResourceLocation MIRROR_INFO_ID = id("mirror_info");
+    public static final ResourceLocation MIRROR_BEHIND_ALBEDO_ID = id("mirror_behind_albedo");
+    public static final ResourceLocation MIRROR_BEHIND_DATA_ID = id("mirror_behind_data");
+    public static final ResourceLocation MIRROR_BEHIND_DISTANCE_ID = id("mirror_behind_distance");
 
     static final CompanionTexture ALBEDO = new CompanionTexture(CompanionTexture.CUBE, GL11C.GL_RGBA8, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, GL11C.GL_LINEAR);
     static final CompanionTexture DATA = new CompanionTexture(CompanionTexture.CUBE, GL11C.GL_RGBA16, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_SHORT, GL11C.GL_NEAREST);
@@ -41,6 +44,10 @@ public final class CubeTextures {
     static final CompanionTexture MIRROR_DATA = new CompanionTexture(CompanionTexture.MIRROR, GL11C.GL_RGBA16, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_SHORT, GL11C.GL_NEAREST);
     static final CompanionTexture MIRROR_DISTANCE = new CompanionTexture(CompanionTexture.MIRROR, GL30C.GL_R32F, GL11C.GL_RED, GL11C.GL_FLOAT, GL11C.GL_NEAREST);
     static final CompanionTexture MIRROR_INFO = new CompanionTexture(CompanionTexture.MIRROR, GL30C.GL_RGBA32F, GL11C.GL_RGBA, GL11C.GL_FLOAT, GL11C.GL_NEAREST);
+    /** The mirror view's opaque surfaces as they were before water and glass were drawn over them: what lies behind those. */
+    static final CompanionTexture MIRROR_BEHIND_ALBEDO = new CompanionTexture(CompanionTexture.MIRROR_BEHIND, GL11C.GL_RGBA8, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, GL11C.GL_LINEAR);
+    static final CompanionTexture MIRROR_BEHIND_DATA = new CompanionTexture(CompanionTexture.MIRROR_BEHIND, GL11C.GL_RGBA16, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_SHORT, GL11C.GL_NEAREST);
+    static final CompanionTexture MIRROR_BEHIND_DISTANCE = new CompanionTexture(CompanionTexture.MIRROR_BEHIND, GL30C.GL_R32F, GL11C.GL_RED, GL11C.GL_FLOAT, GL11C.GL_NEAREST);
 
     private CubeTextures() {
     }
@@ -60,12 +67,18 @@ public final class CubeTextures {
         manager.register(MIRROR_DATA_ID, MIRROR_DATA);
         manager.register(MIRROR_DISTANCE_ID, MIRROR_DISTANCE);
         manager.register(MIRROR_INFO_ID, MIRROR_INFO);
+        manager.register(MIRROR_BEHIND_ALBEDO_ID, MIRROR_BEHIND_ALBEDO);
+        manager.register(MIRROR_BEHIND_DATA_ID, MIRROR_BEHIND_DATA);
+        manager.register(MIRROR_BEHIND_DISTANCE_ID, MIRROR_BEHIND_DISTANCE);
         INFO.allocate(INFO_WIDTH, 1);
         MIRROR_INFO.allocate(MIRROR_INFO_WIDTH, 1);
         // Until the mirror view is first drawn, its textures are 1 x 1, so a pack binding them never gets Minecraft's missing texture
         MIRROR_ALBEDO.allocate(1, 1);
         MIRROR_DATA.allocate(1, 1);
         MIRROR_DISTANCE.allocate(1, 1);
+        MIRROR_BEHIND_ALBEDO.allocate(1, 1);
+        MIRROR_BEHIND_DATA.allocate(1, 1);
+        MIRROR_BEHIND_DISTANCE.allocate(1, 1);
         ShadersCompanion.LOGGER.info("Shaders Companion: cube textures registered (protocol {}), mirror view textures (protocol {})", PROTOCOL, MIRROR_PROTOCOL);
     }
 }

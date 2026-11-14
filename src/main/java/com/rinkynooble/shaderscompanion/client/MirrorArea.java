@@ -60,7 +60,7 @@ final class MirrorArea {
             this.maxY = newMaxY;
             return;
         }
-        float shrink = MirrorPlaneSearch.follow(seconds, SHRINK_SECONDS);
+        float shrink = Smoothing.follow(seconds, SHRINK_SECONDS);
         this.minX = newMinX < this.minX ? newMinX : this.minX + (newMinX - this.minX) * shrink;
         this.minY = newMinY < this.minY ? newMinY : this.minY + (newMinY - this.minY) * shrink;
         this.maxX = newMaxX > this.maxX ? newMaxX : this.maxX + (newMaxX - this.maxX) * shrink;

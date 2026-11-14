@@ -129,6 +129,7 @@ final class EntityCapture implements MultiBufferSource {
         }
         this.candidates.clear();
         this.candidates.add(entity);
+        // Never kept or reused: these vertices are marked mirror-only below
         this.lod = false;
         this.drawCandidates(dispatcher, origin, partialTick, 1, Long.MAX_VALUE);
         this.mirrorPlayerDrawn = this.entitiesDrawn > 0;
@@ -151,7 +152,6 @@ final class EntityCapture implements MultiBufferSource {
         Vec3 origin = camera.getPosition();
         Entity cameraEntity = camera.getEntity();
         double maxDistanceSq = maxDistance * maxDistance;
-        this.useLod(mc, Config.ENTITY_LOD.get());
         this.candidates.clear();
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity.isInvisible() || this.gaveUp(entity.getType())) {
@@ -195,12 +195,9 @@ final class EntityCapture implements MultiBufferSource {
                 double x = Mth.lerp(partialTick, entity.xOld, entity.getX()) - origin.x;
                 double y = Mth.lerp(partialTick, entity.yOld, entity.getY()) - origin.y;
                 double z = Mth.lerp(partialTick, entity.zOld, entity.getZ()) - origin.z;
-                boolean inBudget = System.nanoTime() - start < budgetNanos;
-                if (this.reuse(entity, x, y, z, inBudget)) {
-                    this.entitiesDrawn++;
-                    continue;
-                }
-                if (!inBudget) {
+                int left = this.reuseOrSkip(entity, x, y, z, System.nanoTime() - start < budgetNanos);
+                if (left != DRAW) {
+                    this.entitiesDrawn += left;
                     continue;
                 }
                 float yaw = Mth.lerp(partialTick, entity.yRotO, entity.getYRot());
@@ -228,8 +225,16 @@ final class EntityCapture implements MultiBufferSource {
         }
     }
 
-    /** Starts a collection: empties every sink, and drops kept vertices that went unused for a while. */
-    void begin() {
+    /**
+     * Starts a collection: empties every sink, and drops kept vertices that went unused for a while. Entity LOD is used
+     * when {@code lod} is set; kept vertices are dropped when it isn't or the world changed.
+     */
+    void begin(Object level, boolean lod) {
+        this.lod = lod;
+        if (!lod || level != this.keptLevel) {
+            this.kept.clear();
+            this.keptLevel = level;
+        }
         for (Sink sink : this.sinkList) {
             sink.vertices = 0;
             sink.mirrorOnly = 0;
@@ -244,14 +249,16 @@ final class EntityCapture implements MultiBufferSource {
         }
     }
 
-    /** Turns entity LOD on or off for this collection; kept vertices are dropped when it is off or the world changed. */
-    private void useLod(Minecraft mc, boolean on) {
-        this.lod = on;
-        if (!on || mc.level != this.keptLevel) {
-            this.kept.clear();
-            this.keptLevel = mc.level;
-        }
+    /** Lets go of every entity, block entity and world this capture refers to (no world loaded). */
+    void forget() {
+        this.kept.clear();
+        this.keptLevel = null;
+        this.candidates.clear();
+        this.blockCandidates.clear();
     }
+
+    /** {@link #reuseOrSkip}: the entity has to be drawn. */
+    private static final int DRAW = -1;
 
     /** Entity LOD: collections between redraws at this squared distance from the camera. */
     static int refreshInterval(double distanceSq) {
@@ -259,28 +266,26 @@ final class EntityCapture implements MultiBufferSource {
     }
 
     /**
-     * Entity LOD: copies a mob's or block entity's kept vertices into the sinks, moved to where it is now (x, y, z
-     * relative to the camera), when it isn't due to be drawn again or the time budget is spent. False when it has to
-     * be drawn (nothing kept, or due).
+     * Entity LOD and the time budget, for a mob or block entity at x, y, z relative to the camera: copies its kept
+     * vertices into the sinks, moved to where it is now, when it isn't due to be drawn again or the budget is spent
+     * (returns 1, one more drawn); returns 0 when it is left out (budget spent, nothing kept) and DRAW when it has to
+     * be drawn.
      */
-    private boolean reuse(Object key, double x, double y, double z, boolean inBudget) {
-        if (!this.lod) {
-            return false;
-        }
-        Kept entry = this.kept.get(key);
+    private int reuseOrSkip(Object key, double x, double y, double z, boolean inBudget) {
+        Kept entry = this.lod ? this.kept.get(key) : null;
         if (entry == null) {
-            return false;
+            return inBudget ? DRAW : 0;
         }
         int interval = refreshInterval(x * x + y * y + z * z);
         // Staggered, so a crowd seen at once isn't all drawn again in the same frame
         boolean due = this.collection - entry.drawnAt >= interval || Math.floorMod(this.collection + System.identityHashCode(key), interval) == 0;
         if (due && inBudget) {
-            return false;
+            return DRAW;
         }
         entry.usedAt = this.collection;
         entry.copyTo((float) (x - entry.x), (float) (y - entry.y), (float) (z - entry.z));
         this.reused++;
-        return true;
+        return 1;
     }
 
     /** Entity LOD: keeps the vertices a mob or block entity just added to the sinks (after marks), drawn at x, y, z. */
@@ -309,7 +314,6 @@ final class EntityCapture implements MultiBufferSource {
         }
         Vec3 origin = camera.getPosition();
         double maxDistanceSq = maxDistance * maxDistance;
-        this.useLod(mc, Config.ENTITY_LOD.get());
         this.blockCandidates.clear();
         for (RenderRegion region : regions) {
             double rx = region.getOriginX() - origin.x;
@@ -346,12 +350,9 @@ final class EntityCapture implements MultiBufferSource {
                 double x = blockEntity.getBlockPos().getX() - origin.x;
                 double y = blockEntity.getBlockPos().getY() - origin.y;
                 double z = blockEntity.getBlockPos().getZ() - origin.z;
-                boolean inBudget = System.nanoTime() - start < budgetNanos;
-                if (this.reuse(blockEntity, x, y, z, inBudget)) {
-                    this.blockEntitiesDrawn++;
-                    continue;
-                }
-                if (!inBudget) {
+                int left = this.reuseOrSkip(blockEntity, x, y, z, System.nanoTime() - start < budgetNanos);
+                if (left != DRAW) {
+                    this.blockEntitiesDrawn += left;
                     continue;
                 }
                 this.currentId = ENTITY_ID_BIT;
@@ -463,14 +464,6 @@ final class EntityCapture implements MultiBufferSource {
             }
         }
         return batches;
-    }
-
-    void free() {
-        for (Sink sink : this.sinkList) {
-            MemoryUtil.memFree(sink.data);
-        }
-        this.sinks.clear();
-        this.sinkList.clear();
     }
 
     @Override
@@ -614,10 +607,9 @@ final class EntityCapture implements MultiBufferSource {
                 this.sinks[this.parts] = sink;
                 this.counts[this.parts] = added;
                 this.parts++;
-                long address = MemoryUtil.memAddress(sink.data) + (long) from * STRIDE;
-                for (int n = added * INTS_PER_VERTEX, k = 0; k < n; k++) {
-                    this.data[at++] = MemoryUtil.memGetInt(address + k * 4L);
-                }
+                int ints = added * INTS_PER_VERTEX;
+                MemoryUtil.memIntBuffer(MemoryUtil.memAddress(sink.data) + (long) from * STRIDE, ints).get(this.data, at, ints);
+                at += ints;
             }
         }
 
@@ -627,16 +619,15 @@ final class EntityCapture implements MultiBufferSource {
             for (int part = 0; part < this.parts; part++) {
                 Sink sink = this.sinks[part];
                 int count = this.counts[part];
+                int ints = count * INTS_PER_VERTEX;
                 sink.reserve(count);
                 long address = MemoryUtil.memAddress(sink.data) + (long) sink.vertices * STRIDE;
-                for (int v = 0; v < count; v++, address += STRIDE) {
+                MemoryUtil.memIntBuffer(address, ints).put(this.data, at, ints);
+                // Then each vertex's position moved
+                for (int v = 0; v < count; v++, address += STRIDE, at += INTS_PER_VERTEX) {
                     MemoryUtil.memPutFloat(address, Float.intBitsToFloat(this.data[at]) + dx);
                     MemoryUtil.memPutFloat(address + 4, Float.intBitsToFloat(this.data[at + 1]) + dy);
                     MemoryUtil.memPutFloat(address + 8, Float.intBitsToFloat(this.data[at + 2]) + dz);
-                    for (int k = 3; k < INTS_PER_VERTEX; k++) {
-                        MemoryUtil.memPutInt(address + k * 4L, this.data[at + k]);
-                    }
-                    at += INTS_PER_VERTEX;
                 }
                 sink.vertices += count;
             }

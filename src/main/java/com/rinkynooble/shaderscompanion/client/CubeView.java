@@ -65,8 +65,6 @@ public final class CubeView {
     private static final int[] ATTRIBUTE_LOCATIONS = {1, 2, 3, 4, 10, 11, 14};
     private static final String[] ENTITY_ATTRIBUTES = {"a_Position", "a_Color", "a_TexCoord", "a_Light", "a_Normal", "a_Meta"};
     private static final String[] LOD_ATTRIBUTES = {"a_Position", "a_Color", "a_Data"};
-    /** Frames without the active pack binding the cube textures before the mod stops drawing. */
-    private static final int IDLE_FRAMES = 30;
     /** CPU time per frame for drawing entities and block entities into the cube, nearest first. */
     private static final long ENTITY_BUDGET_NANOS = 1_000_000L;
     private static final long BLOCK_ENTITY_BUDGET_NANOS = 500_000L;
@@ -112,10 +110,10 @@ public final class CubeView {
     private static final int[] faceFrame = {-1, -1, -1, -1, -1, -1};
     private static float lastFar;
     private static float lastMaxDistance;
-    private static long lastRequests = -1;
-    private static int framesWithoutRequests;
-    private static long lastMirrorRequests = -1;
-    private static int framesWithoutMirrorRequests;
+    /** Whether the pack reads the cube, the mirror view, and the mirror view's surfaces behind water and glass. */
+    private static final TextureDemand cubeDemand = new TextureDemand(CompanionTexture.CUBE);
+    private static final TextureDemand mirrorDemand = new TextureDemand(CompanionTexture.MIRROR);
+    private static final TextureDemand behindDemand = new TextureDemand(CompanionTexture.MIRROR_BEHIND);
     /** The view being drawn: its cut plane and the camera relative to its origin (none and zero for the cube). */
     private static float[] viewClipPlane = NO_CLIP;
     private static float[] viewCamera = NO_OFFSET;
@@ -143,6 +141,8 @@ public final class CubeView {
     private static int uTranslucent;
     private static final ViewTarget cubeTarget = new ViewTarget("cube", CubeTextures.ALBEDO, CubeTextures.DATA, CubeTextures.DISTANCE, CubeTextures.PREVIEW);
     private static final ViewTarget mirrorTarget = new ViewTarget("mirror", CubeTextures.MIRROR_ALBEDO, CubeTextures.MIRROR_DATA, CubeTextures.MIRROR_DISTANCE);
+    private static final ViewTarget mirrorBehindTarget = new ViewTarget("mirror behind", false, CubeTextures.MIRROR_BEHIND_ALBEDO,
+            CubeTextures.MIRROR_BEHIND_DATA, CubeTextures.MIRROR_BEHIND_DISTANCE);
     private static int vertexArray;
     private static int indexBuffer;
     private static int indexCapacityQuads;
@@ -220,6 +220,7 @@ public final class CubeView {
      */
     public static void collectEntitiesAfterFrame(Camera camera, float partialTick) {
         if (!collectAfterFrame || failed) {
+            collectNanos = 0L;
             return;
         }
         collectAfterFrame = false;
@@ -269,30 +270,18 @@ public final class CubeView {
         }
         if (!IrisApi.getInstance().isShaderPackInUse()) {
             status = "no shader pack in use";
-            lastRequests = -1;
-            lastMirrorRequests = -1;
+            cubeDemand.reset();
+            mirrorDemand.reset();
+            behindDemand.reset();
             return 0;
         }
-        // Oculus asks for a pack's custom textures each time it binds them. A pack that doesn't read the cube (or the
-        // mirror view) never asks, so after a short wait the mod stops drawing it (the textures are checked again every frame).
-        long requests = CompanionTexture.requests;
-        if (requests != lastRequests) {
-            lastRequests = requests;
-            framesWithoutRequests = 0;
-        } else {
-            framesWithoutRequests++;
-        }
-        long mirrorRequests = CompanionTexture.mirrorRequests;
-        if (mirrorRequests != lastMirrorRequests) {
-            lastMirrorRequests = mirrorRequests;
-            framesWithoutMirrorRequests = 0;
-        } else {
-            framesWithoutMirrorRequests++;
-        }
-        boolean wantCube = framesWithoutRequests <= IDLE_FRAMES;
-        boolean wantMirror = framesWithoutMirrorRequests <= IDLE_FRAMES && Config.MIRROR.get();
+        // A pack that doesn't read the cube (or the mirror view) never asks for its textures: it isn't drawn then
+        boolean wantCube = cubeDemand.update();
+        boolean mirrorRead = mirrorDemand.update();
+        behindDemand.update();
+        boolean wantMirror = mirrorRead && Config.MIRROR.get();
         MirrorView.status = !Config.MIRROR.get() ? "turned off in the config"
-                : framesWithoutMirrorRequests > IDLE_FRAMES ? "the shader pack doesn't read the mirror view" : MirrorView.status;
+                : !mirrorRead ? "the shader pack doesn't read the mirror view" : MirrorView.status;
         if (!wantCube && !wantMirror) {
             status = "the shader pack doesn't read the cube";
             return 0;
@@ -411,6 +400,19 @@ public final class CubeView {
     /** The CPU time of the entities of the latest frame in nanoseconds, for the dev run's timings. */
     public static long entityNanosForChecks() {
         return playerNanos + collectNanos;
+    }
+
+    /**
+     * Lets go of everything that refers to the world being unloaded (its entities, block entities and the world
+     * itself), so it isn't kept while the game is in its menus.
+     */
+    public static void forgetWorld() {
+        entities.forget();
+        playerEntities.forget();
+        entityBatches = List.of();
+        playerBatches = List.of();
+        entityLevel = null;
+        MirrorPlaneSearch.checkLevel(null);
     }
 
     /** Frames drawn since the game started. */
@@ -557,7 +559,7 @@ public final class CubeView {
     private static void collectLocalPlayer(Minecraft mc, Camera camera, float partialTick, BoxTest mirrorSeen) {
         playerBatches = List.of();
         mirrorPlayerDrawn = false;
-        playerEntities.begin();
+        playerEntities.begin(mc.level, false);
         if (mirrorSeen == BoxTest.NONE || !Config.ENTITIES.get()) {
             return;
         }
@@ -575,7 +577,7 @@ public final class CubeView {
         entitiesDrawn = 0;
         blockEntitiesDrawn = 0;
         entitiesReused = 0;
-        entities.begin();
+        entities.begin(mc.level, Config.ENTITY_LOD.get());
         if (seen == BoxTest.NONE) {
             return;
         }
@@ -742,18 +744,24 @@ public final class CubeView {
         double maxDistanceSq = (double) maxDistance * maxDistance;
         BoxTest seen = (minX, minY, minZ, maxX, maxY, maxZ) -> boxVisible(face, minX, minY, minZ, maxX, maxY, maxZ, maxDistanceSq);
         BoxTest lodSeen = (minX, minY, minZ, maxX, maxY, maxZ) -> boxInFace(face, minX, minY, minZ, maxX, maxY, maxZ);
-        drawView(seen, lodSeen, camera, camera, NO_CLIP, NO_OFFSET, maxDistance, lodDistance, regions, false);
+        drawView(seen, lodSeen, camera, camera, NO_CLIP, NO_OFFSET, maxDistance, lodDistance, regions, false, null);
     }
 
     /**
      * Draws the mirror view: the same surfaces as a cube face, from the camera mirrored in this frame's plane, with
      * everything on the far side of the plane cut away (see {@link MirrorView}), in the part of the view the plane covers.
+     * While the pack reads them, the opaque surfaces are copied before water and glass are drawn over them (what lies
+     * behind those, for shading them as water and glass).
      */
     private static void drawMirror(Vec3 camera, float maxDistance, float lodDistance, RenderRegionManager regions) {
         int width = MirrorView.width;
         int height = MirrorView.height;
         if (mirrorTarget.ensureSize(width, height)) {
             ShadersCompanion.LOGGER.info("Shaders Companion: mirror view of {} x {} pixels", width, height);
+        }
+        boolean behind = behindDemand.wanted();
+        if (behind) {
+            mirrorBehindTarget.ensureSize(width, height);
         }
         mirrorTarget.bind();
         GlStateManager._viewport(0, 0, width, height);
@@ -767,7 +775,9 @@ public final class CubeView {
         MirrorView.drawMatrix().get(matrixBuffer);
         Vec3 origin = MirrorView.originWorld();
         float[] cameraOffset = {(float) (camera.x - origin.x), (float) (camera.y - origin.y), (float) (camera.z - origin.z)};
-        drawView(MirrorView.seen(), MirrorView.frustumSeen(), camera, origin, MirrorView.clipPlane(), cameraOffset, maxDistance, lodDistance, regions, true);
+        Runnable copyBehind = behind ? () -> mirrorTarget.copyTo(mirrorBehindTarget, drawn[0], drawn[1], drawn[2], drawn[3]) : null;
+        drawView(MirrorView.seen(), MirrorView.frustumSeen(), camera, origin, MirrorView.clipPlane(), cameraOffset, maxDistance, lodDistance, regions, true,
+                copyBehind);
     }
 
     /**
@@ -780,15 +790,19 @@ public final class CubeView {
      * @param clipPlane    the view's cut plane ({@link #NO_CLIP} for none)
      * @param cameraOffset the camera relative to the view's origin
      * @param mirror       whether this is the mirror view, which also draws the local player
+     * @param afterOpaque  run between the opaque and the translucent surfaces (null for nothing)
      */
     private static void drawView(BoxTest seen, BoxTest lodSeen, Vec3 camera, Vec3 origin, float[] clipPlane, float[] cameraOffset,
-                                 float maxDistance, float lodDistance, RenderRegionManager regions, boolean mirror) {
+                                 float maxDistance, float lodDistance, RenderRegionManager regions, boolean mirror, Runnable afterOpaque) {
         viewClipPlane = clipPlane;
         viewCamera = cameraOffset;
         try {
             drawTerrain(seen, camera, origin, regions, false);
             drawEntities(false, mirror);
             drawLods(lodSeen, camera, origin, maxDistance, lodDistance, true);
+            if (afterOpaque != null) {
+                afterOpaque.run();
+            }
             drawTerrain(seen, camera, origin, regions, true);
             drawEntities(true, mirror);
             drawLods(lodSeen, camera, origin, maxDistance, lodDistance, false);

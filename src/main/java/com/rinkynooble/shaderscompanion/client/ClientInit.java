@@ -3,6 +3,7 @@ package com.rinkynooble.shaderscompanion.client;
 import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.level.LevelEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.config.ModConfig;
@@ -17,6 +18,13 @@ public final class ClientInit {
         modBus.addListener(ClientInit::onClientSetup);
         modBus.addListener(ClientInit::onRegisterOverlays);
         MinecraftForge.EVENT_BUS.addListener(ClientInit::onRegisterCommands);
+        MinecraftForge.EVENT_BUS.addListener(ClientInit::onLevelUnload);
+    }
+
+    private static void onLevelUnload(LevelEvent.Unload event) {
+        if (event.getLevel().isClientSide()) {
+            CubeView.forgetWorld();
+        }
     }
 
     private static void onClientSetup(FMLClientSetupEvent event) {

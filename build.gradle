@@ -73,6 +73,18 @@ minecraft {
             if (project.hasProperty('devToggle')) {
                 property 'shaderscompanion.devToggle', project.property('devToggle')
             }
+            // -PdevBurst=6: shots per -PdevToggle round, on consecutive ticks (flicker shows as change between them).
+            if (project.hasProperty('devBurst')) {
+                property 'shaderscompanion.devBurst', project.property('devBurst')
+            }
+            // -PdevNoFacade: the shore scene without its glass facade (the water is mirrored).
+            if (project.hasProperty('devNoFacade')) {
+                property 'shaderscompanion.devNoFacade', 'true'
+            }
+            // -PdevTime=15000: the time of day of the ocean and shore scenes (6000, noon, by default).
+            if (project.hasProperty('devTime')) {
+                property 'shaderscompanion.devTime', project.property('devTime')
+            }
             // -PdevTag=p19: a name for the bright scene's screenshots.
             if (project.hasProperty('devTag')) {
                 property 'shaderscompanion.devTag', project.property('devTag')

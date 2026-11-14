@@ -20,10 +20,11 @@ final class CompanionTexture extends AbstractTexture {
     static final int UNTRACKED = 0;
     static final int CUBE = 1;
     static final int MIRROR = 2;
+    /** The mirror view's copy of what lies behind water and glass ({@link CubeTextures#MIRROR_BEHIND_ALBEDO}). */
+    static final int MIRROR_BEHIND = 3;
 
-    /** Increase whenever a cube or mirror texture's id is asked for from outside the mod. */
-    static volatile long requests;
-    static volatile long mirrorRequests;
+    /** Per group: how often a texture's id was asked for from outside the mod (render thread only). */
+    private static final long[] requests = new long[4];
 
     private final int group;
     private final int internalFormat;
@@ -47,12 +48,13 @@ final class CompanionTexture extends AbstractTexture {
 
     @Override
     public int getId() {
-        if (this.group == CUBE) {
-            requests++;
-        } else if (this.group == MIRROR) {
-            mirrorRequests++;
-        }
+        requests[this.group]++;
         return super.getId();
+    }
+
+    /** How often the textures of a group were asked for from outside the mod so far. */
+    static long requests(int group) {
+        return requests[group];
     }
 
     /** The GL texture name, for the mod's own use (not counted as a request). */

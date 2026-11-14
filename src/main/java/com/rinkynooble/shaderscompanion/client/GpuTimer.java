@@ -26,7 +26,9 @@ final class GpuTimer {
         if (queries[0] == 0) {
             GL15C.glGenQueries(queries);
         }
-        for (int i = 0; i < COUNT; i++) {
+        // Oldest first (the slot after the last one started), so the newest finished measurement is the one kept
+        for (int k = 0; k < COUNT; k++) {
+            int i = (next + k) % COUNT;
             if (pending[i] && GL15C.glGetQueryObjecti(queries[i * 2 + 1], GL15C.GL_QUERY_RESULT_AVAILABLE) != 0) {
                 nanos = GL33C.glGetQueryObjectui64(queries[i * 2 + 1], GL15C.GL_QUERY_RESULT)
                         - GL33C.glGetQueryObjectui64(queries[i * 2], GL15C.GL_QUERY_RESULT);

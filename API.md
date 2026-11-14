@@ -1,4 +1,4 @@
-# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 1)
+# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 2)
 
 Shaders Companion draws two views for the active shader pack and hands them over as textures:
 
@@ -122,12 +122,23 @@ The view's rays don't always start at that origin: with view bobbing on, Oculus 
 | 3 to 6 | Columns 0 to 3 of the matrix that takes a point relative to the camera to the view's clip space: `clip = mat4(t3, t4, t5, t6) * vec4(p, 1.0)`, texture coordinate `clip.xy / clip.w * 0.5 + 0.5`. |
 | 7 | `(near plane, far plane, chunk terrain range, Distant Horizons range)` |
 
+### What lies behind water and glass (0.9.0)
+
+```properties
+customTexture.scMirrorBehindAlbedo = shaderscompanion:mirror_behind_albedo
+customTexture.scMirrorBehindData = shaderscompanion:mirror_behind_data
+customTexture.scMirrorBehindDistance = shaderscompanion:mirror_behind_distance
+```
+
+The mirror view as it was after its opaque surfaces (terrain, entities, LODs) and before water, glass and other translucent surfaces were drawn over them: the same three fields, in the same layout and size as `mirror_albedo`, `mirror_data` and `mirror_distance`, valid in the drawn part of the view. Where the mirror view shows a translucent surface (`mirror_albedo` alpha below 1), these show what lies behind it, so a pack can shade water over the depth to the ground under it and let glass tint what is behind it. Copied only while the pack binds them (they cost a copy of the drawn part each frame and about 16 bytes a pixel of memory); 1 x 1 before the first copy.
+
 A pixel uses the mirror view when its position lies on the plane (`abs(dot(plane.xyz, p) + plane.w)` within a few hundredths of a block, more with distance for depth precision) and its geometry normal is the plane's. Other reflecting surfaces fall back to whatever the pack did before.
 
 ## Versions
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
+- 0.9.0: the same protocols. `mirror_behind_*`: the mirror view's surfaces behind water and glass. The plane search follows rays going down past its 64 blocks to the water levels it has seen and the sea level, so a lake far below counts.
 - 0.8.0: the same protocols. The mirror's plane search runs in real time (as quick at 60 frames a second as at 260); mobs and block entities are collected for the whole mirror view, not only its drawn part; far ones are redrawn less often (`entityLod`).
 - 0.7.0: mirror view protocol 2: only the mirror's part of the view is drawn, -1 in the distance texture elsewhere; the view's size can change with `mirrorLod`. The plane is chosen ahead of the camera's turn.
 - 0.6.3: the same protocols. Mobs and block entities are a frame late in the views (collected after the world is drawn); the local player in the mirror view is not.
