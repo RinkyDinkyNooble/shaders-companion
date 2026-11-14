@@ -85,6 +85,21 @@ minecraft {
             if (project.hasProperty('devTime')) {
                 property 'shaderscompanion.devTime', project.property('devTime')
             }
+            // -PdevCycle: the exposure scene lets the time of day run; -PdevEvery=200 and -PdevShots=13: its shot spacing in
+            // ticks and count.
+            if (project.hasProperty('devCycle')) {
+                property 'shaderscompanion.devCycle', 'true'
+            }
+            if (project.hasProperty('devEvery')) {
+                property 'shaderscompanion.devEvery', project.property('devEvery')
+            }
+            if (project.hasProperty('devShots')) {
+                property 'shaderscompanion.devShots', project.property('devShots')
+            }
+            // -PdevStep=500: the exposure scene sets the time that much later before each next shot.
+            if (project.hasProperty('devStep')) {
+                property 'shaderscompanion.devStep', project.property('devStep')
+            }
             // -PdevTag=p19: a name for the bright scene's screenshots.
             if (project.hasProperty('devTag')) {
                 property 'shaderscompanion.devTag', project.property('devTag')

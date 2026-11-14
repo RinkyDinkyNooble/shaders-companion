@@ -91,6 +91,11 @@ import org.lwjgl.opengl.GL33C;
  * black glass wall, screenshotted at midnight and at noon, each with the mod drawing and turned off
  * ("shaderscompanion-bright-&lt;-PdevTag&gt;-night-on.png" and so on): for comparing the brightness of shader pack versions.
  * <p>
+ * -PdevScene=exposure: a lit block of town (white buildings with glowstone, a lime lawn with sea lanterns) from above
+ * at -PdevTime (18000, midnight), a shot every -PdevEvery ticks (200), -PdevShots of them (13), with the time of day
+ * logged; -PdevCycle lets the time run, -PdevStep=500 sets the time that much later before each next shot. For
+ * exposure that drifts over minutes or with the time of day.
+ * <p>
  * A run in which the mod never draws (the pack reads none of its views) logs why after 15 seconds in the world and
  * quits.
  * <p>
@@ -239,6 +244,7 @@ public final class DevRun {
         boolean grass = SCENE.equals("grass");
         boolean shadows = SCENE.equals("shadows");
         boolean bright = SCENE.equals("bright");
+        boolean exposure = SCENE.equals("exposure");
         boolean move = SCENE.equals("move");
         boolean boat = SCENE.equals("boat");
         boolean aquarium = SCENE.equals("aquarium");
@@ -578,6 +584,23 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the bright scene");
+            } else if (exposure) {
+                // A lit block of town at night, seen from above: white buildings with glowstone, a lime lawn with sea lanterns
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 18000), "weather clear",
+                        "gamerule doDaylightCycle " + Boolean.getBoolean("shaderscompanion.devCycle"), "gamerule doMobSpawning false",
+                        "fill ~-24 ~-1 ~-4 ~24 ~-1 ~40 minecraft:lime_concrete", "fill ~-24 ~ ~-4 ~24 ~14 ~40 minecraft:air",
+                        "fill ~-24 ~-1 ~10 ~24 ~-1 ~11 minecraft:white_concrete", "fill ~-1 ~-1 ~-4 ~1 ~-1 ~40 minecraft:white_concrete",
+                        "fill ~-20 ~-1 ~2 ~-20 ~-1 ~38 minecraft:sea_lantern", "fill ~20 ~-1 ~2 ~20 ~-1 ~38 minecraft:sea_lantern",
+                        "fill ~4 ~ ~16 ~16 ~8 ~28 minecraft:white_concrete", "fill ~5 ~1 ~16 ~15 ~7 ~16 minecraft:glowstone",
+                        "fill ~5 ~2 ~16 ~15 ~2 ~16 minecraft:white_concrete", "fill ~5 ~5 ~16 ~15 ~5 ~16 minecraft:white_concrete",
+                        "fill ~-16 ~ ~18 ~-6 ~5 ~30 minecraft:quartz_block", "fill ~-15 ~6 ~19 ~-7 ~6 ~29 minecraft:glowstone",
+                        "fill ~-24 ~-1 ~32 ~24 ~-1 ~40 minecraft:stone_bricks",
+                        "tp @s ~ ~16 ~-6 0 " + Integer.getInteger("shaderscompanion.devPitch", 35)}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the exposure scene");
             } else if (shadows) {
                 mc.options.hideGui = true;
                 for (String command : new String[]{
@@ -723,6 +746,26 @@ public final class DevRun {
             } else if (t == 381) {
                 Config.ENABLED.set(true);
                 finish(mc);
+            }
+        } else if (phase == 1 && exposure) {
+            // A shot every -PdevEvery ticks (200), -PdevShots of them (13), with the time of day in the log
+            int t = ticks - phaseTick - WAIT_TICKS;
+            int every = Integer.getInteger("shaderscompanion.devEvery", 200);
+            int shots = Integer.getInteger("shaderscompanion.devShots", 13);
+            String tag = System.getProperty("shaderscompanion.devTag", "run");
+            if (t >= 0 && t % every == 0) {
+                int shot = t / every;
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-exposure-" + tag + "-" + String.format("%02d", shot) + ".png", mc.getMainRenderTarget(), message -> { });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, exposure {} shot {}: day time {}, at {} (block light {}, sky light {})", tag, shot,
+                        mc.level.getDayTime() % 24000, mc.player.blockPosition(), mc.level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, mc.player.blockPosition()),
+                        mc.level.getBrightness(net.minecraft.world.level.LightLayer.SKY, mc.player.blockPosition()));
+                int step = Integer.getInteger("shaderscompanion.devStep", 0);
+                if (shot + 1 >= shots) {
+                    finish(mc);
+                } else if (step > 0) {
+                    // -PdevStep: each next shot at that many more ticks of the day, after -PdevEvery ticks to adapt
+                    mc.player.connection.sendCommand("time set " + (Integer.getInteger("shaderscompanion.devTime", 18000) + (shot + 1) * step));
+                }
             }
         } else if (phase == 1 && shadows && ticks - phaseTick < WAIT_TICKS) {
             // Three still poses before the last one (straight at the glass, a step to the side): turned right, turned
