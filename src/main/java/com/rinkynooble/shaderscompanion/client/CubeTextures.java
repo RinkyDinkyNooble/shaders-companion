@@ -18,7 +18,7 @@ public final class CubeTextures {
     /** Info texture width: one header texel, six face texels, one projection texel. */
     public static final int INFO_WIDTH = 8;
     /** Protocol version of the mirror view's textures, in its own info texture. */
-    public static final int MIRROR_PROTOCOL = 1;
+    public static final int MIRROR_PROTOCOL = 2;
     /** Mirror info texture width: header, plane, view origin, four matrix columns, ranges. */
     public static final int MIRROR_INFO_WIDTH = 8;
 

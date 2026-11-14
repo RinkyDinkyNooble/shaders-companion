@@ -16,7 +16,7 @@
 #define SHADERS_COMPANION_GLSL
 
 const int SC_PROTOCOL = 2;
-const int SC_MIRROR_PROTOCOL = 1;
+const int SC_MIRROR_PROTOCOL = 2;
 
 // What a texel shows (ScSurface.kind)
 const int SC_BLOCK = 0;   // terrain from the chunk meshes; id = block.properties id, -1 when not listed
@@ -153,6 +153,12 @@ bool sc_mirrorCoord(vec3 p, out vec2 coord) {
     vec4 clip = sc_mirrorMatrix() * vec4(p, 1.0);
     coord = clip.xy / clip.w * 0.5 + 0.5;
     return clip.w > 0.0 && all(greaterThanEqual(coord, vec2(0.0))) && all(lessThanEqual(coord, vec2(1.0)));
+}
+
+// True where the mirror view was drawn. The mod draws only the part of the screen the mirror covers (with a margin);
+// elsewhere a reflection should fall back as it does outside the view.
+bool sc_mirrorDrawn(vec2 coord) {
+    return texture(scMirrorDistance, coord).r > -0.5;
 }
 
 // The surface the mirror view shows at a texture coordinate. For a point p on the plane, the mirror reflection is at

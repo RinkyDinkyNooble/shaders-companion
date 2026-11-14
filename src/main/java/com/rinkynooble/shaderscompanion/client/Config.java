@@ -19,6 +19,7 @@ public final class Config {
     public static final ForgeConfigSpec.IntValue LOD_DISTANCE;
     public static final ForgeConfigSpec.BooleanValue MIRROR;
     public static final ForgeConfigSpec.IntValue MIRROR_SCALE;
+    public static final ForgeConfigSpec.BooleanValue MIRROR_LOD;
     public static final ForgeConfigSpec.BooleanValue MIRROR_SHADOWS;
     public static final ForgeConfigSpec.BooleanValue INSTALL_BUNDLED_PACK;
 
@@ -66,6 +67,9 @@ public final class Config {
         MIRROR_SCALE = builder
                 .comment("Resolution of the mirror view, in percent of the screen's. Lower is faster and blurrier.")
                 .defineInRange("mirrorScale", 100, 25, 100);
+        MIRROR_LOD = builder
+                .comment("Draw the mirror view at a lower resolution while the mirror covers little of the screen (three quarters below about a third of the screen's centre, half below about a sixth), like Distant Horizons' detail levels.")
+                .define("mirrorLod", true);
         MIRROR_SHADOWS = builder
                 .comment("Keep the shadows of what the mirror view shows. Oculus draws only the shadows that can fall into your own view, so without this, things behind you lose their shadows in reflections, and the shadows come and go as you move. Off draws fewer shadows while a mirror is on screen.")
                 .define("mirrorShadows", true);

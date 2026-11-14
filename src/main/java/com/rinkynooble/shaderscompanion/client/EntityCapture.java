@@ -61,6 +61,8 @@ final class EntityCapture implements MultiBufferSource {
     private static final Field SHOULD_RENDER_SHADOW = field(EntityRenderDispatcher.class, "f_114368_");
     private static final Method CUTOUT_TEXTURE = method(RenderStateShard.EmptyTextureStateShard.class, "m_142706_");
     private static final TypeInfo SKIP = new TypeInfo(null, -1);
+    /** Logs each render type the first time it is asked for, and whether it is kept (-Dshaderscompanion.logTypes=true). */
+    private static final boolean LOG_TYPES = Boolean.getBoolean("shaderscompanion.logTypes");
     private static final String[] SKIPPED_NAMES = {"glint", "shadow", "crumbling", "outline", "lightning", "energy_swirl", "leash", "water_mask"};
 
     record TypeInfo(ResourceLocation texture, int kind) {
@@ -160,7 +162,7 @@ final class EntityCapture implements MultiBufferSource {
         boolean shadows = readShadowSetting(dispatcher);
         dispatcher.setRenderShadow(false);
         long start = System.nanoTime();
-        try {
+        try (CaptureBufferSource.Redirect redirect = CaptureBufferSource.redirect(this)) {
             PoseStack poseStack = new PoseStack();
             int count = Math.min(maxCount, this.candidates.size());
             for (int i = 0; i < count && System.nanoTime() - start < budgetNanos; i++) {
@@ -245,27 +247,29 @@ final class EntityCapture implements MultiBufferSource {
         long start = System.nanoTime();
         PoseStack poseStack = new PoseStack();
         int count = Math.min(maxCount, this.blockCandidates.size());
-        for (int i = 0; i < count && System.nanoTime() - start < budgetNanos; i++) {
-            BlockEntity blockEntity = this.blockCandidates.get(i);
-            this.currentId = ENTITY_ID_BIT;
-            this.currentLight = 0xF000F0;
-            int[] marks = this.markSinks();
-            try {
-                poseStack.pushPose();
-                poseStack.translate(blockEntity.getBlockPos().getX() - origin.x, blockEntity.getBlockPos().getY() - origin.y,
-                        blockEntity.getBlockPos().getZ() - origin.z);
-                dispatcher.render(blockEntity, partialTick, poseStack, this);
-                poseStack.popPose();
-                this.blockEntitiesDrawn++;
-            } catch (Throwable t) {
-                this.rollBack(marks);
-                BlockEntityType<?> type = blockEntity.getType();
-                int failed = this.failures.merge(type, 1, Integer::sum);
-                if (failed == 1 || failed == 3) {
-                    ShadersCompanion.LOGGER.warn("Shaders Companion: drawing block entity {} into the cube failed{}", BlockEntityType.getKey(type),
-                            failed == 3 ? "; leaving it out from now on" : "", t);
+        try (CaptureBufferSource.Redirect redirect = CaptureBufferSource.redirect(this)) {
+            for (int i = 0; i < count && System.nanoTime() - start < budgetNanos; i++) {
+                BlockEntity blockEntity = this.blockCandidates.get(i);
+                this.currentId = ENTITY_ID_BIT;
+                this.currentLight = 0xF000F0;
+                int[] marks = this.markSinks();
+                try {
+                    poseStack.pushPose();
+                    poseStack.translate(blockEntity.getBlockPos().getX() - origin.x, blockEntity.getBlockPos().getY() - origin.y,
+                            blockEntity.getBlockPos().getZ() - origin.z);
+                    dispatcher.render(blockEntity, partialTick, poseStack, this);
+                    poseStack.popPose();
+                    this.blockEntitiesDrawn++;
+                } catch (Throwable t) {
+                    this.rollBack(marks);
+                    BlockEntityType<?> type = blockEntity.getType();
+                    int failed = this.failures.merge(type, 1, Integer::sum);
+                    if (failed == 1 || failed == 3) {
+                        ShadersCompanion.LOGGER.warn("Shaders Companion: drawing block entity {} into the cube failed{}", BlockEntityType.getKey(type),
+                                failed == 3 ? "; leaving it out from now on" : "", t);
+                    }
+                    poseStack = new PoseStack();
                 }
-                poseStack = new PoseStack();
             }
         }
     }
@@ -359,7 +363,14 @@ final class EntityCapture implements MultiBufferSource {
         if (sink != null) {
             return sink;
         }
-        TypeInfo info = this.types.computeIfAbsent(type, EntityCapture::resolve);
+        TypeInfo info = this.types.get(type);
+        if (info == null) {
+            info = resolve(type);
+            this.types.put(type, info);
+            if (LOG_TYPES) {
+                ShadersCompanion.LOGGER.info("Shaders Companion: render type {} {}", type, info == SKIP ? "left out" : "kept");
+            }
+        }
         if (info == SKIP) {
             return this.discard;
         }

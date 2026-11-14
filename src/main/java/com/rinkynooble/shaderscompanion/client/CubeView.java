@@ -796,10 +796,14 @@ public final class CubeView {
         GlStateManager._viewport(0, 0, width, height);
         GlStateManager._scissorBox(0, 0, width, height);
         float[] zero = {0.0F, 0.0F, 0.0F, 0.0F};
-        for (int i = 0; i < 3; i++) {
-            GL30C.glClearBufferfv(GL11C.GL_COLOR, i, zero);
-        }
+        // Outside the part of the screen the mirror covers, the distance says "not drawn" (-1); inside it, 0 is open sky
+        GL30C.glClearBufferfv(GL11C.GL_COLOR, 0, zero);
+        GL30C.glClearBufferfv(GL11C.GL_COLOR, 1, zero);
+        GL30C.glClearBufferfv(GL11C.GL_COLOR, 2, new float[]{-1.0F, 0.0F, 0.0F, 0.0F});
         GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[]{1.0F});
+        int[] drawn = MirrorView.drawnPixels();
+        GlStateManager._scissorBox(drawn[0], drawn[1], drawn[2], drawn[3]);
+        GL30C.glClearBufferfv(GL11C.GL_COLOR, 2, zero);
 
         MirrorView.drawMatrix().get(matrixBuffer);
         logDepth = (float) (1.0 / (Math.log(far / NEAR) / Math.log(2.0)));

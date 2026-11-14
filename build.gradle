@@ -81,6 +81,20 @@ minecraft {
             if (project.hasProperty('devBoat')) {
                 property 'shaderscompanion.devBoat', project.property('devBoat')
             }
+            // -PdevGlass: the ocean scene surrounded by light grey stained glass (water seen through glass).
+            if (project.hasProperty('devGlass')) {
+                property 'shaderscompanion.devGlass', 'true'
+            }
+            // -PdevTacz: TaCZ loaded (see dependencies); the mirror scene then holds a gun and wears armour, and every
+            // render type the entity capture is asked for is logged.
+            if (project.hasProperty('devTacz')) {
+                property 'shaderscompanion.devTacz', 'true'
+                property 'shaderscompanion.logTypes', 'true'
+            }
+            // -PdevNoShaders: scenes start without waiting for the mod to draw (for a run with shaders turned off).
+            if (project.hasProperty('devNoShaders')) {
+                property 'shaderscompanion.devNoShaders', 'true'
+            }
             // -PdevRain: rain from 30 ticks into a scene (the ocean scene's biome has rain).
             if (project.hasProperty('devRain')) {
                 property 'shaderscompanion.devRain', 'true'
@@ -129,6 +143,15 @@ dependencies {
         runtimeOnly fg.deobf("local:ponder:1.0.91")
         runtimeOnly fg.deobf("local:flywheel:1.0.5")
         minecraftLibrary files('libs/rhino-1.8.1-SNAPSHOT.jar')
+    }
+    // TaCZ is loaded in dev runs only with -PdevTacz: its jar without the nested ones, SimpleBedrockModel remapped (the
+    // version the instance resolves), its script and maths libraries as they are. MixinExtras comes with Forge.
+    if (project.hasProperty('devTacz')) {
+        runtimeOnly fg.deobf("local:tacz:1.1.8")
+        if (!project.hasProperty('devSbw')) {
+            runtimeOnly fg.deobf("local:simplebedrockmodel:2.5.1")
+        }
+        minecraftLibrary files('libs/luaj-core-3.0.8.jar', 'libs/luaj-jse-3.0.8.jar', 'libs/commons-math3-3.6.1.jar', 'libs/bcel-6.6.1.jar')
     }
 }
 
@@ -205,8 +228,8 @@ tasks.register('checkJar') {
                 throw new GradleException("${jarFile.name} has no ${refmapName}: its mixins would do nothing in the real game. Run gradlew clean build.")
             }
             var refmap = zip.getInputStream(entry).getText('UTF-8')
-            // GameRenderer.renderLevel and LevelRenderer.renderLevel, the frame hook's method and call
-            for (name in ['m_109089_', 'm_109599_']) {
+            // GameRenderer.renderLevel and LevelRenderer.renderLevel, the frame hook's method and call; RenderBuffers.bufferSource
+            for (name in ['m_109089_', 'm_109599_', 'm_110104_']) {
                 if (!refmap.contains(name)) {
                     throw new GradleException("${refmapName} in ${jarFile.name} doesn't map ${name}: the frame hook would not attach in the real game.")
                 }
