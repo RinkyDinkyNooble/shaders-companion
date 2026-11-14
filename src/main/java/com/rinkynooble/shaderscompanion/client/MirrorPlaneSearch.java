@@ -34,6 +34,9 @@ import org.joml.Vector4f;
  * takes over after it has covered more for half a second, sooner the more it covers, or at once when the current one
  * leaves the view.
  * <p>
+ * The search runs in real time, not per frame: rays per second and smoothing by time, so the mirror is as quick at 40
+ * frames a second as at 200 (the rates were tuned at about 260 frames a second).
+ * <p>
  * Screen positions here are in screen halves: -1 to 1 across the screen, as a tangent of the view's angle.
  */
 final class MirrorPlaneSearch {
@@ -48,7 +51,10 @@ final class MirrorPlaneSearch {
     private static final float CELL_HEIGHT = 2.0F * REACH / GRID_Y;
     /** Grid cells visited in a scattered order: a stride with no common factor with the cell count. */
     private static final int CELL_STRIDE = 37;
-    private static final int RAYS_PER_FRAME = 30;
+    /** Rays per second (a sweep of the grid every 31 ms), and the fewest and most per frame. */
+    private static final float RAYS_PER_SECOND = 7800.0F;
+    private static final int MIN_RAYS_PER_FRAME = 16;
+    private static final int MAX_RAYS_PER_FRAME = 64;
     /** How far ahead the camera's turn is followed when weighting the grid. */
     private static final float LOOKAHEAD_SECONDS = 0.2F;
     private static final double RAY_DISTANCE = 64.0;
@@ -58,8 +64,12 @@ final class MirrorPlaneSearch {
      */
     private static final float CENTRE_SPREAD = 0.35F;
     private static final float EDGE_WEIGHT = 0.1F;
-    /** Each frame's shares move this far towards the grid's, smoothing out the noise of the rays' spots in their cells. */
-    private static final float SMOOTHING = 0.2F;
+    /** The shares follow the grid's with this time constant, smoothing out the noise of the rays' spots in their cells. */
+    private static final float SMOOTHING_SECONDS = 0.017F;
+    /** The point the view heads for follows the turn with this time constant, so one uneven frame moves it only part way. */
+    private static final float EASING_SECONDS = 0.0055F;
+    /** Longest time step a frame counts as (after a pause the search goes on as after a slow frame). */
+    private static final float MAX_STEP_SECONDS = 0.1F;
     /** Share of the weighted screen a plane must cover to be mirrored; the current one stays down to half of it. */
     private static final float MIN_SCORE = 0.01F;
     /** Another plane takes over when it covers this much more than the current one... */
@@ -90,6 +100,8 @@ final class MirrorPlaneSearch {
     private static final Map<BlockState, Boolean> translucent = new IdentityHashMap<>();
     private static ClientLevel scoredLevel;
     private static int rayCursor;
+    private static long lastFindNanos;
+    private static float lastStep;
     private static long plane = NO_PLANE;
     /** A plane that covers clearly more than the current one, and since when. */
     private static long challenger = NO_PLANE;
@@ -124,6 +136,7 @@ final class MirrorPlaneSearch {
     static void forget() {
         Arrays.fill(cellPlanes, NO_PLANE);
         lastForwardNanos = 0L;
+        lastFindNanos = 0L;
         scores.clear();
         plane = NO_PLANE;
         challenger = NO_PLANE;
@@ -136,10 +149,31 @@ final class MirrorPlaneSearch {
      * @param projection the main view's projection
      */
     static long find(Minecraft mc, Camera camera, Vec3 cameraPos, Matrix4f view, Matrix4f projection) {
-        followTurn(view, projection);
-        castRays(mc, camera, cameraPos, view, projection);
-        choosePlane(cameraPos);
+        float seconds = step();
+        followTurn(view, projection, seconds);
+        int rays = Math.max(MIN_RAYS_PER_FRAME, Math.min(MAX_RAYS_PER_FRAME, Math.round(RAYS_PER_SECOND * seconds)));
+        castRays(mc, camera, cameraPos, view, projection, rays);
+        choosePlane(cameraPos, seconds);
         return plane;
+    }
+
+    /** The time since the last search, in seconds (a 60th of a second for the first). */
+    private static float step() {
+        long now = System.nanoTime();
+        float seconds = lastFindNanos == 0L ? 1.0F / 60.0F : Math.max(0.0F, Math.min(MAX_STEP_SECONDS, (now - lastFindNanos) / 1.0E9F));
+        lastFindNanos = now;
+        lastStep = seconds;
+        return seconds;
+    }
+
+    /** How far a value smoothed with a time constant moves towards its target in a step of this many seconds. */
+    static float follow(float seconds, float timeConstant) {
+        return 1.0F - (float) Math.exp(-seconds / timeConstant);
+    }
+
+    /** The time step of the last search, in seconds. */
+    static float lastStep() {
+        return lastStep;
     }
 
     /** The chosen plane's smoothed, weighted share of the screen (0 without one). */
@@ -233,7 +267,7 @@ final class MirrorPlaneSearch {
      * Sets this frame's cell weights around the point on screen the view's centre will reach LOOKAHEAD_SECONDS from now
      * at the speed it turned since the last frame (the screen's centre while it holds still).
      */
-    private static void followTurn(Matrix4f view, Matrix4f projection) {
+    private static void followTurn(Matrix4f view, Matrix4f projection, float stepSeconds) {
         Matrix4f toWorld = new Matrix4f(view).invert();
         Vector3f forward = toWorld.transformDirection(new Vector3f(0.0F, 0.0F, -1.0F)).normalize();
         long now = System.nanoTime();
@@ -261,15 +295,16 @@ final class MirrorPlaneSearch {
         }
         lastForward.set(forward);
         lastForwardNanos = now;
-        // Eased so a single uneven frame moves the weights only half way
-        aheadX += (targetX - aheadX) * 0.5F;
-        aheadY += (targetY - aheadY) * 0.5F;
+        // Eased so a single uneven frame moves the weights only part way
+        float easing = follow(stepSeconds, EASING_SECONDS);
+        aheadX += (targetX - aheadX) * easing;
+        aheadY += (targetY - aheadY) * easing;
         for (int cell = 0; cell < CELLS; cell++) {
             cellWeights[cell] = cellWeight(cell, aheadX, aheadY) / STILL_TOTAL;
         }
     }
 
-    private static void castRays(Minecraft mc, Camera camera, Vec3 cameraPos, Matrix4f view, Matrix4f projection) {
+    private static void castRays(Minecraft mc, Camera camera, Vec3 cameraPos, Matrix4f view, Matrix4f projection, int rays) {
         Entity entity = camera.getEntity() != null ? camera.getEntity() : mc.player;
         if (entity == null) {
             return;
@@ -278,7 +313,7 @@ final class MirrorPlaneSearch {
         float tanX = 1.0F / projection.m00();
         float tanY = 1.0F / projection.m11();
         Vector4f direction = new Vector4f();
-        for (int r = 0; r < RAYS_PER_FRAME; r++) {
+        for (int r = 0; r < rays; r++) {
             int sweep = rayCursor / CELLS;
             int cell = (rayCursor % CELLS) * CELL_STRIDE % CELLS;
             rayCursor = (rayCursor + 1) % (CELLS * 1024);
@@ -330,11 +365,12 @@ final class MirrorPlaneSearch {
         return known;
     }
 
-    private static void choosePlane(Vec3 cameraPos) {
-        scores.replaceAll((key, value) -> value * (1.0F - SMOOTHING));
+    private static void choosePlane(Vec3 cameraPos, float seconds) {
+        float smoothing = follow(seconds, SMOOTHING_SECONDS);
+        scores.replaceAll((key, value) -> value * (1.0F - smoothing));
         for (int cell = 0; cell < CELLS; cell++) {
             if (cellPlanes[cell] != NO_PLANE) {
-                scores.merge(cellPlanes[cell], cellWeights[cell] * SMOOTHING, Float::sum);
+                scores.merge(cellPlanes[cell], cellWeights[cell] * smoothing, Float::sum);
             }
         }
         scores.values().removeIf(value -> value < 1.0E-4F);

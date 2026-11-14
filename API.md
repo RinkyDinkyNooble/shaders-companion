@@ -128,6 +128,7 @@ A pixel uses the mirror view when its position lies on the plane (`abs(dot(plane
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
+- 0.8.0: the same protocols. The mirror's plane search runs in real time (as quick at 60 frames a second as at 260); mobs and block entities are collected for the whole mirror view, not only its drawn part; far ones are redrawn less often (`entityLod`).
 - 0.7.0: mirror view protocol 2: only the mirror's part of the view is drawn, -1 in the distance texture elsewhere; the view's size can change with `mirrorLod`. The plane is chosen ahead of the camera's turn.
 - 0.6.3: the same protocols. Mobs and block entities are a frame late in the views (collected after the world is drawn); the local player in the mirror view is not.
 - 0.6.1: the same protocols. The shadow pass keeps what can cast a shadow into the mirror view.

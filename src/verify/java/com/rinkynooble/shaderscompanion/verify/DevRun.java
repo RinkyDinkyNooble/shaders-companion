@@ -57,8 +57,12 @@ import org.lwjgl.opengl.GL33C;
  * <li>-PdevScene=ocean: the nearest deep ocean, the camera about 2.7 blocks above the water (standing on a barrier) looking out to the horizon
  * (-PdevLift=6 stands that many blocks higher; -PdevPitch, 5 degrees down by default here; -PdevYaw, by default the way the ocean runs farthest), screenshotted with the mod drawing ("-on") and turned off ("-off").
  * With Distant Horizons (-PdevDh -PdevWait=1400) the far water is LOD water: distant water should look the same in
- * both shots, with no stripes. -PdevToggle=WATER_WAVE_FILTER then times that shader pack option off and on in six
- * alternating rounds (for costs measured while other programs use the GPU) instead of the "-off" shot.</li>
+ * both shots, with no stripes.</li>
+ * <li>-PdevToggle=WATER_WAVE_FILTER (any scene but city and shadows): after the "-on" shot, six alternating timing rounds
+ * with that shader pack option off and on, each with a screenshot ("-WATER_WAVE_FILTER-off0" and so on), instead of the
+ * "-off" shot: costs and looks compared within one run (two runs differ by more than most changes, mostly through
+ * Distant Horizons' loading). -PdevToggle=config.distantHorizons toggles one of the mod's own on/off settings instead.
+ * To compare code, patch a copy of the pack so an option that does nothing in the scene switches between old and new.</li>
  * </ul>
  * <ul>
  * <li>-PdevScene=shadows: the black glass wall in front, and behind the camera pillars, a roof and two mobs in the low
@@ -102,7 +106,7 @@ public final class DevRun {
     private static final String SCENE = System.getProperty("shaderscompanion.devScene", "");
     private static final int PITCH = Integer.getInteger("shaderscompanion.devPitch", 50);
     private static final int WAIT_TICKS = Integer.getInteger("shaderscompanion.devWait", 160);
-    /** A shader pack on/off option to time in alternating rounds after the ocean scene's shot (-PdevToggle). */
+    /** A shader pack on/off option, or config.<name> for the mod's own, to time in alternating rounds (-PdevToggle). */
     private static final String TOGGLE = System.getProperty("shaderscompanion.devToggle", "");
     private static final int TOGGLE_ROUNDS = 6;
     /** Ticks a round waits after the pack reloads before its timed ticks. */
@@ -134,6 +138,8 @@ public final class DevRun {
     private static final int[] frameQueries = new int[8];
     private static final double[] gpuMillis = new double[TIMED_FRAMES];
     private static final double[] frameMillis = new double[TIMED_FRAMES];
+    private static final double[] modGpuMillis = new double[TIMED_FRAMES];
+    private static final double[] entityMillis = new double[TIMED_FRAMES];
     private static int framesTimed;
     private static int frameSlot;
     private static long lastFrameStart;
@@ -176,6 +182,8 @@ public final class DevRun {
                 long end = GL33C.glGetQueryObjecti64(frameQueries[slot * 2 + 1], GL15C.GL_QUERY_RESULT);
                 gpuMillis[framesTimed % TIMED_FRAMES] = (end - start) / 1.0E6;
                 frameMillis[framesTimed % TIMED_FRAMES] = (now - lastFrameStart) / 1.0E6;
+                modGpuMillis[framesTimed % TIMED_FRAMES] = Math.max(0L, CubeView.gpuNanosForChecks()) / 1.0E6;
+                entityMillis[framesTimed % TIMED_FRAMES] = CubeView.entityNanosForChecks() / 1.0E6;
                 framesTimed++;
             }
             lastFrameStart = now;
@@ -197,7 +205,8 @@ public final class DevRun {
     }
 
     private static String frameTiming() {
-        return String.format("frame %.2f ms, GPU %.2f ms (medians of the last %d frames)", median(frameMillis), median(gpuMillis), Math.min(framesTimed, TIMED_FRAMES));
+        return String.format("frame %.2f ms, GPU %.2f ms, the mod's GPU %.2f ms, entities' CPU %.3f ms (medians of the last %d frames)", median(frameMillis),
+                median(gpuMillis), median(modGpuMillis), median(entityMillis), Math.min(framesTimed, TIMED_FRAMES));
     }
 
     @SubscribeEvent
@@ -729,8 +738,8 @@ public final class DevRun {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run at {}: {}", mc.player == null ? "?" : mc.player.position(),
                     String.join(" | ", DebugOverlay.statusLines()));
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod on: {}", frameTiming());
-            if (ocean && !TOGGLE.isEmpty()) {
-                // Timing rounds with the pack's option off, on, off, on...
+            if (!TOGGLE.isEmpty() && !city && !shadows) {
+                // Timing rounds with the option off, on, off, on..., each with a screenshot
                 timingRound = 0;
                 setPackOption(false);
                 phase = 4;
@@ -767,7 +776,7 @@ public final class DevRun {
         } else if (phase == 5 && ticks - phaseTick >= 40 + TIMING_TICKS) {
             String[] lines = DebugOverlay.statusLines();
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing, city round {} ({}): {} | {}", timingRound, CITY_ROUNDS[timingRound], frameTiming(),
-                    lines.length > 1 ? lines[1] : "");
+                    lines.length > 3 ? lines[1] + " | " + lines[3] : "");
             phaseTick = ticks;
             if (++timingRound < CITY_ROUNDS.length) {
                 cityRound(timingRound);
@@ -778,7 +787,10 @@ public final class DevRun {
             }
         } else if (phase == 4 && ticks - phaseTick >= TOGGLE_SETTLE_TICKS + TIMING_TICKS) {
             boolean on = timingRound % 2 == 1;
-            ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with {} {}: {}", TOGGLE, on ? "on" : "off", frameTiming());
+            Screenshot.grab(mc.gameDirectory, prefix + "-" + TOGGLE + "-" + (on ? "on" : "off") + timingRound + ".png", mc.getMainRenderTarget(), message -> { });
+            String[] lines = DebugOverlay.statusLines();
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with {} {}: {} | {}", TOGGLE, on ? "on" : "off", frameTiming(),
+                    lines.length > 3 ? lines[1] + " | " + lines[3] : "");
             phaseTick = ticks;
             if (++timingRound < TOGGLE_ROUNDS) {
                 setPackOption(!on);
@@ -805,7 +817,8 @@ public final class DevRun {
     }
 
     /** The city scene's timing rounds: what each changes from the defaults. */
-    private static final String[] CITY_ROUNDS = {"defaults", "mirror off", "mirror at 50%", "entities off", "defaults again"};
+    private static final String[] CITY_ROUNDS = {"defaults", "mirror off", "mirror at 50%", "entities off", "entity LOD off", "defaults again", "entity LOD off",
+            "defaults again"};
 
     /** Applies a city timing round's settings (-1: back to the defaults). */
     private static void cityRound(int round) {
@@ -813,10 +826,29 @@ public final class DevRun {
         Config.MIRROR_SCALE.set(round == 2 ? 50 : 100);
         Config.ENTITIES.set(round != 3);
         Config.BLOCK_ENTITIES.set(round != 3);
+        Config.ENTITY_LOD.set(round < 0 || !CITY_ROUNDS[round].equals("entity LOD off"));
     }
 
-    /** Sets the shader pack's on/off option named by -PdevToggle and reloads the pack. */
+    /**
+     * Sets the shader pack's on/off option named by -PdevToggle and reloads the pack; "config.<name>" sets the mod's own
+     * boolean setting of that name instead.
+     */
     private static void setPackOption(boolean on) {
+        if (TOGGLE.startsWith("config.")) {
+            String name = TOGGLE.substring("config.".length());
+            for (java.lang.reflect.Field field : Config.class.getFields()) {
+                try {
+                    if (field.get(null) instanceof net.minecraftforge.common.ForgeConfigSpec.BooleanValue value && value.getPath().get(value.getPath().size() - 1).equals(name)) {
+                        value.set(on);
+                        return;
+                    }
+                } catch (IllegalAccessException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+            ShadersCompanion.LOGGER.error("Shaders Companion dev run: no setting {}", name);
+            return;
+        }
         try {
             Iris.getShaderPackOptionQueue().put(TOGGLE, Boolean.toString(on));
             Iris.reload();

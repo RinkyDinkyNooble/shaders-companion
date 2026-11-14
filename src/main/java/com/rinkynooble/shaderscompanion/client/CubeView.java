@@ -89,7 +89,9 @@ public final class CubeView {
     static int faceSize;
     static int frameCounter;
     static long cpuNanos;
-    static long entityNanos;
+    /** CPU time for the local player before this frame and the mobs and block entities collected after the last one. */
+    static long playerNanos;
+    static long collectNanos;
     static long mirrorNanos;
     static int sectionsDrawn;
     static int drawCalls;
@@ -97,6 +99,7 @@ public final class CubeView {
     static int sectionsQueued;
     static int entitiesDrawn;
     static int blockEntitiesDrawn;
+    static int entitiesReused;
     static int lodContainers;
     static int lodRange;
     static boolean mirrorPlayerDrawn;
@@ -230,9 +233,10 @@ public final class CubeView {
                 return;
             }
             saved = GlState.capture();
-            // The faces the next frame draws, and this frame's mirror view (the next one's is close to it)
+            // The faces the next frame draws, and this frame's whole mirror view (the next one's is close to it, and
+            // its drawn part may be larger)
             int faces = cubeWanted ? Config.FACES_PER_FRAME.get() : 0;
-            BoxTest seen = MirrorView.active() ? MirrorView.seen() : BoxTest.NONE;
+            BoxTest seen = MirrorView.active() ? MirrorView.seenWhole() : BoxTest.NONE;
             for (int i = 0; i < faces; i++) {
                 int face = (nextFace + i) % 6;
                 seen = seen.or((minX, minY, minZ, maxX, maxY, maxZ) -> boxInFace(face, minX, minY, minZ, maxX, maxY, maxZ));
@@ -249,7 +253,7 @@ public final class CubeView {
             if (saved != null) {
                 saved.restore();
             }
-            entityNanos += System.nanoTime() - start;
+            collectNanos = System.nanoTime() - start;
         }
     }
 
@@ -337,11 +341,12 @@ public final class CubeView {
                 entityBatches = List.of();
                 entitiesDrawn = 0;
                 blockEntitiesDrawn = 0;
+                entitiesReused = 0;
             }
             entityOffset[0] = (float) (entityCamera.x - cameraPos.x);
             entityOffset[1] = (float) (entityCamera.y - cameraPos.y);
             entityOffset[2] = (float) (entityCamera.z - cameraPos.z);
-            entityNanos = System.nanoTime() - entityStart;
+            playerNanos = System.nanoTime() - entityStart;
 
             setupDrawState(size);
             for (int i = 0; i < faces; i++) {
@@ -396,6 +401,16 @@ public final class CubeView {
     /** Distant Horizons' range in the last frame, 0 without LODs. */
     public static int lodRangeForChecks() {
         return lodsCollected ? lodRange : 0;
+    }
+
+    /** The latest GPU time of the mod's drawing in nanoseconds (-1 before the first), for the dev run's timings. */
+    public static long gpuNanosForChecks() {
+        return GpuTimer.nanos;
+    }
+
+    /** The CPU time of the entities of the latest frame in nanoseconds, for the dev run's timings. */
+    public static long entityNanosForChecks() {
+        return playerNanos + collectNanos;
     }
 
     /** Frames drawn since the game started. */
@@ -559,6 +574,7 @@ public final class CubeView {
         entityBatches = List.of();
         entitiesDrawn = 0;
         blockEntitiesDrawn = 0;
+        entitiesReused = 0;
         entities.begin();
         if (seen == BoxTest.NONE) {
             return;
@@ -572,6 +588,7 @@ public final class CubeView {
         }
         entitiesDrawn = entities.entitiesDrawn;
         blockEntitiesDrawn = entities.blockEntitiesDrawn;
+        entitiesReused = entities.reused;
         entityBatches = upload(entities, entityVertexArray, entityBuffer);
     }
 

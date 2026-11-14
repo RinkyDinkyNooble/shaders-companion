@@ -44,6 +44,11 @@ import it.unimi.dsi.fastutil.objects.Object2IntFunction;
  * stores the vertices in the cube's entity layout instead of drawing them. Render types without a texture or with
  * another vertex layout (name tags, leads, enchantment glint, shadows) are dropped. Oculus only wraps its own buffer
  * sources and Embeddium falls back to the plain vertex calls for consumers it doesn't know, so neither changes this.
+ * <p>
+ * Entity LOD (config entityLod): each mob's and block entity's vertices are kept, and far ones are drawn again only
+ * every few collections ({@link #refreshInterval}, staggered); in between their kept vertices are copied in, moved by
+ * how far they moved. Drawing through the renderers is most of the mod's processor time in crowded places; a copy
+ * costs a few microseconds. Kept vertices also stand in for a mob the time budget leaves out.
  */
 final class EntityCapture implements MultiBufferSource {
     /** Bytes per vertex: position float3, colour ubyte4, texture float2, light ushort2, normal byte4, id ushort2. */
@@ -66,6 +71,12 @@ final class EntityCapture implements MultiBufferSource {
     /** Failures of one entity or block entity type after which it is left out for the session. */
     private static final int MAX_FAILURES = 3;
     private static final String[] SKIPPED_NAMES = {"glint", "shadow", "crumbling", "outline", "lightning", "energy_swirl", "leash", "water_mask"};
+    /** Entity LOD: one more collection between redraws for every this many blocks away, up to MAX_REFRESH_INTERVAL. */
+    private static final double REFRESH_STEP_BLOCKS = 16.0;
+    private static final int MAX_REFRESH_INTERVAL = 4;
+    /** Kept vertices not used for this many collections are dropped. */
+    private static final int KEEP_COLLECTIONS = 40;
+    private static final int INTS_PER_VERTEX = STRIDE / 4;
 
     record TypeInfo(ResourceLocation texture, int kind) {
     }
@@ -86,9 +97,16 @@ final class EntityCapture implements MultiBufferSource {
     private final VertexConsumer discard = new Sink(SKIP);
     private int currentId;
     private int currentLight;
+    /** Entity LOD: each mob's and block entity's last drawn vertices, and the collections counted so far. */
+    private final Map<Object, Kept> kept = new IdentityHashMap<>();
+    private Object keptLevel;
+    private int collection;
+    private boolean lod;
 
     int entitiesDrawn;
     int blockEntitiesDrawn;
+    /** Of those, the ones whose kept vertices were copied in (entity LOD). */
+    int reused;
     boolean mirrorPlayerDrawn;
 
     /**
@@ -111,6 +129,7 @@ final class EntityCapture implements MultiBufferSource {
         }
         this.candidates.clear();
         this.candidates.add(entity);
+        this.lod = false;
         this.drawCandidates(dispatcher, origin, partialTick, 1, Long.MAX_VALUE);
         this.mirrorPlayerDrawn = this.entitiesDrawn > 0;
         this.entitiesDrawn = 0;
@@ -132,6 +151,7 @@ final class EntityCapture implements MultiBufferSource {
         Vec3 origin = camera.getPosition();
         Entity cameraEntity = camera.getEntity();
         double maxDistanceSq = maxDistance * maxDistance;
+        this.useLod(mc, Config.ENTITY_LOD.get());
         this.candidates.clear();
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity.isInvisible() || this.gaveUp(entity.getType())) {
@@ -158,7 +178,10 @@ final class EntityCapture implements MultiBufferSource {
         this.drawCandidates(dispatcher, origin, partialTick, maxCount, budgetNanos);
     }
 
-    /** Draws the first candidates into the sinks, relative to {@code origin}, until the count or the time budget runs out. */
+    /**
+     * Draws the first candidates into the sinks, relative to {@code origin}, until the count runs out. Once the time
+     * budget is spent, only kept vertices are copied in (entity LOD).
+     */
     private void drawCandidates(EntityRenderDispatcher dispatcher, Vec3 origin, float partialTick, int maxCount, long budgetNanos) {
         Object2IntFunction<NamespacedId> entityIds = WorldRenderingSettings.INSTANCE.getEntityIds();
         boolean shadows = readShadowSetting(dispatcher);
@@ -167,11 +190,19 @@ final class EntityCapture implements MultiBufferSource {
         try (CaptureBufferSource.Redirect redirect = CaptureBufferSource.redirect(this)) {
             PoseStack poseStack = new PoseStack();
             int count = Math.min(maxCount, this.candidates.size());
-            for (int i = 0; i < count && System.nanoTime() - start < budgetNanos; i++) {
+            for (int i = 0; i < count; i++) {
                 Entity entity = this.candidates.get(i);
                 double x = Mth.lerp(partialTick, entity.xOld, entity.getX()) - origin.x;
                 double y = Mth.lerp(partialTick, entity.yOld, entity.getY()) - origin.y;
                 double z = Mth.lerp(partialTick, entity.zOld, entity.getZ()) - origin.z;
+                boolean inBudget = System.nanoTime() - start < budgetNanos;
+                if (this.reuse(entity, x, y, z, inBudget)) {
+                    this.entitiesDrawn++;
+                    continue;
+                }
+                if (!inBudget) {
+                    continue;
+                }
                 float yaw = Mth.lerp(partialTick, entity.yRotO, entity.getYRot());
                 this.currentId = ENTITY_ID_BIT | idOf(entityIds, entity);
                 int[] marks = this.markSinks();
@@ -179,6 +210,7 @@ final class EntityCapture implements MultiBufferSource {
                     this.currentLight = dispatcher.getPackedLightCoords(entity, partialTick);
                     dispatcher.render(entity, x, y, z, yaw, partialTick, poseStack, this, this.currentLight);
                     this.entitiesDrawn++;
+                    this.keep(entity, marks, x, y, z);
                 } catch (Throwable t) {
                     this.fail(marks, entity.getType(), String.valueOf(EntityType.getKey(entity.getType())), t);
                     poseStack = new PoseStack();
@@ -196,7 +228,7 @@ final class EntityCapture implements MultiBufferSource {
         }
     }
 
-    /** Starts a collection: empties every sink. */
+    /** Starts a collection: empties every sink, and drops kept vertices that went unused for a while. */
     void begin() {
         for (Sink sink : this.sinkList) {
             sink.vertices = 0;
@@ -204,7 +236,65 @@ final class EntityCapture implements MultiBufferSource {
         }
         this.entitiesDrawn = 0;
         this.blockEntitiesDrawn = 0;
+        this.reused = 0;
         this.mirrorPlayerDrawn = false;
+        this.collection++;
+        if (this.collection % KEEP_COLLECTIONS == 0) {
+            this.kept.values().removeIf(entry -> this.collection - entry.usedAt > KEEP_COLLECTIONS);
+        }
+    }
+
+    /** Turns entity LOD on or off for this collection; kept vertices are dropped when it is off or the world changed. */
+    private void useLod(Minecraft mc, boolean on) {
+        this.lod = on;
+        if (!on || mc.level != this.keptLevel) {
+            this.kept.clear();
+            this.keptLevel = mc.level;
+        }
+    }
+
+    /** Entity LOD: collections between redraws at this squared distance from the camera. */
+    static int refreshInterval(double distanceSq) {
+        return Math.min(MAX_REFRESH_INTERVAL, 1 + (int) (Math.sqrt(distanceSq) / REFRESH_STEP_BLOCKS));
+    }
+
+    /**
+     * Entity LOD: copies a mob's or block entity's kept vertices into the sinks, moved to where it is now (x, y, z
+     * relative to the camera), when it isn't due to be drawn again or the time budget is spent. False when it has to
+     * be drawn (nothing kept, or due).
+     */
+    private boolean reuse(Object key, double x, double y, double z, boolean inBudget) {
+        if (!this.lod) {
+            return false;
+        }
+        Kept entry = this.kept.get(key);
+        if (entry == null) {
+            return false;
+        }
+        int interval = refreshInterval(x * x + y * y + z * z);
+        // Staggered, so a crowd seen at once isn't all drawn again in the same frame
+        boolean due = this.collection - entry.drawnAt >= interval || Math.floorMod(this.collection + System.identityHashCode(key), interval) == 0;
+        if (due && inBudget) {
+            return false;
+        }
+        entry.usedAt = this.collection;
+        entry.copyTo((float) (x - entry.x), (float) (y - entry.y), (float) (z - entry.z));
+        this.reused++;
+        return true;
+    }
+
+    /** Entity LOD: keeps the vertices a mob or block entity just added to the sinks (after marks), drawn at x, y, z. */
+    private void keep(Object key, int[] marks, double x, double y, double z) {
+        if (!this.lod) {
+            return;
+        }
+        Kept entry = this.kept.computeIfAbsent(key, k -> new Kept());
+        entry.drawnAt = this.collection;
+        entry.usedAt = this.collection;
+        entry.x = x;
+        entry.y = y;
+        entry.z = z;
+        entry.copyFrom(this.sinkList, marks);
     }
 
     /**
@@ -219,6 +309,7 @@ final class EntityCapture implements MultiBufferSource {
         }
         Vec3 origin = camera.getPosition();
         double maxDistanceSq = maxDistance * maxDistance;
+        this.useLod(mc, Config.ENTITY_LOD.get());
         this.blockCandidates.clear();
         for (RenderRegion region : regions) {
             double rx = region.getOriginX() - origin.x;
@@ -233,6 +324,11 @@ final class EntityCapture implements MultiBufferSource {
                 if (section == null) {
                     continue;
                 }
+                double sx = (section.getChunkX() << 4) - origin.x;
+                double sz = (section.getChunkZ() << 4) - origin.z;
+                if (CubeView.nearestDistanceSq(sx, 0.0, sz, sx + 16.0, 0.0, sz + 16.0) > maxDistanceSq) {
+                    continue;
+                }
                 this.addBlockEntities(section.getCulledBlockEntities(), origin, seen, maxDistanceSq);
                 this.addBlockEntities(section.getGlobalBlockEntities(), origin, seen, maxDistanceSq);
             }
@@ -245,18 +341,29 @@ final class EntityCapture implements MultiBufferSource {
         PoseStack poseStack = new PoseStack();
         int count = Math.min(maxCount, this.blockCandidates.size());
         try (CaptureBufferSource.Redirect redirect = CaptureBufferSource.redirect(this)) {
-            for (int i = 0; i < count && System.nanoTime() - start < budgetNanos; i++) {
+            for (int i = 0; i < count; i++) {
                 BlockEntity blockEntity = this.blockCandidates.get(i);
+                double x = blockEntity.getBlockPos().getX() - origin.x;
+                double y = blockEntity.getBlockPos().getY() - origin.y;
+                double z = blockEntity.getBlockPos().getZ() - origin.z;
+                boolean inBudget = System.nanoTime() - start < budgetNanos;
+                if (this.reuse(blockEntity, x, y, z, inBudget)) {
+                    this.blockEntitiesDrawn++;
+                    continue;
+                }
+                if (!inBudget) {
+                    continue;
+                }
                 this.currentId = ENTITY_ID_BIT;
                 this.currentLight = 0xF000F0;
                 int[] marks = this.markSinks();
                 try {
                     poseStack.pushPose();
-                    poseStack.translate(blockEntity.getBlockPos().getX() - origin.x, blockEntity.getBlockPos().getY() - origin.y,
-                            blockEntity.getBlockPos().getZ() - origin.z);
+                    poseStack.translate(x, y, z);
                     dispatcher.render(blockEntity, partialTick, poseStack, this);
                     poseStack.popPose();
                     this.blockEntitiesDrawn++;
+                    this.keep(blockEntity, marks, x, y, z);
                 } catch (Throwable t) {
                     this.fail(marks, blockEntity.getType(), "block entity " + BlockEntityType.getKey(blockEntity.getType()), t);
                     poseStack = new PoseStack();
@@ -287,7 +394,7 @@ final class EntityCapture implements MultiBufferSource {
 
     /** Whether drawing this entity or block entity type failed often enough to leave it out. */
     private boolean gaveUp(Object type) {
-        return this.failures.getOrDefault(type, 0) >= MAX_FAILURES;
+        return !this.failures.isEmpty() && this.failures.getOrDefault(type, 0) >= MAX_FAILURES;
     }
 
     /**
@@ -462,6 +569,80 @@ final class EntityCapture implements MultiBufferSource {
         }
     }
 
+    /**
+     * Entity LOD: one mob's or block entity's vertices as last drawn, per sink, with where it was then (relative to the
+     * camera then) and the collections it was drawn and last used in.
+     */
+    private static final class Kept {
+        int drawnAt;
+        int usedAt;
+        double x;
+        double y;
+        double z;
+        private Sink[] sinks = new Sink[0];
+        private int[] counts = new int[0];
+        private int[] data = new int[0];
+        private int parts;
+
+        /** Copies the vertices each sink got after its mark (sinks past the marks are new and count from 0). */
+        void copyFrom(List<Sink> sinkList, int[] marks) {
+            int total = 0;
+            int parts = 0;
+            for (int i = 0; i < sinkList.size(); i++) {
+                int added = sinkList.get(i).vertices - (i < marks.length ? marks[i] : 0);
+                if (added > 0) {
+                    total += added;
+                    parts++;
+                }
+            }
+            if (this.sinks.length < parts) {
+                this.sinks = new Sink[parts];
+                this.counts = new int[parts];
+            }
+            if (this.data.length < total * INTS_PER_VERTEX) {
+                this.data = new int[total * INTS_PER_VERTEX];
+            }
+            this.parts = 0;
+            int at = 0;
+            for (int i = 0; i < sinkList.size(); i++) {
+                Sink sink = sinkList.get(i);
+                int from = i < marks.length ? marks[i] : 0;
+                int added = sink.vertices - from;
+                if (added <= 0) {
+                    continue;
+                }
+                this.sinks[this.parts] = sink;
+                this.counts[this.parts] = added;
+                this.parts++;
+                long address = MemoryUtil.memAddress(sink.data) + (long) from * STRIDE;
+                for (int n = added * INTS_PER_VERTEX, k = 0; k < n; k++) {
+                    this.data[at++] = MemoryUtil.memGetInt(address + k * 4L);
+                }
+            }
+        }
+
+        /** Appends the kept vertices to their sinks, moved by dx, dy, dz. */
+        void copyTo(float dx, float dy, float dz) {
+            int at = 0;
+            for (int part = 0; part < this.parts; part++) {
+                Sink sink = this.sinks[part];
+                int count = this.counts[part];
+                sink.reserve(count);
+                long address = MemoryUtil.memAddress(sink.data) + (long) sink.vertices * STRIDE;
+                for (int v = 0; v < count; v++, address += STRIDE) {
+                    MemoryUtil.memPutFloat(address, Float.intBitsToFloat(this.data[at]) + dx);
+                    MemoryUtil.memPutFloat(address + 4, Float.intBitsToFloat(this.data[at + 1]) + dy);
+                    MemoryUtil.memPutFloat(address + 8, Float.intBitsToFloat(this.data[at + 2]) + dz);
+                    for (int k = 3; k < INTS_PER_VERTEX; k++) {
+                        MemoryUtil.memPutInt(address + k * 4L, this.data[at + k]);
+                    }
+                    at += INTS_PER_VERTEX;
+                }
+                sink.vertices += count;
+            }
+        }
+    }
+
     /** Stores one render type's vertices in the cube's entity layout. */
     private final class Sink implements VertexConsumer {
         final TypeInfo info;
@@ -489,6 +670,18 @@ final class EntityCapture implements MultiBufferSource {
 
         void discardPartialVertex() {
             this.color = this.defaultColorSet ? this.defaultColor : -1;
+        }
+
+        /** Makes room for this many more vertices. */
+        void reserve(int more) {
+            long needed = (long) (this.vertices + more) * STRIDE;
+            if (needed > this.data.capacity()) {
+                int capacity = this.data.capacity();
+                while (capacity < needed) {
+                    capacity *= 2;
+                }
+                this.data = MemoryUtil.memRealloc(this.data, capacity);
+            }
         }
 
         @Override
@@ -536,9 +729,7 @@ final class EntityCapture implements MultiBufferSource {
             if (this.data == null) {
                 return;
             }
-            if ((this.vertices + 1) * STRIDE > this.data.capacity()) {
-                this.data = MemoryUtil.memRealloc(this.data, this.data.capacity() * 2);
-            }
+            this.reserve(1);
             long address = MemoryUtil.memAddress(this.data) + (long) this.vertices * STRIDE;
             MemoryUtil.memPutFloat(address, this.x);
             MemoryUtil.memPutFloat(address + 4, this.y);

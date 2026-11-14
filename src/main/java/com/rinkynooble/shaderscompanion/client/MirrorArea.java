@@ -4,15 +4,15 @@ import org.joml.Matrix4f;
 
 /**
  * The part of the mirror view that is drawn: where the mirror's plane is on screen, with a margin (mirror protocol 2;
- * elsewhere the view's distance texture holds -1). It grows at once and shrinks a little each frame, so the rays'
- * changing spots don't make it flicker. Positions are in screen halves (see {@link MirrorPlaneSearch}); the view
+ * elsewhere the view's distance texture holds -1). It grows at once and shrinks smoothly, so the rays' changing spots
+ * don't make it flicker. Positions are in screen halves (see {@link MirrorPlaneSearch}); the view
  * reaches {@code viewMargin} past the screen's edges.
  */
 final class MirrorArea {
     /** The drawn part reaches this many grid cells past the cells whose rays hit the plane. */
     private static final float MARGIN_CELLS = 1.5F;
-    /** When the plane covers less, the drawn part shrinks this far towards it each frame (it grows at once). */
-    private static final float SHRINK = 0.1F;
+    /** When the plane covers less, the drawn part shrinks towards it with this time constant (it grows at once). */
+    private static final float SHRINK_SECONDS = 0.037F;
 
     private final float viewMargin;
     private final float[] covered = new float[4];
@@ -32,8 +32,12 @@ final class MirrorArea {
         this.maxY = viewMargin;
     }
 
-    /** Moves the area to the part of the screen this frame's plane covers (the whole view when no ray hit it). */
-    void update(long framePlane) {
+    /**
+     * Moves the area to the part of the screen this frame's plane covers (the whole view when no ray hit it).
+     *
+     * @param seconds the time since the last frame
+     */
+    void update(long framePlane, float seconds) {
         float newMinX;
         float newMinY;
         float newMaxX;
@@ -56,10 +60,11 @@ final class MirrorArea {
             this.maxY = newMaxY;
             return;
         }
-        this.minX = newMinX < this.minX ? newMinX : this.minX + (newMinX - this.minX) * SHRINK;
-        this.minY = newMinY < this.minY ? newMinY : this.minY + (newMinY - this.minY) * SHRINK;
-        this.maxX = newMaxX > this.maxX ? newMaxX : this.maxX + (newMaxX - this.maxX) * SHRINK;
-        this.maxY = newMaxY > this.maxY ? newMaxY : this.maxY + (newMaxY - this.maxY) * SHRINK;
+        float shrink = MirrorPlaneSearch.follow(seconds, SHRINK_SECONDS);
+        this.minX = newMinX < this.minX ? newMinX : this.minX + (newMinX - this.minX) * shrink;
+        this.minY = newMinY < this.minY ? newMinY : this.minY + (newMinY - this.minY) * shrink;
+        this.maxX = newMaxX > this.maxX ? newMaxX : this.maxX + (newMaxX - this.maxX) * shrink;
+        this.maxY = newMaxY > this.maxY ? newMaxY : this.maxY + (newMaxY - this.maxY) * shrink;
     }
 
     // The area in the view's clip space (-1 to 1 across the view)

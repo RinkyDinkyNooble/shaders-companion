@@ -68,11 +68,12 @@ public final class DebugOverlay {
         return new String[]{
                 "Shaders Companion: " + (CubeView.hookCalled ? CubeView.status : "frame hook not running (another mod may block it)"),
                 String.format("Faces %d px, %d per frame; CPU %.2f ms (entities %.2f, mirror view %.2f + plane search %.2f), GPU %s", CubeView.faceSize,
-                        Config.FACES_PER_FRAME.get(), CubeView.cpuNanos / 1.0e6, CubeView.entityNanos / 1.0e6, CubeView.mirrorNanos / 1.0e6,
+                        Config.FACES_PER_FRAME.get(), CubeView.cpuNanos / 1.0e6, (CubeView.playerNanos + CubeView.collectNanos) / 1.0e6, CubeView.mirrorNanos / 1.0e6,
                         MirrorView.cpuNanos / 1.0e6, gpu),
                 String.format("Last frame: %d sections, %d draws, %d quads, %d queued to build",
                         CubeView.sectionsDrawn, CubeView.drawCalls, CubeView.quadsDrawn, CubeView.sectionsQueued),
-                String.format("Entities: %d, block entities: %d; Distant Horizons: %s", CubeView.entitiesDrawn, CubeView.blockEntitiesDrawn,
+                String.format("Entities: %d, block entities: %d (%d kept from earlier frames); Distant Horizons: %s", CubeView.entitiesDrawn,
+                        CubeView.blockEntitiesDrawn, CubeView.entitiesReused,
                         CubeView.lodRangeForChecks() > 0 ? CubeView.lodContainers + " LOD sections, range " + CubeView.lodRange + " blocks"
                                 : !Config.DISTANT_HORIZONS.get() ? "turned off in the config" : Lods.reason()),
                 String.format("Mirror view: %s%s", MirrorView.status, MirrorView.active() && CubeView.mirrorPlayerDrawn ? ", your player in it" : ""),

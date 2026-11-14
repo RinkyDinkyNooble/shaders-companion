@@ -56,6 +56,7 @@ final class MirrorView {
     private static final Matrix4f drawMatrix = new Matrix4f();
     private static final Matrix4f packMatrix = new Matrix4f();
     private static final FrustumIntersection frustum = new FrustumIntersection();
+    private static final FrustumIntersection wholeFrustum = new FrustumIntersection();
     private static float maxDistanceSq;
     private static FloatBuffer infoBuffer;
 
@@ -113,12 +114,14 @@ final class MirrorView {
         // Positions relative to the mirrored camera: mirror them, then look at them as the main view does
         drawMatrix.setPerspective(2.0F * (float) Math.atan(tanY), aspect, near, far).mul(view).mul(mirror);
         packMatrix.set(drawMatrix).translate(-origin.x, -origin.y, -origin.z);
-        area.update(plane);
-        // Culled to the drawn part
-        frustum.set(area.crop().mul(packMatrix));
+        area.update(plane, MirrorPlaneSearch.lastStep());
+        // Culled to the drawn part, shadow casters too (Oculus's shadow pass runs after this, in the same frame)
+        Matrix4f cropped = area.crop().mul(packMatrix);
+        frustum.set(cropped);
+        wholeFrustum.set(packMatrix);
         maxDistanceSq = maxDistance * maxDistance;
         if (Config.MIRROR_SHADOWS.get()) {
-            MirrorShadows.set(packMatrix, normal, (float) heightAbove);
+            MirrorShadows.set(cropped, normal, (float) heightAbove);
         } else {
             MirrorShadows.clear();
         }
@@ -162,20 +165,32 @@ final class MirrorView {
         return active;
     }
 
-    /** Boxes relative to the camera that the view can see: in its frustum, in front of the plane and within the terrain range. */
+    /**
+     * Boxes relative to the camera that the drawn part of the view can see: in its frustum, in front of the plane and
+     * within the terrain range.
+     */
     static BoxTest seen() {
         return (minX, minY, minZ, maxX, maxY, maxZ) -> CubeView.nearestDistanceSq(minX, minY, minZ, maxX, maxY, maxZ) <= maxDistanceSq
-                && inView(minX, minY, minZ, maxX, maxY, maxZ);
+                && inView(frustum, minX, minY, minZ, maxX, maxY, maxZ);
+    }
+
+    /**
+     * As {@link #seen()} for the whole view, not only its drawn part: for the entities collected for the next frame,
+     * whose drawn part may be larger (it grows at once while the view turns).
+     */
+    static BoxTest seenWhole() {
+        return (minX, minY, minZ, maxX, maxY, maxZ) -> CubeView.nearestDistanceSq(minX, minY, minZ, maxX, maxY, maxZ) <= maxDistanceSq
+                && inView(wholeFrustum, minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     /** As {@link #seen()} without the terrain range, for Distant Horizons' far terrain. */
     static BoxTest frustumSeen() {
-        return MirrorView::inView;
+        return (minX, minY, minZ, maxX, maxY, maxZ) -> inView(frustum, minX, minY, minZ, maxX, maxY, maxZ);
     }
 
-    private static boolean inView(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+    private static boolean inView(FrustumIntersection test, double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
         double front = heightAbove + (side > 0 ? (axis == 0 ? maxX : axis == 1 ? maxY : maxZ) : -(axis == 0 ? minX : axis == 1 ? minY : minZ));
-        return front > CLIP_EPSILON && frustum.testAab((float) minX, (float) minY, (float) minZ, (float) maxX, (float) maxY, (float) maxZ);
+        return front > CLIP_EPSILON && test.testAab((float) minX, (float) minY, (float) minZ, (float) maxX, (float) maxY, (float) maxZ);
     }
 
     /** The mirrored camera in world coordinates: the view's origin. */

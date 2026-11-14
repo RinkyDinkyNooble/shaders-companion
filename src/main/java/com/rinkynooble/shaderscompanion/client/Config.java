@@ -12,6 +12,7 @@ public final class Config {
     public static final ForgeConfigSpec.BooleanValue ENTITIES;
     public static final ForgeConfigSpec.IntValue ENTITY_DISTANCE;
     public static final ForgeConfigSpec.IntValue MAX_ENTITIES;
+    public static final ForgeConfigSpec.BooleanValue ENTITY_LOD;
     public static final ForgeConfigSpec.BooleanValue BLOCK_ENTITIES;
     public static final ForgeConfigSpec.IntValue BLOCK_ENTITY_DISTANCE;
     public static final ForgeConfigSpec.IntValue MAX_BLOCK_ENTITIES;
@@ -46,6 +47,9 @@ public final class Config {
         MAX_ENTITIES = builder
                 .comment("Most entities drawn per frame, nearest first.")
                 .defineInRange("maxEntities", 48, 0, 1024);
+        ENTITY_LOD = builder
+                .comment("Redraw far mobs and block entities into the views less often (every 2nd frame from 16 blocks away, every 3rd from 32, every 4th from 48), moving them with their last pose in between. Saves processor time in crowded places; mobs and block entities near you are redrawn every frame.")
+                .define("entityLod", true);
         BLOCK_ENTITIES = builder
                 .comment("Draw block entities (chests, signs, banners, modded machines) into the view.")
                 .define("blockEntities", true);
