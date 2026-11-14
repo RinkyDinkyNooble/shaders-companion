@@ -17,7 +17,7 @@ It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack
 <tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/oculus">Oculus</a></strong></td><td>1.8.0</td></tr>
 <tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/embeddium">Embeddium</a></strong></td><td>0.3.31</td></tr>
 <tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/distant-horizons">Distant Horizons</a></strong></td><td><span style="color:#3598db"><strong>Optional</strong></span>, 3.3.2</td></tr>
-<tr><td><strong>Shader pack</strong></td><td>ABZA Shader 1.0.23, <span style="color:#2dc26b"><strong>included</strong></span></td></tr>
+<tr><td><strong>Shader pack</strong></td><td>Apocalypse Begins [Sundial Lite Fork], <span style="color:#2dc26b"><strong>included</strong></span></td></tr>
 </table>
 
 ***
@@ -27,11 +27,11 @@ It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack
 <table>
 <tr>
 <td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/mirror-without.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/mirror-without.jpg" alt="A black glass wall without the mod: nothing behind the camera is reflected" width="400"></a></td>
-<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/mirror-with.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/mirror-with.jpg" alt="The same wall with the mod: the player, mobs, a chest and a bed are reflected" width="400"></a></td>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/mirror-with.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/mirror-with.jpg" alt="The same wall with the mod: the player, entities, and blocks are reflected" width="400"></a></td>
 </tr>
 <tr>
 <td align="center"><span style="color:#e03e2d"><strong>Without</strong></span><br>The glass has nothing to show</td>
-<td align="center"><span style="color:#2dc26b"><strong>With</strong></span><br>You, the mobs, the chest and the bed behind you</td>
+<td align="center"><span style="color:#2dc26b"><strong>With</strong></span><br>You, entities, and other blocks are reflected</td>
 </tr>
 </table>
 
@@ -50,7 +50,25 @@ It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack
 <td align="center"><strong>Mobs And Players</strong><br>You and the mobs next to you, up close</td>
 <td align="center"><strong>Distant Horizons</strong><br>The city behind you, far terrain included</td>
 </tr>
+<tr>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-gun-armour.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-gun-armour.jpg" alt="The player's gun and armour reflected in black glass" width="400"></a></td>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-town.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-town.jpg" alt="A black glass wall reflecting the player, the town and a tower" width="400"></a></td>
+</tr>
+<tr>
+<td align="center"><strong>Gun And Armour</strong><br>What you hold and wear, in black glass</td>
+<td align="center"><strong>Many Features Combined</strong><br>You, the town and the sky in one glass wall</td>
+</tr>
+<tr>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/interior-furniture.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/interior-furniture.jpg" alt="A lit hallway with furniture and potted plants, with ABZA Shader" width="400"></a></td>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/rain-night-house.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/rain-night-house.jpg" alt="A lit house in the rain at night, with ABZA Shader" width="400"></a></td>
+</tr>
+<tr>
+<td align="center"><strong>Indoors</strong><br>A hallway with furniture and plants</td>
+<td align="center"><strong>Rain At Night</strong><br>A lit house in the rain</td>
+</tr>
 </table>
+
+<p align="center"><em>All shots with ABZA Shader, which comes with the mod.</em></p>
 
 ***
 
@@ -67,10 +85,9 @@ It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack
 
 ## ABZA Shader Included
 
-The mod puts ABZA Shader into your `shaderpacks` folder as "ABZA Shader.zip" when the game starts. Choose it under Options, Video Settings, Shader Packs.
+The mod puts ABZA Shader into your `shaderpacks` folder as "ABZA Shader.zip" when the game starts.
 
 *   **Updates:** a newer version of the mod replaces its own copy of the pack and keeps your shader settings.
-*   **Your own copy:** a file you put there yourself under that name is left alone.
 *   **Turning it off:** set `installBundledPack = false` in `config/shaderscompanion-client.toml`.
 
 ***
