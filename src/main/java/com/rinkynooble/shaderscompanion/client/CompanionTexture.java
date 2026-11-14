@@ -2,6 +2,7 @@ package com.rinkynooble.shaderscompanion.client;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.server.packs.resources.ResourceManager;
 import org.lwjgl.opengl.GL11C;
@@ -106,6 +107,19 @@ final class CompanionTexture extends AbstractTexture {
         if (buffers[1] != 0) {
             GlStateManager._glBindBuffer(GL21C.GL_PIXEL_PACK_BUFFER, buffers[1]);
         }
+    }
+
+    /**
+     * Writes the first row's first {@code texels} RGBA float texels (an info texture's contents) and puts back the
+     * texture that was bound: this mod's textures never stay bound.
+     */
+    void writeRow(FloatBuffer data, int texels) {
+        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+        Gl.bindTexture(this.glId());
+        int[] pixelBuffers = preparePixelTransfer();
+        GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, texels, 1, GL11C.GL_RGBA, GL11C.GL_FLOAT, data);
+        restorePixelBuffers(pixelBuffers);
+        Gl.bindTextureIfAlive(previous);
     }
 
     /** Gives the texture storage of this size; keeps its GL name, so framebuffer attachments stay valid. */

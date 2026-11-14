@@ -63,6 +63,8 @@ final class EntityCapture implements MultiBufferSource {
     private static final TypeInfo SKIP = new TypeInfo(null, -1);
     /** Logs each render type the first time it is asked for, and whether it is kept (-Dshaderscompanion.logTypes=true). */
     private static final boolean LOG_TYPES = Boolean.getBoolean("shaderscompanion.logTypes");
+    /** Failures of one entity or block entity type after which it is left out for the session. */
+    private static final int MAX_FAILURES = 3;
     private static final String[] SKIPPED_NAMES = {"glint", "shadow", "crumbling", "outline", "lightning", "energy_swirl", "leash", "water_mask"};
 
     record TypeInfo(ResourceLocation texture, int kind) {
@@ -99,7 +101,7 @@ final class EntityCapture implements MultiBufferSource {
         EntityRenderDispatcher dispatcher = mc.getEntityRenderDispatcher();
         Entity entity = camera.getEntity();
         if (mc.level == null || dispatcher.camera == null || entity == null || camera.isDetached() || entity.isInvisible()
-                || this.failures.getOrDefault(entity.getType(), 0) >= 3) {
+                || this.gaveUp(entity.getType())) {
             return;
         }
         Vec3 origin = camera.getPosition();
@@ -132,7 +134,7 @@ final class EntityCapture implements MultiBufferSource {
         double maxDistanceSq = maxDistance * maxDistance;
         this.candidates.clear();
         for (Entity entity : mc.level.entitiesForRendering()) {
-            if (entity.isInvisible() || this.failures.getOrDefault(entity.getType(), 0) >= 3) {
+            if (entity.isInvisible() || this.gaveUp(entity.getType())) {
                 continue;
             }
             if (entity == cameraEntity && !camera.isDetached()) {
@@ -178,12 +180,7 @@ final class EntityCapture implements MultiBufferSource {
                     dispatcher.render(entity, x, y, z, yaw, partialTick, poseStack, this, this.currentLight);
                     this.entitiesDrawn++;
                 } catch (Throwable t) {
-                    this.rollBack(marks);
-                    int failed = this.failures.merge(entity.getType(), 1, Integer::sum);
-                    if (failed == 1 || failed == 3) {
-                        ShadersCompanion.LOGGER.warn("Shaders Companion: drawing {} into the cube failed{}", EntityType.getKey(entity.getType()),
-                                failed == 3 ? "; leaving it out from now on" : "", t);
-                    }
+                    this.fail(marks, entity.getType(), String.valueOf(EntityType.getKey(entity.getType())), t);
                     poseStack = new PoseStack();
                 }
             }
@@ -261,13 +258,7 @@ final class EntityCapture implements MultiBufferSource {
                     poseStack.popPose();
                     this.blockEntitiesDrawn++;
                 } catch (Throwable t) {
-                    this.rollBack(marks);
-                    BlockEntityType<?> type = blockEntity.getType();
-                    int failed = this.failures.merge(type, 1, Integer::sum);
-                    if (failed == 1 || failed == 3) {
-                        ShadersCompanion.LOGGER.warn("Shaders Companion: drawing block entity {} into the cube failed{}", BlockEntityType.getKey(type),
-                                failed == 3 ? "; leaving it out from now on" : "", t);
-                    }
+                    this.fail(marks, blockEntity.getType(), "block entity " + BlockEntityType.getKey(blockEntity.getType()), t);
                     poseStack = new PoseStack();
                 }
             }
@@ -279,7 +270,7 @@ final class EntityCapture implements MultiBufferSource {
             return;
         }
         for (BlockEntity blockEntity : blockEntities) {
-            if (blockEntity == null || blockEntity.isRemoved() || this.failures.getOrDefault(blockEntity.getType(), 0) >= 3) {
+            if (blockEntity == null || blockEntity.isRemoved() || this.gaveUp(blockEntity.getType())) {
                 continue;
             }
             double x = blockEntity.getBlockPos().getX() - origin.x;
@@ -291,6 +282,24 @@ final class EntityCapture implements MultiBufferSource {
             if (seen.visible(x - 1.0, y - 1.0, z - 1.0, x + 2.0, y + 2.0, z + 2.0)) {
                 this.blockCandidates.add(blockEntity);
             }
+        }
+    }
+
+    /** Whether drawing this entity or block entity type failed often enough to leave it out. */
+    private boolean gaveUp(Object type) {
+        return this.failures.getOrDefault(type, 0) >= MAX_FAILURES;
+    }
+
+    /**
+     * Handles an entity or block entity whose drawing threw: drops its partial geometry and counts the failure for its
+     * type, logging the first one and the one after which the type is left out.
+     */
+    private void fail(int[] marks, Object type, String name, Throwable t) {
+        this.rollBack(marks);
+        int failed = this.failures.merge(type, 1, Integer::sum);
+        if (failed == 1 || failed == MAX_FAILURES) {
+            ShadersCompanion.LOGGER.warn("Shaders Companion: drawing {} into the cube failed{}", name,
+                    failed == MAX_FAILURES ? "; leaving it out from now on" : "", t);
         }
     }
 

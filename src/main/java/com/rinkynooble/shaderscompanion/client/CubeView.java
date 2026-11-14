@@ -138,8 +138,8 @@ public final class CubeView {
     private static ViewProgram program;
     private static int uRegionOffset;
     private static int uTranslucent;
-    private static int framebuffer;
-    private static int depthBuffer;
+    private static final ViewTarget cubeTarget = new ViewTarget("cube", CubeTextures.ALBEDO, CubeTextures.DATA, CubeTextures.DISTANCE, CubeTextures.PREVIEW);
+    private static final ViewTarget mirrorTarget = new ViewTarget("mirror", CubeTextures.MIRROR_ALBEDO, CubeTextures.MIRROR_DATA, CubeTextures.MIRROR_DISTANCE);
     private static int vertexArray;
     private static int indexBuffer;
     private static int indexCapacityQuads;
@@ -156,10 +156,6 @@ public final class CubeView {
     private static int uLodClipDistance;
     private static int lodVertexArray;
     private static float logDepth;
-    private static int mirrorFramebuffer;
-    private static int mirrorDepthBuffer;
-    private static int mirrorWidth;
-    private static int mirrorHeight;
 
     private static IntBuffer drawCounts;
     private static IntBuffer drawBaseVertices;
@@ -331,6 +327,7 @@ public final class CubeView {
             float far = Math.max(maxDistance, lodDistance) * 1.75F + 512.0F;
             lastFar = far;
             lastMaxDistance = maxDistance;
+            logDepth = (float) (1.0 / (Math.log(far / NEAR) / Math.log(2.0)));
             boolean mirror = wantMirror && MirrorView.update(mc, camera, view, new Matrix4f(RenderSystem.getProjectionMatrix()), NEAR, far, maxDistance);
             long entityStart = System.nanoTime();
             collectLocalPlayer(mc, camera, partialTick, mirror ? MirrorView.seen() : BoxTest.NONE);
@@ -358,7 +355,7 @@ public final class CubeView {
             }
             long mirrorStart = System.nanoTime();
             if (mirror) {
-                drawMirror(cameraPos, maxDistance, lodDistance, far, regions);
+                drawMirror(cameraPos, maxDistance, lodDistance, regions);
             }
             mirrorNanos = System.nanoTime() - mirrorStart;
             Lods.clear();
@@ -418,18 +415,13 @@ public final class CubeView {
         for (int i = 0; i < 6; i++) {
             faceFrame[i] = -1;
         }
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
         infoBuffer.clear();
         infoBuffer.put(CubeTextures.MAGIC).put(CubeTextures.PROTOCOL).put(0.0F).put(0.0F);
         for (int i = 1; i < CubeTextures.INFO_WIDTH; i++) {
             infoBuffer.put(0.0F).put(0.0F).put(0.0F).put(-1.0F);
         }
         infoBuffer.flip();
-        Gl.bindTexture(CubeTextures.INFO.glId());
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, CubeTextures.INFO_WIDTH, 1, GL11C.GL_RGBA, GL11C.GL_FLOAT, infoBuffer);
-        CompanionTexture.restorePixelBuffers(pixelBuffers);
-        Gl.bindTextureIfAlive(previous);
+        CubeTextures.INFO.writeRow(infoBuffer, CubeTextures.INFO_WIDTH);
     }
 
     private static boolean checkVertexType(ChunkVertexType type) {
@@ -480,34 +472,9 @@ public final class CubeView {
             entityProgram = new ViewProgram("cube_entity", ENTITY_ATTRIBUTES, new int[]{0, 1, 2, 3, 4, 5});
             uEntityTranslucent = entityProgram.uniform("u_Translucent");
             entityBuffer = GL15C.glGenBuffers();
-            entityVertexArray = GL30C.glGenVertexArrays();
-            GlStateManager._glBindVertexArray(entityVertexArray);
-            GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, entityBuffer);
-            int stride = EntityCapture.STRIDE;
-            GL20C.glVertexAttribPointer(0, 3, GL11C.GL_FLOAT, false, stride, 0L);
-            GL20C.glVertexAttribPointer(1, 4, GL11C.GL_UNSIGNED_BYTE, true, stride, 12L);
-            GL20C.glVertexAttribPointer(2, 2, GL11C.GL_FLOAT, false, stride, 16L);
-            GL30C.glVertexAttribIPointer(3, 2, GL11C.GL_UNSIGNED_SHORT, stride, 24L);
-            GL20C.glVertexAttribPointer(4, 3, GL11C.GL_BYTE, true, stride, 28L);
-            GL30C.glVertexAttribIPointer(5, 2, GL11C.GL_UNSIGNED_SHORT, stride, 32L);
-            for (int location = 0; location < 6; location++) {
-                GL20C.glEnableVertexAttribArray(location);
-            }
-            GL15C.glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+            entityVertexArray = createEntityVertexArray(entityBuffer);
             playerBuffer = GL15C.glGenBuffers();
-            playerVertexArray = GL30C.glGenVertexArrays();
-            GlStateManager._glBindVertexArray(playerVertexArray);
-            GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, playerBuffer);
-            GL20C.glVertexAttribPointer(0, 3, GL11C.GL_FLOAT, false, stride, 0L);
-            GL20C.glVertexAttribPointer(1, 4, GL11C.GL_UNSIGNED_BYTE, true, stride, 12L);
-            GL20C.glVertexAttribPointer(2, 2, GL11C.GL_FLOAT, false, stride, 16L);
-            GL30C.glVertexAttribIPointer(3, 2, GL11C.GL_UNSIGNED_SHORT, stride, 24L);
-            GL20C.glVertexAttribPointer(4, 3, GL11C.GL_BYTE, true, stride, 28L);
-            GL30C.glVertexAttribIPointer(5, 2, GL11C.GL_UNSIGNED_SHORT, stride, 32L);
-            for (int location = 0; location < 6; location++) {
-                GL20C.glEnableVertexAttribArray(location);
-            }
-            GL15C.glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+            playerVertexArray = createEntityVertexArray(playerBuffer);
 
             lodProgram = new ViewProgram("cube_lod", LOD_ATTRIBUTES, new int[]{0, 1, 2});
             uLodModelOffset = lodProgram.uniform("u_ModelOffset");
@@ -524,51 +491,43 @@ public final class CubeView {
             Gl.useProgram(entityProgram.id);
             GL20C.glUniform1i(entityProgram.uniform("u_Texture"), 0);
 
-            framebuffer = GL30C.glGenFramebuffers();
-            depthBuffer = GL30C.glGenRenderbuffers();
             drawCounts = MemoryUtil.memAllocInt(MAX_DRAWS);
             drawBaseVertices = MemoryUtil.memAllocInt(MAX_DRAWS);
             drawOffsets = MemoryUtil.memCallocPointer(MAX_DRAWS);
             matrixBuffer = MemoryUtil.memAllocFloat(16);
             infoBuffer = MemoryUtil.memAllocFloat(CubeTextures.INFO_WIDTH * 4);
         }
-        if (size != faceSize) {
-            int width = size * 3;
-            int height = size * 2;
-            CubeTextures.ALBEDO.allocate(width, height);
-            CubeTextures.DATA.allocate(width, height);
-            CubeTextures.DISTANCE.allocate(width, height);
-            CubeTextures.PREVIEW.allocate(width, height);
+        if (cubeTarget.ensureSize(size * 3, size * 2)) {
             CubeTextures.INFO.allocate(CubeTextures.INFO_WIDTH, 1);
-
-            int previousFramebuffer = GL11C.glGetInteger(GL30C.GL_FRAMEBUFFER_BINDING);
-            Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
-            GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, depthBuffer);
-            GL30C.glRenderbufferStorage(GL30C.GL_RENDERBUFFER, GL30C.GL_DEPTH_COMPONENT24, width, height);
-            GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, 0);
-            CompanionTexture[] targets = {CubeTextures.ALBEDO, CubeTextures.DATA, CubeTextures.DISTANCE, CubeTextures.PREVIEW};
-            int[] buffers = new int[targets.length];
-            for (int i = 0; i < targets.length; i++) {
-                GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0 + i, GL11C.GL_TEXTURE_2D, targets[i].glId(), 0);
-                buffers[i] = GL30C.GL_COLOR_ATTACHMENT0 + i;
-            }
-            GL30C.glFramebufferRenderbuffer(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL30C.GL_RENDERBUFFER, depthBuffer);
-            GL20C.glDrawBuffers(buffers);
-            int complete = GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER);
-            Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, previousFramebuffer);
-            if (complete != GL30C.GL_FRAMEBUFFER_COMPLETE) {
-                throw new IllegalStateException("cube framebuffer incomplete: 0x" + Integer.toHexString(complete));
-            }
             faceSize = size;
             for (int i = 0; i < 6; i++) {
                 faceFrame[i] = -1;
             }
-            ShadersCompanion.LOGGER.info("Shaders Companion: cube faces of {} pixels ({} x {} atlas)", size, width, height);
+            ShadersCompanion.LOGGER.info("Shaders Companion: cube faces of {} pixels ({} x {} atlas)", size, size * 3, size * 2);
         }
     }
 
+    /** A vertex array over an entity buffer, in {@link EntityCapture}'s vertex layout, with the shared quad indices. */
+    private static int createEntityVertexArray(int buffer) {
+        int array = GL30C.glGenVertexArrays();
+        GlStateManager._glBindVertexArray(array);
+        GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, buffer);
+        int stride = EntityCapture.STRIDE;
+        GL20C.glVertexAttribPointer(0, 3, GL11C.GL_FLOAT, false, stride, 0L);
+        GL20C.glVertexAttribPointer(1, 4, GL11C.GL_UNSIGNED_BYTE, true, stride, 12L);
+        GL20C.glVertexAttribPointer(2, 2, GL11C.GL_FLOAT, false, stride, 16L);
+        GL30C.glVertexAttribIPointer(3, 2, GL11C.GL_UNSIGNED_SHORT, stride, 24L);
+        GL20C.glVertexAttribPointer(4, 3, GL11C.GL_BYTE, true, stride, 28L);
+        GL30C.glVertexAttribIPointer(5, 2, GL11C.GL_UNSIGNED_SHORT, stride, 32L);
+        for (int location = 0; location < ENTITY_ATTRIBUTES.length; location++) {
+            GL20C.glEnableVertexAttribArray(location);
+        }
+        GL15C.glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+        return array;
+    }
+
     private static void setupDrawState(int size) {
-        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
+        cubeTarget.bind();
         GlStateManager._disableBlend();
         GlStateManager._disableCull();
         GlStateManager._enableDepthTest();
@@ -755,11 +714,7 @@ public final class CubeView {
         int y = (face / 3) * size;
         GlStateManager._viewport(x, y, size, size);
         GlStateManager._scissorBox(x, y, size, size);
-        float[] zero = {0.0F, 0.0F, 0.0F, 0.0F};
-        for (int i = 0; i < ViewProgram.OUTPUTS.length; i++) {
-            GL30C.glClearBufferfv(GL11C.GL_COLOR, i, zero);
-        }
-        GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[]{1.0F});
+        cubeTarget.clear(0.0F);
 
         int[] f = FORWARD[face];
         int[] u = UP[face];
@@ -767,95 +722,63 @@ public final class CubeView {
                 .setPerspective((float) Math.toRadians(90.0), 1.0F, NEAR, far)
                 .lookAt(0.0F, 0.0F, 0.0F, f[0], f[1], f[2], u[0], u[1], u[2]);
         viewProjection.get(matrixBuffer);
-        logDepth = (float) (1.0 / (Math.log(far / NEAR) / Math.log(2.0)));
-        viewClipPlane = NO_CLIP;
-        viewCamera = NO_OFFSET;
         double maxDistanceSq = (double) maxDistance * maxDistance;
         BoxTest seen = (minX, minY, minZ, maxX, maxY, maxZ) -> boxVisible(face, minX, minY, minZ, maxX, maxY, maxZ, maxDistanceSq);
         BoxTest lodSeen = (minX, minY, minZ, maxX, maxY, maxZ) -> boxInFace(face, minX, minY, minZ, maxX, maxY, maxZ);
-
-        // Opaque surfaces first (blocks, entities, far terrain), then translucent ones (water, glass) over them with
-        // the depth test, so each texel keeps the nearest surface.
-        drawTerrain(seen, camera, camera, regions, false);
-        drawEntities(false, false);
-        drawLods(lodSeen, camera, camera, maxDistance, lodDistance, true);
-        drawTerrain(seen, camera, camera, regions, true);
-        drawEntities(true, false);
-        drawLods(lodSeen, camera, camera, maxDistance, lodDistance, false);
+        drawView(seen, lodSeen, camera, camera, NO_CLIP, NO_OFFSET, maxDistance, lodDistance, regions, false);
     }
 
     /**
      * Draws the mirror view: the same surfaces as a cube face, from the camera mirrored in this frame's plane, with
-     * everything on the far side of the plane cut away (see {@link MirrorView}).
+     * everything on the far side of the plane cut away (see {@link MirrorView}), in the part of the view the plane covers.
      */
-    private static void drawMirror(Vec3 camera, float maxDistance, float lodDistance, float far, RenderRegionManager regions) {
+    private static void drawMirror(Vec3 camera, float maxDistance, float lodDistance, RenderRegionManager regions) {
         int width = MirrorView.width;
         int height = MirrorView.height;
-        ensureMirrorResources(width, height);
-        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, mirrorFramebuffer);
+        if (mirrorTarget.ensureSize(width, height)) {
+            ShadersCompanion.LOGGER.info("Shaders Companion: mirror view of {} x {} pixels", width, height);
+        }
+        mirrorTarget.bind();
         GlStateManager._viewport(0, 0, width, height);
         GlStateManager._scissorBox(0, 0, width, height);
-        float[] zero = {0.0F, 0.0F, 0.0F, 0.0F};
         // Outside the part of the screen the mirror covers, the distance says "not drawn" (-1); inside it, 0 is open sky
-        GL30C.glClearBufferfv(GL11C.GL_COLOR, 0, zero);
-        GL30C.glClearBufferfv(GL11C.GL_COLOR, 1, zero);
-        GL30C.glClearBufferfv(GL11C.GL_COLOR, 2, new float[]{-1.0F, 0.0F, 0.0F, 0.0F});
-        GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[]{1.0F});
+        mirrorTarget.clear(-1.0F);
         int[] drawn = MirrorView.drawnPixels();
         GlStateManager._scissorBox(drawn[0], drawn[1], drawn[2], drawn[3]);
-        GL30C.glClearBufferfv(GL11C.GL_COLOR, 2, zero);
+        GL30C.glClearBufferfv(GL11C.GL_COLOR, ViewProgram.DISTANCE_OUTPUT, new float[]{0.0F, 0.0F, 0.0F, 0.0F});
 
         MirrorView.drawMatrix().get(matrixBuffer);
-        logDepth = (float) (1.0 / (Math.log(far / NEAR) / Math.log(2.0)));
         Vec3 origin = MirrorView.originWorld();
-        viewClipPlane = MirrorView.clipPlane();
-        viewCamera = new float[]{(float) (camera.x - origin.x), (float) (camera.y - origin.y), (float) (camera.z - origin.z)};
-        BoxTest seen = MirrorView.seen();
-        BoxTest lodSeen = MirrorView.frustumSeen();
+        float[] cameraOffset = {(float) (camera.x - origin.x), (float) (camera.y - origin.y), (float) (camera.z - origin.z)};
+        drawView(MirrorView.seen(), MirrorView.frustumSeen(), camera, origin, MirrorView.clipPlane(), cameraOffset, maxDistance, lodDistance, regions, true);
+    }
+
+    /**
+     * Draws a view whose projection is in matrixBuffer: opaque surfaces first (blocks, entities, far terrain), then
+     * translucent ones (water, glass) over them with the depth test, so each texel keeps the nearest surface.
+     *
+     * @param seen         the chunk sections and entities the view can see (boxes relative to the camera)
+     * @param lodSeen      the same for Distant Horizons' far terrain, without the terrain range
+     * @param origin       the view's origin: the camera for the cube, the mirrored camera for the mirror view
+     * @param clipPlane    the view's cut plane ({@link #NO_CLIP} for none)
+     * @param cameraOffset the camera relative to the view's origin
+     * @param mirror       whether this is the mirror view, which also draws the local player
+     */
+    private static void drawView(BoxTest seen, BoxTest lodSeen, Vec3 camera, Vec3 origin, float[] clipPlane, float[] cameraOffset,
+                                 float maxDistance, float lodDistance, RenderRegionManager regions, boolean mirror) {
+        viewClipPlane = clipPlane;
+        viewCamera = cameraOffset;
         try {
             drawTerrain(seen, camera, origin, regions, false);
-            drawEntities(false, true);
+            drawEntities(false, mirror);
             drawLods(lodSeen, camera, origin, maxDistance, lodDistance, true);
             drawTerrain(seen, camera, origin, regions, true);
-            drawEntities(true, true);
+            drawEntities(true, mirror);
             drawLods(lodSeen, camera, origin, maxDistance, lodDistance, false);
         } finally {
             viewClipPlane = NO_CLIP;
             viewCamera = NO_OFFSET;
         }
-    }
-
-    private static void ensureMirrorResources(int width, int height) {
-        if (mirrorFramebuffer == 0) {
-            mirrorFramebuffer = GL30C.glGenFramebuffers();
-            mirrorDepthBuffer = GL30C.glGenRenderbuffers();
-        }
-        if (width == mirrorWidth && height == mirrorHeight) {
-            return;
-        }
-        CubeTextures.MIRROR_ALBEDO.allocate(width, height);
-        CubeTextures.MIRROR_DATA.allocate(width, height);
-        CubeTextures.MIRROR_DISTANCE.allocate(width, height);
-        int previousFramebuffer = GL11C.glGetInteger(GL30C.GL_FRAMEBUFFER_BINDING);
-        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, mirrorFramebuffer);
-        GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, mirrorDepthBuffer);
-        GL30C.glRenderbufferStorage(GL30C.GL_RENDERBUFFER, GL30C.GL_DEPTH_COMPONENT24, width, height);
-        GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, 0);
-        CompanionTexture[] targets = {CubeTextures.MIRROR_ALBEDO, CubeTextures.MIRROR_DATA, CubeTextures.MIRROR_DISTANCE};
-        for (int i = 0; i < targets.length; i++) {
-            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0 + i, GL11C.GL_TEXTURE_2D, targets[i].glId(), 0);
-        }
-        GL30C.glFramebufferRenderbuffer(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL30C.GL_RENDERBUFFER, mirrorDepthBuffer);
-        // The programs' fourth output (the cube's debug preview) goes nowhere
-        GL20C.glDrawBuffers(new int[]{GL30C.GL_COLOR_ATTACHMENT0, GL30C.GL_COLOR_ATTACHMENT1, GL30C.GL_COLOR_ATTACHMENT2, GL11C.GL_NONE});
-        int complete = GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER);
-        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, previousFramebuffer);
-        if (complete != GL30C.GL_FRAMEBUFFER_COMPLETE) {
-            throw new IllegalStateException("mirror framebuffer incomplete: 0x" + Integer.toHexString(complete));
-        }
-        mirrorWidth = width;
-        mirrorHeight = height;
-        ShadersCompanion.LOGGER.info("Shaders Companion: mirror view of {} x {} pixels", width, height);
     }
 
     /** Binds a program with the current view's projection, depth scale, cut plane and camera offset. */
@@ -1112,12 +1035,6 @@ public final class CubeView {
         }
         infoBuffer.put(NEAR).put(lastFar).put(lastMaxDistance).put(lodsCollected ? (float) lodRange : 0.0F);
         infoBuffer.flip();
-        // The texture that was bound is put back: this mod's textures never stay bound
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        Gl.bindTexture(CubeTextures.INFO.glId());
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, CubeTextures.INFO_WIDTH, 1, GL11C.GL_RGBA, GL11C.GL_FLOAT, infoBuffer);
-        CompanionTexture.restorePixelBuffers(pixelBuffers);
-        Gl.bindTextureIfAlive(previous);
+        CubeTextures.INFO.writeRow(infoBuffer, CubeTextures.INFO_WIDTH);
     }
 }

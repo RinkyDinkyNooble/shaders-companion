@@ -117,6 +117,8 @@ public final class DevRun {
     private static int ticks;
     private static int timingRound;
     private static int worldTicks;
+    /** -PdevNoShaders: the scene may start (100 ticks in the world). */
+    private static boolean noShadersReady;
     /** Ticks in the world without the mod drawing before a run gives up and logs why. */
     private static final int IDLE_TICKS = 300;
     private static String prefix = "devrun";
@@ -230,9 +232,9 @@ public final class DevRun {
         // -PdevNoShaders: the scene starts after 100 ticks in the world, since the mod draws nothing without a shader pack
         boolean noShaders = Boolean.getBoolean("shaderscompanion.devNoShaders");
         if (phase == 0 && mc.player != null && noShaders && ++worldTicks >= 100) {
-            worldTicks = Integer.MIN_VALUE / 2;
+            noShadersReady = true;
         }
-        boolean ready = CubeView.framesDrawn() >= START_FRAME || (noShaders && worldTicks < 0);
+        boolean ready = CubeView.framesDrawn() >= START_FRAME || noShadersReady;
         if (phase == 0 && mc.player != null && !noShaders && CubeView.framesDrawn() < START_FRAME && ++worldTicks >= IDLE_TICKS) {
             // The mod never drew (a shader pack setting that reads none of its views, say): log why and quit
             ShadersCompanion.LOGGER.info("Shaders Companion dev run, nothing drawn after {} ticks in the world: {}", IDLE_TICKS, String.join(" | ", DebugOverlay.statusLines()));
@@ -683,14 +685,13 @@ public final class DevRun {
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
         } else if (phase == 1 && (pool || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+            // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
+            // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {
                 // Nothing of the mod's to dump: the screenshot only
                 prefix = "shaderscompanion-" + System.currentTimeMillis() + "-noshaders";
-                if (overlay && mc.player != null && mc.level != null) {
-                    BlockPos container = mc.player.blockPosition().offset(0, 0, 5);
-                    var blockEntity = mc.level.getBlockEntity(container);
-                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, overlay: holding {}, at {} {} {}", mc.player.getMainHandItem(), container,
-                            mc.level.getBlockState(container), blockEntity == null ? "no block entity" : blockEntity.saveWithoutMetadata());
+                if (overlay) {
+                    logOverlayContainer(mc);
                 }
                 Screenshot.grab(mc.gameDirectory, prefix + ".png", mc.getMainRenderTarget(), message -> { });
                 finish(mc);
@@ -718,11 +719,8 @@ public final class DevRun {
                         ShadersCompanion.LOGGER.info("Shaders Companion dev run, +X horizon {}%: {}", percent, CubeDump.describeTexel(size / 2, size * percent / 100));
                     }
                 }
-                if (overlay && mc.player != null && mc.level != null) {
-                    BlockPos container = mc.player.blockPosition().offset(0, 0, 5);
-                    var blockEntity = mc.level.getBlockEntity(container);
-                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, overlay: holding {}, at {} {} {}", mc.player.getMainHandItem(), container,
-                            mc.level.getBlockState(container), blockEntity == null ? "no block entity" : blockEntity.saveWithoutMetadata());
+                if (overlay) {
+                    logOverlayContainer(mc);
                 }
                 Screenshot.grab(mc.gameDirectory, prefix + (pool || glass || ocean ? "-on.png" : "-main.png"), mc.getMainRenderTarget(), message -> { });
             } catch (Exception e) {
@@ -793,6 +791,17 @@ public final class DevRun {
             Config.ENABLED.set(true);
             finish(mc);
         }
+    }
+
+    /** Logs what the overlay scene's container shows: the held item, the block and its block entity. */
+    private static void logOverlayContainer(Minecraft mc) {
+        if (mc.player == null || mc.level == null) {
+            return;
+        }
+        BlockPos container = mc.player.blockPosition().offset(0, 0, 5);
+        var blockEntity = mc.level.getBlockEntity(container);
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run, overlay: holding {}, at {} {} {}", mc.player.getMainHandItem(), container,
+                mc.level.getBlockState(container), blockEntity == null ? "no block entity" : blockEntity.saveWithoutMetadata());
     }
 
     /** The city scene's timing rounds: what each changes from the defaults. */

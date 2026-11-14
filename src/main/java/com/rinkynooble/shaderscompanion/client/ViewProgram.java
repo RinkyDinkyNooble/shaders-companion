@@ -15,6 +15,8 @@ import org.lwjgl.opengl.GL30C;
 final class ViewProgram {
     /** The fragment outputs, in the order of the framebuffers' colour attachments. */
     static final String[] OUTPUTS = {"outAlbedo", "outData", "outDistance", "outPreview"};
+    /** The distance output's index in {@link #OUTPUTS}. */
+    static final int DISTANCE_OUTPUT = 2;
 
     final int id;
     private final int viewProjection;
