@@ -76,7 +76,9 @@ It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack
 
 *   **Mirrors:** the largest water surface or wall of stained or tinted glass on screen shows a sharp reflection of the world, your own player included, with the shader pack's own light and shadows.
 *   **Every other reflecting surface** shows what is behind, beside and above you, where it used to show nothing.
-*   **What you see in them:** terrain, water, glass, mobs, other players, chests and other block entities, and Distant Horizons' far terrain.
+*   **What you see in them:** terrain, water, glass, mobs, other players, your gun and armour, chests and other block entities, and Distant Horizons' far terrain.
+*   **Water and glass in reflections:** with ABZA Shader, reflected water has its colour, waves and sky, and reflected stained glass tints what lies behind it.
+*   **Dry under glass roofs:** with ABZA Shader, the ground under glass roofs stays dry in rain, where the rain itself stops.
 *   **No cost when unused:** the mod only draws while the active shader pack uses it. `/shaderscompanion off` stops it at once, and `/shaderscompanion on` starts it again.
 
 <span style="color:#e03e2d"><strong>NOTE</strong></span>: clear glass is see-through and doesn't act as a mirror. Stained and tinted glass, ice and water do.
@@ -107,16 +109,14 @@ The mod puts ABZA Shader into your `shaderpacks` folder as "ABZA Shader.zip" whe
 
 ## For Shader Pack Authors
 
-Any shader pack can use the mod's views, and a pack that uses them still works without the mod. The format and reference code are in [API.md](https://github.com/RinkyDinkyNooble/shaders-companion/blob/main/API.md) on GitHub.
+Any shader pack can use the mod's views and its map of where rain falls, and a pack that uses them still works without the mod. The format and reference code are in [API.md](https://github.com/RinkyDinkyNooble/shaders-companion/blob/main/API.md) on GitHub.
 
 ***
 
 ## Known Limits
 
-*   **TaCZ guns and some modded armour** don't show in reflections yet.
 *   **Particles** aren't reflected.
 *   **One mirror at a time:** other reflecting surfaces on screen get the less sharp reflection.
-*   **After a quick turn,** a mirror can take a moment to fill in.
 *   **Other versions** of Oculus, Embeddium and Distant Horizons than the ones above may not work.
 
 ***

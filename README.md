@@ -2,7 +2,7 @@
 
 A client-side Forge mod for Minecraft 1.20.1 that gives shader packs a second view. Screen-space reflections can only show what is on screen; with this mod a shader pack can also reflect what is behind or beside the player.
 
-Version 0.6.5, the first public release. It draws terrain, water, glass, mobs, players, block entities and Distant Horizons' far terrain into a cube around the camera, and a mirror view: the world mirrored in the largest water surface or glass wall on screen, at screen resolution, with your own player in it. ABZA Shader (bundled, 1.0.23) reads both for reflections.
+Version 0.9.1. It draws terrain, water, glass, mobs, players, block entities and Distant Horizons' far terrain into a cube around the camera, and a mirror view: the world mirrored in the largest water surface or glass wall on screen, at screen resolution, with your own player in it. It also hands over Minecraft's rain heightmap, so a pack can keep the ground under glass roofs dry. ABZA Shader (bundled, 1.0.28) reads all three.
 
 ![A wall of dark glass reflecting the player and the city behind them](curseforge/images/reflection-distant-horizons.jpg)
 
@@ -22,6 +22,8 @@ Put the jar in `mods` next to Oculus and Embeddium, start the game and choose "A
 - With Distant Horizons 3.3.2 installed, its LOD meshes are drawn too, straight from the vertex buffers Distant Horizons keeps for each LOD section (read-locked while drawing, as Distant Horizons' own renderer does), beyond the chunk terrain's range.
 - The mirror view: a few rays from the camera each frame find the reflecting surfaces on screen (water, and blocks drawn in the translucent layer such as stained and tinted glass). The flat surface covering the most screen becomes the mirror plane, and the same terrain, entities and LODs are drawn once more from the camera mirrored in that plane, at the screen's resolution, with everything behind the plane cut away. Your own player is drawn into it too, so you can see yourself in water and glass. A pack reads it where a pixel lies on that plane: sharp reflections there, and the cube for everything else.
 - Shadows for the mirror view: Oculus draws into a pack's shadow map only what can cast a shadow into your own view, so things behind you would have no shadows in reflections, and the shadows would come and go as you turn. While a mirror view is drawn, a small mixin into Oculus's shadow culling also keeps whatever can cast a shadow into the mirror view (`mirrorShadows` in the config).
+- What lies behind water and glass: the mirror view is copied after its opaque surfaces and before water and glass are drawn over them (only while a pack reads the copy), so a pack can shade reflected water over the depth below it and let glass tint what is behind it.
+- Rain cover: Minecraft's `MOTION_BLOCKING` heightmap (where the game stops rain) for 512 x 512 blocks around the camera, read per chunk as chunks come into range and again in turn for placed and broken blocks, uploaded only where it changed. Glass lets full sky light through, so a pack can't tell from sky light alone that a glass roof keeps the rain off.
 - It writes surface data, not a finished picture: colour, normal, block and sky light, what the texel is (block id, entity id or LOD material), the block's own light, and distance. The shader pack lights it with its own lighting, so reflections match the rest of the image.
 - The textures are registered in Minecraft's texture manager as `shaderscompanion:cube_*`. A pack binds them with `customTexture` lines in `shaders.properties`; Oculus looks them up by name on every bind. Without the mod, Oculus binds Minecraft's missing texture, which the pack can detect and fall back from. The mod counts those lookups and draws only while the active pack makes them, so other packs cost nothing.
 - Every GL state the mod touches is read before drawing and put back afterwards through `GlStateManager`, so vanilla's, Oculus's and Embeddium's state caches stay correct.
@@ -65,7 +67,7 @@ Minecraft 1.20.1, Forge 47, Oculus 1.8.0, Embeddium 0.3.31; Distant Horizons 3.3
 
 ## Not yet
 
-Guns from TaCZ and some modded armour in reflections; particles; textured Distant Horizons LODs; more than one mirror plane at a time; a second layer for water and glass, so tinted glass doesn't hide what is behind it in reflections.
+Particles in reflections; textured Distant Horizons LODs; more than one mirror plane at a time; a mirror in a mirror.
 
 ## License
 
