@@ -76,7 +76,8 @@ import org.lwjgl.opengl.GL33C;
  * <p>
  * -PdevScene=boat: stands beside a vehicle on a pool (-PdevBoat, Superb Warfare's speed boat by default, which needs
  * -PdevSbw; -PdevBoat=superbwarfare:tiny_speedboat for the small one), rides it for three seconds, leaves it and
- * returns: shots "shaderscompanion-boat-&lt;-PdevTag&gt;-before", "-riding", "-after-early", "-after", then
+ * returns: shots "shaderscompanion-boat-&lt;-PdevTag&gt;-before", "-riding", "-after-early", "-pan1" to "-pan4" (turning
+ * right after leaving), "-after", then
  * "-after-noentities" (the mod's entities off), "-after-off" (the mod off) and "-after-on". With -PdevRain the scene
  * moves to the nearest deep ocean, where it rains. Every shot must look the same with the mod on and off apart from
  * reflections.
@@ -784,6 +785,14 @@ public final class DevRun {
             String back = boatStand == null ? null : "tp @s " + boatStand.x + " " + boatStand.y + " " + boatStand.z + " " + boatYaw + " " + boatPitch;
             // Driven forward for two seconds while riding
             mc.options.keyUp.setDown(s >= 6 && s < 46);
+            // After leaving: a turn to the right, 6 degrees a tick, with shots on the way (the user saw stray shapes
+            // while looking around after a ride), then back to where the run looked
+            if (s >= 80 && s < 110) {
+                mc.player.setYRot(boatYaw + 6.0F * (s - 79));
+            } else if (s == 110) {
+                mc.player.setYRot(boatYaw);
+                mc.player.yRotO = boatYaw;
+            }
             if (s == 1) {
                 mc.player.connection.sendCommand("ride @s mount @e[type=" + BOAT + ",limit=1,sort=nearest]");
             } else if (s == 61) {
@@ -800,7 +809,8 @@ public final class DevRun {
             } else if (s == 201) {
                 Config.ENABLED.set(true);
             }
-            String name = s == 0 ? "before" : s == 60 ? "riding" : s == 72 ? "after-early" : s == 120 ? "after" : s == 160 ? "after-noentities"
+            String name = s == 0 ? "before" : s == 60 ? "riding" : s == 72 ? "after-early" : s == 85 ? "pan1" : s == 92 ? "pan2"
+                    : s == 99 ? "pan3" : s == 106 ? "pan4" : s == 120 ? "after" : s == 160 ? "after-noentities"
                     : s == 200 ? "after-off" : s == 260 ? "after-on" : null;
             if (name != null) {
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-boat-" + tag + "-" + name + ".png", mc.getMainRenderTarget(), message -> { });
