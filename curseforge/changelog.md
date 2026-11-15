@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.2 (2026-11-14)
+
+For Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31. Distant Horizons 3.3.2 is optional. Client only.
+
+- Comes with ABZA Shader 1.0.29: lit buildings no longer glare at night with its Steady exposure ("Night lift", Exposure).
+
 ## 0.9.1 (2026-11-14)
 
 For Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31. Distant Horizons 3.3.2 is optional. Client only.

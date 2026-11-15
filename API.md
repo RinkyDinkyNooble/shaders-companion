@@ -154,6 +154,7 @@ Row 512 is the header: texel 0 is 4242 (0 while the mod isn't writing it), texel
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
+- 0.9.2: the same protocols and textures; comes with ABZA Shader 1.0.29.
 - 0.9.1: the same protocols. `rain_cover` (protocol 1): where rain falls to.
 - 0.9.0: the same protocols. `mirror_behind_*`: the mirror view's surfaces behind water and glass. The plane search follows rays going down past its 64 blocks to the water levels it has seen and the sea level, so a lake far below counts.
 - 0.8.0: the same protocols. The mirror's plane search runs in real time (as quick at 60 frames a second as at 260); mobs and block entities are collected for the whole mirror view, not only its drawn part; far ones are redrawn less often (`entityLod`).
