@@ -774,6 +774,13 @@ public final class DevRun {
             int t = ticks - phaseTick;
             int s = t - WAIT_TICKS;
             String tag = System.getProperty("shaderscompanion.devTag", "run");
+            if (!LeftoverVertexProbe.installed() && Iris.getCurrentPack().isPresent()) {
+                try {
+                    LeftoverVertexProbe.install(Boolean.getBoolean("shaderscompanion.devPoison"));
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    ShadersCompanion.LOGGER.warn("Shaders Companion dev run: no leftover vertex probe ({})", e.toString());
+                }
+            }
             if (t == 40 && boatSummon != null) {
                 mc.player.connection.sendCommand(boatSummon);
             }
@@ -814,8 +821,8 @@ public final class DevRun {
                     : s == 200 ? "after-off" : s == 260 ? "after-on" : null;
             if (name != null) {
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-boat-" + tag + "-" + name + ".png", mc.getMainRenderTarget(), message -> { });
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, {} {} at {} (vehicle {}): {}", tag, name, mc.player.position(),
-                        mc.player.getVehicle(), String.join(" | ", DebugOverlay.statusLines()));
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, {} {} at {} (vehicle {}): {} | {}", tag, name, mc.player.position(),
+                        mc.player.getVehicle(), String.join(" | ", DebugOverlay.statusLines()), LeftoverVertexProbe.summary());
             }
             if (s == 261) {
                 finish(mc);

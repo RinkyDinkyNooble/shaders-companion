@@ -133,6 +133,11 @@ minecraft {
                 property 'shaderscompanion.devTacz', 'true'
                 property 'shaderscompanion.logTypes', 'true'
             }
+            // -PdevPoison: the boat scene fills the vertex slots Oculus's converter leaves unwritten with a vertex just
+            // above the crosshair, so the Superb Warfare boat bug shows on a fresh client (LeftoverVertexProbe).
+            if (project.hasProperty('devPoison')) {
+                property 'shaderscompanion.devPoison', 'true'
+            }
             // -PdevNoShaders: scenes start without waiting for the mod to draw (for a run with shaders turned off).
             if (project.hasProperty('devNoShaders')) {
                 property 'shaderscompanion.devNoShaders', 'true'
@@ -189,6 +194,11 @@ dependencies {
         runtimeOnly fg.deobf("local:ponder:1.0.91")
         runtimeOnly fg.deobf("local:flywheel:1.0.5")
         minecraftLibrary files('libs/rhino-1.8.1-SNAPSHOT.jar')
+    }
+    // -PdevSbwFix=1.1.1: the user's Superb Warfare Performance Fix too, libs/superbwarfareperformancefix-<version>.jar
+    // (copied from ../superbwarfare-performance-patch/build/libs), for checking its fixes with Oculus.
+    if (project.hasProperty('devSbwFix')) {
+        runtimeOnly fg.deobf("local:superbwarfareperformancefix:${project.property('devSbwFix')}")
     }
     // TaCZ is loaded in dev runs only with -PdevTacz: its jar without the nested ones, SimpleBedrockModel remapped (the
     // version the instance resolves), its script and maths libraries as they are. MixinExtras comes with Forge.
