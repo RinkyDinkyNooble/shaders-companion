@@ -4,6 +4,8 @@ Shader packs can only reflect what is on your screen. **Shaders Companion** give
 
 It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack), which uses it out of the box: install the mod and pick "ABZA Shader.zip" in the shader pack list. <span style="color:#e03e2d"><strong>Oculus and Embeddium are required.</strong></span>
 
+<span style="color:#e67e23"><strong>The mirror view is very experimental and may have issues.</strong></span> It doesn't always work perfectly yet. To turn it off, switch off "Shaders Companion mirror view" in ABZA Shader's Reflection settings, or set `mirror = false` in `config/shaderscompanion-client.toml`; the other reflections keep working.
+
 ![A wall of dark glass reflecting the player and the city behind them](https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/reflection-distant-horizons.jpg)
 
 ***
@@ -115,6 +117,7 @@ Any shader pack can use the mod's views and its map of where rain falls, and a p
 
 ## Known Limits
 
+*   **The mirror view** is <span style="color:#e67e23"><strong>very experimental</strong></span> and may have issues.
 *   **Particles** aren't reflected.
 *   **One mirror at a time:** other reflecting surfaces on screen get the less sharp reflection.
 *   **Other versions** of Oculus, Embeddium and Distant Horizons than the ones above may not work.
