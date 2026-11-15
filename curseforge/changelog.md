@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.3 Hotfix (2026-11-15)
+
+For Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31. Distant Horizons 3.3.2 is optional. Client only.
+
+- Fixed: reflections on far water and large glass walls flickering. A small or distant mirror is no longer dropped for single frames, and a surface the mirror newly takes over fades in (with ABZA Shader).
+- Comes with ABZA Shader 1.0.30: indoor glass no longer shows flickering patches of daylight in its reflections; the Standard preset uses Metered exposure and the ABZA preset keeps Steady.
+- For shader pack authors: `mirror_info` has a ninth texel, the fade-in. See `API.md`.
+
 ## 0.9.2 (2026-11-14)
 
 For Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31. Distant Horizons 3.3.2 is optional. Client only.
