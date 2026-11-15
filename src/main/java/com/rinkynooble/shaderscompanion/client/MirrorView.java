@@ -31,6 +31,8 @@ final class MirrorView {
     /** A lower level waits this long before it is used, a higher one LOD_UP_NANOS. */
     private static final long LOD_DOWN_NANOS = 1_000_000_000L;
     private static final long LOD_UP_NANOS = 200_000_000L;
+    /** A newly mirrored plane's reflections fade in from the pack's own over this long (info texel 8). */
+    private static final float FADE_IN_SECONDS = 0.15F;
 
     static String status = "no reflecting surface in view";
     static long cpuNanos;
@@ -224,6 +226,7 @@ final class MirrorView {
             packMatrix.get(infoBuffer.position(), infoBuffer);
             infoBuffer.position(infoBuffer.position() + 16);
             infoBuffer.put(near).put(far).put(terrainRange).put(lodRange);
+            infoBuffer.put(Math.min(1.0F, MirrorPlaneSearch.planeAge() / FADE_IN_SECONDS)).put(0.0F).put(0.0F).put(0.0F);
         } else {
             while (infoBuffer.hasRemaining()) {
                 infoBuffer.put(0.0F);

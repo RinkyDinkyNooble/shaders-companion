@@ -88,6 +88,14 @@ final class MirrorPlaneSearch {
     private static final long SWITCH_DELAY_NANOS = 500_000_000L;
     private static final float FAST_SWITCH_RATIO = 2.0F;
     private static final long FAST_SWITCH_DELAY_NANOS = 60_000_000L;
+    /**
+     * The current plane is let go (below half of MIN_SCORE) only once no ray has hit it for this long: a small or far
+     * surface covers part of a cell, so some sweeps' rays miss it, and dropping it at once turned the mirror off for
+     * single frames (the whole surface flickered between the mirror and the cube).
+     */
+    private static final long DROP_HOLD_NANOS = 500_000_000L;
+    /** A cell's hit keeps counting towards the drawn part of the view for this long after its last ray. */
+    private static final long AREA_HOLD_NANOS = DROP_HOLD_NANOS;
     /** The camera must be at least this far in front of the plane. */
     private static final double MIN_HEIGHT = 0.05;
     private static final RandomSource RANDOM = RandomSource.create(42L);
@@ -97,6 +105,9 @@ final class MirrorPlaneSearch {
 
     /** The plane each grid cell's last ray hit. */
     private static final long[] cellPlanes = new long[CELLS];
+    /** The last plane each cell's rays hit (a miss never replaces it), and when. */
+    private static final long[] cellHeldPlanes = new long[CELLS];
+    private static final long[] cellHeldNanos = new long[CELLS];
     /** Each cell's weight this frame, and the sum of the weights with the view still (the scores' unit). */
     private static final float[] cellWeights = new float[CELLS];
     private static final float STILL_TOTAL;
@@ -114,6 +125,9 @@ final class MirrorPlaneSearch {
     private static long lastFindNanos;
     private static float lastStep;
     private static long plane = NO_PLANE;
+    /** When the current plane was chosen, and when a ray last hit it. */
+    private static long planeSince;
+    private static long planeSeen;
     /** A plane that covers clearly more than the current one, and since when. */
     private static long challenger = NO_PLANE;
     private static long challengerSince;
@@ -124,6 +138,7 @@ final class MirrorPlaneSearch {
 
     static {
         Arrays.fill(cellPlanes, NO_PLANE);
+        Arrays.fill(cellHeldPlanes, NO_PLANE);
         float total = 0.0F;
         for (int cell = 0; cell < CELLS; cell++) {
             total += cellWeight(cell, 0.0F, 0.0F);
@@ -146,6 +161,7 @@ final class MirrorPlaneSearch {
     /** Forgets every plane seen, so the next frames start the search from nothing. */
     static void forget() {
         Arrays.fill(cellPlanes, NO_PLANE);
+        Arrays.fill(cellHeldPlanes, NO_PLANE);
         waterLevels.clear();
         lastForwardNanos = 0L;
         lastFindNanos = 0L;
@@ -183,6 +199,11 @@ final class MirrorPlaneSearch {
         return lastStep;
     }
 
+    /** How long the current plane has been the mirror, in seconds (0 without one). */
+    static float planeAge() {
+        return plane == NO_PLANE ? 0.0F : (System.nanoTime() - planeSince) / 1.0E9F;
+    }
+
     /** The chosen plane's smoothed, weighted share of the screen (0 without one). */
     static float share() {
         return share;
@@ -194,17 +215,18 @@ final class MirrorPlaneSearch {
     }
 
     /**
-     * The part of the screen a plane covers: the centres of the grid cells whose last ray hit it, widened by
-     * {@code marginCells} cells plus half a cell (to the cells' edges), in screen halves as {minX, minY, maxX, maxY}.
-     * False when no cell's last ray hit it.
+     * The part of the screen a plane covers: the centres of the grid cells whose rays hit it within AREA_HOLD_NANOS,
+     * widened by {@code marginCells} cells plus half a cell (to the cells' edges), in screen halves as {minX, minY,
+     * maxX, maxY}. False when no cell's ray hit it in that time.
      */
     static boolean coveredArea(long key, float marginCells, float[] bounds) {
         float minX = Float.MAX_VALUE;
         float minY = Float.MAX_VALUE;
         float maxX = -Float.MAX_VALUE;
         float maxY = -Float.MAX_VALUE;
+        long now = System.nanoTime();
         for (int cell = 0; cell < CELLS; cell++) {
-            if (cellPlanes[cell] == key) {
+            if (cellPlanes[cell] == key || cellHeldPlanes[cell] == key && now - cellHeldNanos[cell] < AREA_HOLD_NANOS) {
                 minX = Math.min(minX, cellX(cell));
                 minY = Math.min(minY, cellY(cell));
                 maxX = Math.max(maxX, cellX(cell));
@@ -320,6 +342,7 @@ final class MirrorPlaneSearch {
         float tanX = 1.0F / projection.m00();
         float tanY = 1.0F / projection.m11();
         Vector4f direction = new Vector4f();
+        long now = System.nanoTime();
         for (int r = 0; r < rays; r++) {
             int sweep = rayCursor / CELLS;
             int cell = (rayCursor % CELLS) * CELL_STRIDE % CELLS;
@@ -335,6 +358,10 @@ final class MirrorPlaneSearch {
             Vec3 end = cameraPos.add(rayDir.scale(RAY_DISTANCE));
             BlockHitResult hit = mc.level.clip(new ClipContext(cameraPos, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.WATER, entity));
             cellPlanes[cell] = hit.getType() == HitResult.Type.MISS ? farWater(mc.level, cameraPos, rayDir, farReach(mc)) : reflectingPlane(mc, hit);
+            if (cellPlanes[cell] != NO_PLANE) {
+                cellHeldPlanes[cell] = cellPlanes[cell];
+                cellHeldNanos[cell] = now;
+            }
         }
     }
 
@@ -455,8 +482,15 @@ final class MirrorPlaneSearch {
                 bestScore = entry.getValue();
             }
         }
+        long now = System.nanoTime();
+        for (int cell = 0; cell < CELLS && plane != NO_PLANE; cell++) {
+            if (cellPlanes[cell] == plane) {
+                planeSeen = now;
+                break;
+            }
+        }
         float currentScore = plane == NO_PLANE ? 0.0F : scores.getOrDefault(plane, 0.0F);
-        if (plane != NO_PLANE && (heightOf(plane, cameraPos) <= MIN_HEIGHT || currentScore < MIN_SCORE * 0.5F)) {
+        if (plane != NO_PLANE && (heightOf(plane, cameraPos) <= MIN_HEIGHT || currentScore < MIN_SCORE * 0.5F && now - planeSeen > DROP_HOLD_NANOS)) {
             plane = NO_PLANE;
             currentScore = 0.0F;
         }
@@ -464,14 +498,17 @@ final class MirrorPlaneSearch {
             challenger = NO_PLANE;
         } else if (plane == NO_PLANE) {
             plane = best;
+            planeSince = now;
+            planeSeen = now;
             challenger = NO_PLANE;
         } else if (bestScore > currentScore * SWITCH_RATIO) {
-            long now = System.nanoTime();
             if (challenger != best) {
                 challenger = best;
                 challengerSince = now;
             } else if (now - challengerSince >= (bestScore > currentScore * FAST_SWITCH_RATIO ? FAST_SWITCH_DELAY_NANOS : SWITCH_DELAY_NANOS)) {
                 plane = best;
+                planeSince = now;
+                planeSeen = now;
                 challenger = NO_PLANE;
                 switches++;
             }

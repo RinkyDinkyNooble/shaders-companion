@@ -19,8 +19,8 @@ public final class CubeTextures {
     public static final int INFO_WIDTH = 8;
     /** Protocol version of the mirror view's textures, in its own info texture. */
     public static final int MIRROR_PROTOCOL = 2;
-    /** Mirror info texture width: header, plane, view origin, four matrix columns, ranges. */
-    public static final int MIRROR_INFO_WIDTH = 8;
+    /** Mirror info texture width: header, plane, view origin, four matrix columns, ranges, fade-in (added in 2.0.0). */
+    public static final int MIRROR_INFO_WIDTH = 9;
 
     public static final ResourceLocation ALBEDO_ID = id("cube_albedo");
     public static final ResourceLocation DATA_ID = id("cube_data");

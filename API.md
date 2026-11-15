@@ -112,7 +112,7 @@ Oculus draws into a pack's shadow map only what can cast a shadow into the main 
 
 The view's rays don't always start at that origin: with view bobbing on, Oculus puts the bobbing into the view matrix, so while the player walks the view's eye sits up to about 0.1 block off the origin (as the main view's eye sits off the camera position). Projecting a point into the view with the matrix is exact either way. To turn a texel back into a position, use the texel's own ray: with `m` the matrix for points relative to the origin (the matrix below with its last column replaced by `matrix * vec4(origin, 1.0)`), the eye is `e = inverse(m) * vec4(0.0, 0.0, 1.0, 0.0)`, `e.xyz / e.w`; the ray runs from it through the texel's point on the near plane (`inverse(m) * vec4(ndc.xy, -1.0, 1.0)`), and the surface is the point on it at the stored distance from the origin. A direction taken from the origin through the near-plane point is far off while walking (the near plane is 0.05 blocks from the eye).
 
-`mirror_info` (RGBA32F, 8 x 1), relative to this frame's camera, written every frame before the world renders:
+`mirror_info` (RGBA32F, 9 x 1 from 2.0.0, 8 x 1 before), relative to this frame's camera, written every frame before the world renders:
 
 | Texel | Contents |
 |---|---|
@@ -121,6 +121,7 @@ The view's rays don't always start at that origin: with view bobbing on, Oculus 
 | 2 | xyz: the mirrored camera (the view's origin) relative to the camera; w: frame counter mod 4096. |
 | 3 to 6 | Columns 0 to 3 of the matrix that takes a point relative to the camera to the view's clip space: `clip = mat4(t3, t4, t5, t6) * vec4(p, 1.0)`, texture coordinate `clip.xy / clip.w * 0.5 + 0.5`. |
 | 7 | `(near plane, far plane, chunk terrain range, Distant Horizons range)` |
+| 8 | x: how far a newly mirrored plane has faded in, 0 to 1 over 0.15 seconds after the mod starts mirroring it (a new plane, or the first after none). For a pack that blends the mirror view's reflection with its own by it, so a surface doesn't jump between them in one frame. yzw: 0. Added in 2.0.0 (protocol unchanged): check `textureSize(..., 0).x > 8` first and take 1 when it isn't there. |
 
 ### What lies behind water and glass (0.9.0)
 

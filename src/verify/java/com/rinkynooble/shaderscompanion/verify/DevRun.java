@@ -124,6 +124,15 @@ public final class DevRun {
     private static final int TOGGLE_ROUNDS = 6;
     /** Shots per toggle round, on consecutive ticks (-PdevBurst). */
     private static final int BURST = Integer.getInteger("shaderscompanion.devBurst", 1);
+    /**
+     * -PdevPan=D: the camera turns D degrees a tick during each round's burst (from the same yaw every round, smoothly
+     * between ticks), with the mirror's state logged every tick: for flicker while the view moves.
+     */
+    private static final float PAN = Float.parseFloat(System.getProperty("shaderscompanion.devPan", "0"));
+    /** -PdevStrafe: the player walks left during each round's burst, from the same spot every round. */
+    private static final boolean STRAFE = Boolean.getBoolean("shaderscompanion.devStrafe");
+    private static float panBaseYaw = Float.NaN;
+    private static net.minecraft.world.phys.Vec3 panBasePos;
     /** Ticks a round waits after the pack reloads before its timed ticks. */
     private static final int TOGGLE_SETTLE_TICKS = 100;
     private static final int START_FRAME = 60;
@@ -252,7 +261,10 @@ public final class DevRun {
         boolean turn = SCENE.equals("turn");
         boolean city = SCENE.equals("city");
         boolean reflectPool = SCENE.equals("reflectpool");
-        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || SCENE.equals("match");
+        boolean facade = SCENE.equals("facade") || SCENE.equals("lake");
+        boolean lake = SCENE.equals("lake");
+        boolean glassBox = SCENE.equals("glassbox");
+        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || SCENE.equals("match");
         boolean shore = SCENE.equals("shore");
         boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
@@ -475,6 +487,94 @@ public final class DevRun {
                     });
                 });
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the city scene");
+            } else if (facade) {
+                // A plaza at y 150 with a light grey stained glass facade 24 wide and 30 high -PdevFacadeDist blocks ahead
+                // (+Z, 50 by default), and white towers with glowstone windows behind the camera for it to reflect
+                mc.options.hideGui = true;
+                for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 2000), "weather clear",
+                        "gamerule doDaylightCycle false", "gamerule doMobSpawning false"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                MinecraftServer server = mc.getSingleplayerServer();
+                BlockPos at = mc.player.blockPosition();
+                BlockPos base = new BlockPos(at.getX(), 150, at.getZ());
+                int distance = Integer.getInteger("shaderscompanion.devFacadeDist", 50);
+                server.execute(() -> {
+                    var level = server.overworld();
+                    for (int x = -40; x <= 40; x++) {
+                        for (int z = -48; z <= (lake ? distance + 74 : distance + 4); z++) {
+                            level.setBlock(base.offset(x, -1, z), Blocks.SMOOTH_STONE.defaultBlockState(), 2);
+                        }
+                    }
+                    if (lake) {
+                        // -PdevScene=lake: a lake from -PdevFacadeDist (50) to 70 blocks farther ahead in place of the facade, seen from 40 blocks up
+                        for (int x = -40; x <= 40; x++) {
+                            for (int z = distance; z <= distance + 70; z++) {
+                                level.setBlock(base.offset(x, -2, z), Blocks.SAND.defaultBlockState(), 2);
+                                level.setBlock(base.offset(x, -1, z), Blocks.WATER.defaultBlockState(), 2);
+                            }
+                        }
+                        // Tall towers on the far shore, their tops above the view, so the lake shows them only by the mod
+                        for (int tx = -36; tx <= 30; tx += 11) {
+                            int height = 44 + Math.floorMod(tx * 5, 4) * 8;
+                            for (int y = 0; y < height; y++) {
+                                for (int x = 0; x < 6; x++) {
+                                    for (int z = 0; z < 6; z++) {
+                                        boolean window = y % 3 == 1 && (x == 2 || x == 3) && z == 0;
+                                        level.setBlock(base.offset(tx + x, y, distance + 76 + z), window ? Blocks.GLOWSTONE.defaultBlockState()
+                                                : (y / 6) % 2 == 0 ? Blocks.WHITE_CONCRETE.defaultBlockState() : Blocks.RED_CONCRETE.defaultBlockState(), 2);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // -PdevFacadeSize=N: an N x N facade, its left edge at the view's centre (24 x 30, centred, by default)
+                        int size = Integer.getInteger("shaderscompanion.devFacadeSize", 0);
+                        for (int x = size > 0 ? -size : -12; x <= (size > 0 ? 0 : 12); x++) {
+                            for (int y = size > 0 ? 4 : 0; y < (size > 0 ? 4 + size : 30); y++) {
+                                level.setBlock(base.offset(x, y, distance), Blocks.LIGHT_GRAY_STAINED_GLASS.defaultBlockState(), 2);
+                            }
+                        }
+                    }
+                    for (int tx = -36; tx <= 30; tx += 11) {
+                        int height = 10 + Math.floorMod(tx * 7, 4) * 6;
+                        for (int y = 0; y < height; y++) {
+                            for (int x = 0; x < 6; x++) {
+                                for (int z = 0; z < 6; z++) {
+                                    boolean window = y % 3 == 1 && (x == 2 || x == 3) && z == 5;
+                                    level.setBlock(base.offset(tx + x, y, -30 + z), window ? Blocks.GLOWSTONE.defaultBlockState() : Blocks.WHITE_CONCRETE.defaultBlockState(), 2);
+                                }
+                            }
+                        }
+                    }
+                    mc.tell(() -> {
+                        // Flying again: landing in the ticks before (the build) turned it off
+                        mc.player.getAbilities().flying = true;
+                        mc.player.onUpdateAbilities();
+                        mc.player.connection.sendCommand("tp @s " + (base.getX() + 0.5) + " " + (base.getY() + (lake ? 40 : 0)) + " " + (base.getZ() + 0.5) + " 0 "
+                                + Integer.getInteger("shaderscompanion.devPitch", lake ? 25 : -8));
+                    });
+                });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the {} scene, {} blocks ahead", SCENE, distance);
+            } else if (glassBox) {
+                // A lit room (white walls, a dark floor, glowstone in the ceiling) with a hollow box of light grey stained
+                // glass ahead, a white shelf of quartz with dark openings beside the camera and a red "painting" behind the box
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~20 ~ 0 " + Integer.getInteger("shaderscompanion.devPitch", 15),
+                        "fill ~-8 ~-1 ~-6 ~8 ~6 ~12 minecraft:white_concrete", "fill ~-7 ~ ~-5 ~7 ~5 ~11 minecraft:air",
+                        "fill ~-7 ~-1 ~-5 ~7 ~-1 ~11 minecraft:dark_oak_planks",
+                        "fill ~-5 ~6 ~-3 ~5 ~6 ~9 minecraft:glowstone", "fill ~-4 ~6 ~-2 ~4 ~6 ~8 minecraft:white_concrete",
+                        "fill ~-2 ~ ~3 ~2 ~3 ~6 minecraft:light_gray_stained_glass", "fill ~-1 ~1 ~4 ~1 ~2 ~5 minecraft:air",
+                        "fill ~-6 ~ ~-4 ~-1 ~4 ~-4 minecraft:quartz_block", "fill ~-6 ~ ~-5 ~-1 ~4 ~-5 minecraft:black_concrete",
+                        "fill ~-5 ~1 ~-4 ~-4 ~1 ~-4 minecraft:air", "fill ~-3 ~3 ~-4 ~-2 ~3 ~-4 minecraft:air", "setblock ~-5 ~3 ~-4 minecraft:air",
+                        "fill ~-6 ~ ~-1 ~-5 ~3 ~1 minecraft:quartz_block", "setblock ~-5 ~1 ~0 minecraft:air", "setblock ~-5 ~2 ~0 minecraft:air",
+                        "fill ~-2 ~2 ~11 ~1 ~4 ~11 minecraft:red_wool", "fill ~-1 ~3 ~11 ~0 ~3 ~11 minecraft:orange_wool",
+                        "fill ~4 ~ ~6 ~6 ~1 ~8 minecraft:oak_planks"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the glassbox scene");
             } else if (turn) {
                 // A water pool below and a black glass wall 3 blocks to the west (yaw 90); the view starts level, looking south (yaw 0)
                 mc.options.hideGui = true;
@@ -790,7 +890,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city || reflectPool ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {
@@ -835,7 +935,7 @@ public final class DevRun {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run at {}: {}", mc.player == null ? "?" : mc.player.position(),
                     String.join(" | ", DebugOverlay.statusLines()));
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod on: {}", frameTiming());
-            if (!TOGGLE.isEmpty() && !city && !shadows) {
+            if (!TOGGLE.isEmpty() && !shadows) {
                 // Timing rounds with the option off, on, off, on..., each with a screenshot
                 timingRound = 0;
                 setPackOption(false);
@@ -882,12 +982,31 @@ public final class DevRun {
                 Config.ENABLED.set(false);
                 phase = 2;
             }
+        } else if (phase == 4 && (PAN != 0.0F || STRAFE) && ticks - phaseTick < TOGGLE_SETTLE_TICKS + TIMING_TICKS) {
+            // -PdevPan, -PdevStrafe: every round starts its burst from the same still yaw and spot
+            if (Float.isNaN(panBaseYaw)) {
+                panBaseYaw = mc.player.getYRot();
+                panBasePos = mc.player.position();
+            }
+            mc.options.keyLeft.setDown(false);
+            mc.player.setYRot(panBaseYaw);
+            mc.player.yRotO = panBaseYaw;
+            if (STRAFE && ticks - phaseTick == TOGGLE_SETTLE_TICKS + TIMING_TICKS - 20) {
+                mc.player.connection.sendCommand("tp @s " + panBasePos.x + " " + panBasePos.y + " " + panBasePos.z + " " + panBaseYaw + " " + mc.player.getXRot());
+            }
         } else if (phase == 4 && ticks - phaseTick >= TOGGLE_SETTLE_TICKS + TIMING_TICKS) {
             boolean on = timingRound % 2 == 1;
-            // -PdevBurst=N: N shots on consecutive ticks at the round's end (for flicker: the camera holds still)
+            // -PdevBurst=N: N shots on consecutive ticks at the round's end (for flicker: the camera holds still, or turns
+            // PAN degrees a tick)
             int shot = ticks - phaseTick - TOGGLE_SETTLE_TICKS - TIMING_TICKS;
-            Screenshot.grab(mc.gameDirectory, prefix + "-" + TOGGLE + "-" + (on ? "on" : "off") + timingRound + (BURST > 1 ? "-b" + shot : "") + ".png",
+            Screenshot.grab(mc.gameDirectory, prefix + "-" + TOGGLE + "-" + (on ? "on" : "off") + timingRound + (BURST > 1 ? "-b" + String.format("%03d", shot) : "") + ".png",
                     mc.getMainRenderTarget(), message -> { });
+            if (PAN != 0.0F || STRAFE) {
+                mc.player.yRotO = panBaseYaw + PAN * shot;
+                mc.player.setYRot(panBaseYaw + PAN * (shot + 1));
+                mc.options.keyLeft.setDown(STRAFE && shot + 1 < BURST);
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, pan {} {} shot {}: {}", TOGGLE, on ? "on" : "off", shot, mirrorStatus());
+            }
             if (shot + 1 < BURST) {
                 return;
             }

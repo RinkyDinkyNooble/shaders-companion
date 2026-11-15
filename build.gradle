@@ -77,6 +77,21 @@ minecraft {
             if (project.hasProperty('devBurst')) {
                 property 'shaderscompanion.devBurst', project.property('devBurst')
             }
+            // -PdevPan=0.15: the camera turns that many degrees a tick during each round's burst (flicker while moving).
+            if (project.hasProperty('devPan')) {
+                property 'shaderscompanion.devPan', project.property('devPan')
+            }
+            // -PdevStrafe: the player walks left during each -PdevToggle round's burst.
+            if (project.hasProperty('devStrafe')) {
+                property 'shaderscompanion.devStrafe', 'true'
+            }
+            // -PdevFacadeDist=50: how far ahead the facade scene's glass stands.
+            if (project.hasProperty('devFacadeSize')) {
+                property 'shaderscompanion.devFacadeSize', project.property('devFacadeSize')
+            }
+            if (project.hasProperty('devFacadeDist')) {
+                property 'shaderscompanion.devFacadeDist', project.property('devFacadeDist')
+            }
             // -PdevNoFacade: the shore scene without its glass facade (the water is mirrored).
             if (project.hasProperty('devNoFacade')) {
                 property 'shaderscompanion.devNoFacade', 'true'
