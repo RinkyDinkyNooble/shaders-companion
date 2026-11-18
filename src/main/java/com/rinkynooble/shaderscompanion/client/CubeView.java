@@ -551,6 +551,7 @@ public final class CubeView {
         GlStateManager._depthFunc(GL11C.GL_LESS);
         GlStateManager._depthMask(true);
         GlStateManager._colorMask(true, true, true, true);
+        GlStateManager._stencilMask(0xFF);
         GlStateManager._enableScissorTest();
         Gl.activeTexture(GL13C.GL_TEXTURE0);
     }
@@ -796,19 +797,41 @@ public final class CubeView {
                                  float maxDistance, float lodDistance, RenderRegionManager regions, boolean mirror, Runnable afterOpaque) {
         viewClipPlane = clipPlane;
         viewCamera = cameraOffset;
+        GL11C.glEnable(GL11C.GL_STENCIL_TEST);
         try {
+            markTexels(true);
             drawTerrain(seen, camera, origin, regions, false);
             drawEntities(false, mirror);
+            markTexels(false);
             drawLods(lodSeen, camera, origin, maxDistance, lodDistance, true);
             if (afterOpaque != null) {
                 afterOpaque.run();
             }
+            markTexels(true);
             drawTerrain(seen, camera, origin, regions, true);
             drawEntities(true, mirror);
+            markTexels(false);
             drawLods(lodSeen, camera, origin, maxDistance, lodDistance, false);
         } finally {
+            GL11C.glDisable(GL11C.GL_STENCIL_TEST);
             viewClipPlane = NO_CLIP;
             viewCamera = NO_OFFSET;
+        }
+    }
+
+    /**
+     * The stencil for a view's passes: chunk terrain and entities mark the texels they draw (mark true), and Distant
+     * Horizons' terrain is drawn only where nothing is marked (false). So the chunk terrain stays in front wherever it
+     * reaches, as in the main view, and LODs don't show through it where both describe the same surface near the
+     * render distance's edge.
+     */
+    private static void markTexels(boolean mark) {
+        if (mark) {
+            GlStateManager._stencilFunc(GL11C.GL_ALWAYS, 1, 0xFF);
+            GlStateManager._stencilOp(GL11C.GL_KEEP, GL11C.GL_KEEP, GL11C.GL_REPLACE);
+        } else {
+            GlStateManager._stencilFunc(GL11C.GL_EQUAL, 0, 0xFF);
+            GlStateManager._stencilOp(GL11C.GL_KEEP, GL11C.GL_KEEP, GL11C.GL_KEEP);
         }
     }
 

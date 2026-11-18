@@ -15,7 +15,7 @@ import org.lwjgl.system.MemoryStack;
  */
 record GlState(int drawFramebuffer, int readFramebuffer, int[] viewport, int[] scissorBox, int program, int activeTexture,
                int texture0, boolean depthTest, boolean cull, boolean blend, boolean scissor, int depthFunc, boolean depthMask,
-               boolean[] colorMask) {
+               boolean[] colorMask, boolean stencilTest, int[] stencil) {
     static GlState capture() {
         int[] viewport = new int[4];
         GL11C.glGetIntegerv(GL11C.GL_VIEWPORT, viewport);
@@ -45,7 +45,11 @@ record GlState(int drawFramebuffer, int readFramebuffer, int[] viewport, int[] s
                 GL11C.glIsEnabled(GL11C.GL_SCISSOR_TEST),
                 GL11C.glGetInteger(GL11C.GL_DEPTH_FUNC),
                 GL11C.glGetBoolean(GL11C.GL_DEPTH_WRITEMASK),
-                new boolean[]{mask[0] != 0, mask[1] != 0, mask[2] != 0, mask[3] != 0});
+                new boolean[]{mask[0] != 0, mask[1] != 0, mask[2] != 0, mask[3] != 0},
+                GL11C.glIsEnabled(GL11C.GL_STENCIL_TEST),
+                new int[]{GL11C.glGetInteger(GL11C.GL_STENCIL_FUNC), GL11C.glGetInteger(GL11C.GL_STENCIL_REF), GL11C.glGetInteger(GL11C.GL_STENCIL_VALUE_MASK),
+                        GL11C.glGetInteger(GL11C.GL_STENCIL_FAIL), GL11C.glGetInteger(GL11C.GL_STENCIL_PASS_DEPTH_FAIL),
+                        GL11C.glGetInteger(GL11C.GL_STENCIL_PASS_DEPTH_PASS), GL11C.glGetInteger(GL11C.GL_STENCIL_WRITEMASK)});
     }
 
     void restore() {
@@ -68,5 +72,9 @@ record GlState(int drawFramebuffer, int readFramebuffer, int[] viewport, int[] s
         GlStateManager._depthFunc(this.depthFunc);
         GlStateManager._depthMask(this.depthMask);
         GlStateManager._colorMask(this.colorMask[0], this.colorMask[1], this.colorMask[2], this.colorMask[3]);
+        if (this.stencilTest) GL11C.glEnable(GL11C.GL_STENCIL_TEST); else GL11C.glDisable(GL11C.GL_STENCIL_TEST);
+        GlStateManager._stencilFunc(this.stencil[0], this.stencil[1], this.stencil[2]);
+        GlStateManager._stencilOp(this.stencil[3], this.stencil[4], this.stencil[5]);
+        GlStateManager._stencilMask(this.stencil[6]);
     }
 }

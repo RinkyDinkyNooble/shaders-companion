@@ -142,6 +142,14 @@ minecraft {
             if (project.hasProperty('devNoShaders')) {
                 property 'shaderscompanion.devNoShaders', 'true'
             }
+            // -PdevReloads=4: the meadow scene reloads the shader pack that many times before its shots.
+            if (project.hasProperty('devReloads')) {
+                property 'shaderscompanion.devReloads', project.property('devReloads')
+            }
+            // -PdevShadersLate=600: the world loads with shaders off and they come on that many ticks in.
+            if (project.hasProperty('devShadersLate')) {
+                property 'shaderscompanion.devShadersLate', project.property('devShadersLate')
+            }
             // -PdevRain: rain from 30 ticks into a scene (the ocean scene's biome has rain).
             if (project.hasProperty('devRain')) {
                 property 'shaderscompanion.devRain', 'true'

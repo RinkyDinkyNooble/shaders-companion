@@ -6,8 +6,8 @@ import org.lwjgl.opengl.GL30C;
 
 /**
  * A framebuffer a view is drawn into: the view's textures as colour attachments, in the order of the programs' outputs
- * ({@link ViewProgram#OUTPUTS}; outputs past the last texture go nowhere), and a depth buffer (unless it only receives
- * copies). Created on first use.
+ * ({@link ViewProgram#OUTPUTS}; outputs past the last texture go nowhere), and a depth and stencil buffer (unless it only
+ * receives copies). Created on first use.
  */
 final class ViewTarget {
     private final String name;
@@ -45,9 +45,9 @@ final class ViewTarget {
         Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, this.framebuffer);
         if (this.depth) {
             GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, this.depthBuffer);
-            GL30C.glRenderbufferStorage(GL30C.GL_RENDERBUFFER, GL30C.GL_DEPTH_COMPONENT24, newWidth, newHeight);
+            GL30C.glRenderbufferStorage(GL30C.GL_RENDERBUFFER, GL30C.GL_DEPTH24_STENCIL8, newWidth, newHeight);
             GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, 0);
-            GL30C.glFramebufferRenderbuffer(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL30C.GL_RENDERBUFFER, this.depthBuffer);
+            GL30C.glFramebufferRenderbuffer(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_STENCIL_ATTACHMENT, GL30C.GL_RENDERBUFFER, this.depthBuffer);
         }
         for (int i = 0; i < this.drawBuffers.length; i++) {
             if (i < this.colours.length) {
@@ -91,7 +91,7 @@ final class ViewTarget {
 
     /**
      * Clears the scissored part of the bound target: every texture to 0 but the distance, which gets {@code distance},
-     * and the depth to the far plane.
+     * the depth to the far plane and the stencil to 0 (the stencil write mask must be all ones).
      */
     void clear(float distance) {
         float[] zero = {0.0F, 0.0F, 0.0F, 0.0F};
@@ -99,7 +99,7 @@ final class ViewTarget {
             GL30C.glClearBufferfv(GL11C.GL_COLOR, i, i == ViewProgram.DISTANCE_OUTPUT ? new float[]{distance, 0.0F, 0.0F, 0.0F} : zero);
         }
         if (this.depth) {
-            GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[]{1.0F});
+            GL30C.glClearBufferfi(GL30C.GL_DEPTH_STENCIL, 0, 1.0F, 0);
         }
     }
 }

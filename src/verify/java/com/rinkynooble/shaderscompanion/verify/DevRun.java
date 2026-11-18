@@ -88,6 +88,16 @@ import org.lwjgl.opengl.GL33C;
  * -PdevRain: rain from 30 ticks into any scene (it doesn't rain where the world starts; the ocean scene's biome has
  * rain).
  * <p>
+ * -PdevScene=meadow: a lawn with patches of tall grass and flowers, shots every 60 degrees in the morning, at noon and in
+ * the afternoon ("shaderscompanion-meadow-&lt;-PdevTag&gt;-t&lt;time&gt;-y&lt;yaw&gt;.png"); -PdevReloads=N reloads the shader pack N
+ * times first. For plants drawn wrongly.
+ * <p>
+ * -PdevScene=lodmirror: a black glass wall 4 blocks ahead, 30 blocks up (-PdevLift), so the glass shows the land behind
+ * the camera out to Distant Horizons' LODs (-PdevDh); -PdevTime, -PdevCycle, -PdevYaw, -PdevPitch.
+ * <p>
+ * -PdevShadersLate=N: the world loads with Oculus's shaders off and they come on N ticks in (Distant Horizons first,
+ * then shaders); the scene follows as usual.
+ * <p>
  * -PdevScene=bright: a platform of white concrete, grass and stone bricks with a white wall, a quartz pillar and a
  * black glass wall, screenshotted at midnight and at noon, each with the mod drawing and turned off
  * ("shaderscompanion-bright-&lt;-PdevTag&gt;-night-on.png" and so on): for comparing the brightness of shader pack versions.
@@ -148,6 +158,13 @@ public final class DevRun {
     private static int worldTicks;
     /** -PdevNoShaders: the scene may start (100 ticks in the world). */
     private static boolean noShadersReady;
+    /**
+     * -PdevShadersLate=N: the world loads with shaders off (Distant Horizons draws its LODs on its own) and Oculus turns
+     * them on N ticks in; the scene follows as usual.
+     */
+    private static final int SHADERS_LATE = Integer.getInteger("shaderscompanion.devShadersLate", 0);
+    private static boolean shadersOn = SHADERS_LATE <= 0;
+    private static int lateTicks;
     /** Ticks in the world without the mod drawing before a run gives up and logs why. */
     private static final int IDLE_TICKS = 300;
     private static String prefix = "devrun";
@@ -185,6 +202,9 @@ public final class DevRun {
         }
         worldRequested = true;
         Minecraft mc = Minecraft.getInstance();
+        if (SHADERS_LATE > 0) {
+            setShaders(mc, false);
+        }
         mc.tell(() -> {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: creating world {}", WORLD);
             LevelSettings settings = new LevelSettings(WORLD, GameType.CREATIVE, false, Difficulty.PEACEFUL, true, new GameRules(), WorldDataConfiguration.DEFAULT);
@@ -247,6 +267,19 @@ public final class DevRun {
         if (++ticks % 200 == 0) {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: {}", String.join(" | ", DebugOverlay.statusLines()));
         }
+        if (!shadersOn) {
+            // -PdevShadersLate: shaders come on once the world has run that long without them
+            if (mc.player != null && ++lateTicks >= SHADERS_LATE) {
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-late-" + System.getProperty("shaderscompanion.devTag", "run") + "-before.png",
+                        mc.getMainRenderTarget(), message -> { });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: turning shaders on after {} ticks: {}", lateTicks,
+                        String.join(" | ", DebugOverlay.statusLines()));
+                setShaders(mc, true);
+                shadersOn = true;
+                worldTicks = 0;
+            }
+            return;
+        }
         boolean pool = SCENE.equals("pool");
         boolean mirror = SCENE.equals("mirror");
         boolean mobs = SCENE.equals("mobs") || mirror;
@@ -265,7 +298,9 @@ public final class DevRun {
         boolean facade = SCENE.equals("facade") || SCENE.equals("lake");
         boolean lake = SCENE.equals("lake");
         boolean glassBox = SCENE.equals("glassbox");
-        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || SCENE.equals("match");
+        boolean meadow = SCENE.equals("meadow");
+        boolean lodMirror = SCENE.equals("lodmirror");
+        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || lodMirror || SCENE.equals("match");
         boolean shore = SCENE.equals("shore");
         boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
@@ -657,6 +692,71 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the boat scene");
+            } else if (meadow) {
+                // A lawn of grass with patches of tall grass, large ferns and flowers around the camera
+                mc.options.hideGui = true;
+                for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear",
+                        "gamerule doDaylightCycle false", "gamerule doMobSpawning false"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                MinecraftServer server = mc.getSingleplayerServer();
+                BlockPos at = mc.player.blockPosition().above(20);
+                server.execute(() -> {
+                    var level = server.overworld();
+                    var lower = Blocks.TALL_GRASS.defaultBlockState();
+                    var upper = lower.setValue(net.minecraft.world.level.block.DoublePlantBlock.HALF, net.minecraft.world.level.block.state.properties.DoubleBlockHalf.UPPER);
+                    for (int x = -24; x <= 24; x++) {
+                        for (int z = -24; z <= 24; z++) {
+                            level.setBlock(at.offset(x, -1, z), Blocks.GRASS_BLOCK.defaultBlockState(), 2 | 16);
+                            for (int y = 0; y <= 6; y++) {
+                                level.setBlock(at.offset(x, y, z), Blocks.AIR.defaultBlockState(), 2 | 16);
+                            }
+                            int pick = Math.floorMod(x * 7 + z * 13 + x * z, 11);
+                            if (Math.abs(x) <= 1 && Math.abs(z) <= 1) {
+                                continue;
+                            }
+                            if (pick < 5) {
+                                level.setBlock(at.offset(x, 0, z), lower, 2 | 16);
+                                level.setBlock(at.offset(x, 1, z), upper, 2 | 16);
+                            } else if (pick < 9) {
+                                level.setBlock(at.offset(x, 0, z), Blocks.GRASS.defaultBlockState(), 2 | 16);
+                            } else if (pick == 9) {
+                                level.setBlock(at.offset(x, 0, z), (x + z) % 2 == 0 ? Blocks.DANDELION.defaultBlockState() : Blocks.CORNFLOWER.defaultBlockState(), 2 | 16);
+                            }
+                        }
+                    }
+                    mc.tell(() -> mc.player.connection.sendCommand("tp @s " + (at.getX() + 0.5) + " " + (at.getY() + 0.2) + " " + (at.getZ() + 0.5) + " 0 "
+                            + Integer.getInteger("shaderscompanion.devPitch", 35)));
+                });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the meadow scene");
+            } else if (lodMirror) {
+                // A black glass wall ahead, high above the land, so the glass shows the land behind the camera out to
+                // Distant Horizons' LODs
+                mc.options.hideGui = true;
+                int lift = Integer.getInteger("shaderscompanion.devLift", 30);
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 9000), "weather clear",
+                        "gamerule doDaylightCycle " + Boolean.getBoolean("shaderscompanion.devCycle"), "gamerule doMobSpawning false",
+                        "tp @s ~ ~" + lift + " ~ " + Integer.getInteger("shaderscompanion.devYaw", 0) + " " + Integer.getInteger("shaderscompanion.devPitch", 6)}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                MinecraftServer server = mc.getSingleplayerServer();
+                BlockPos from = mc.player.blockPosition();
+                int yaw = Integer.getInteger("shaderscompanion.devYaw", 0);
+                server.execute(() -> {
+                    var level = server.overworld();
+                    BlockPos eye = from.above(lift);
+                    double dx = -Math.sin(Math.toRadians(yaw));
+                    double dz = Math.cos(Math.toRadians(yaw));
+                    // The wall 4 blocks ahead, across the view, 19 wide and 14 high
+                    for (int s = -9; s <= 9; s++) {
+                        for (int y = -8; y <= 5; y++) {
+                            BlockPos p = new BlockPos((int) Math.floor(eye.getX() + 0.5 + dx * 4 + dz * s), eye.getY() + y, (int) Math.floor(eye.getZ() + 0.5 + dz * 4 - dx * s));
+                            level.setBlock(p, Blocks.BLACK_STAINED_GLASS.defaultBlockState(), 2 | 16);
+                        }
+                    }
+                });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the lodmirror scene");
             } else if (move) {
                 mc.options.hideGui = true;
                 for (String command : new String[]{
@@ -826,6 +926,41 @@ public final class DevRun {
             }
             if (s == 261) {
                 finish(mc);
+            }
+        } else if (phase == 1 && meadow) {
+            // Shots around the compass (every 60 degrees) in the morning, at noon and in the afternoon, each 20 ticks
+            // after the turn so temporal effects settle
+            int t = ticks - phaseTick - WAIT_TICKS;
+            // -PdevReloads=N: the pack reloads N times while the scene settles, as when switching packs in game
+            int reloads = Integer.getInteger("shaderscompanion.devReloads", 0);
+            int sinceBuilt = ticks - phaseTick;
+            if (t < 0 && sinceBuilt % 40 == 20 && sinceBuilt / 40 < reloads) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: reloading the shader pack ({} of {})", sinceBuilt / 40 + 1, reloads);
+                try {
+                    Iris.reload();
+                } catch (Exception e) {
+                    ShadersCompanion.LOGGER.error("Shaders Companion dev run: reload failed", e);
+                }
+            }
+            int[] times = {Integer.getInteger("shaderscompanion.devTime", 3000), 6000, 9000};
+            int[] yaws = {0, 60, 120, 180, 240, 300};
+            if (t >= 0) {
+                int shot = t / 20;
+                if (shot >= times.length * yaws.length) {
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod on: {}", frameTiming());
+                    finish(mc);
+                    return;
+                }
+                int time = times[shot / yaws.length];
+                int yaw = yaws[shot % yaws.length];
+                if (t % 20 == 0) {
+                    mc.player.connection.sendCommand("time set " + time);
+                    mc.player.setYRot(yaw);
+                    mc.player.yRotO = yaw;
+                } else if (t % 20 == 19) {
+                    Screenshot.grab(mc.gameDirectory, "shaderscompanion-meadow-" + System.getProperty("shaderscompanion.devTag", "run") + "-t" + time + "-y" + yaw + ".png",
+                            mc.getMainRenderTarget(), message -> { });
+                }
             }
         } else if (phase == 1 && move) {
             // On foot: a still shot, two while strafing left, one while walking forward, and one settled after
@@ -1153,7 +1288,19 @@ public final class DevRun {
         }
     }
 
+    /** Turns Oculus's shaders on or off, as its toggle key does (saved in its settings file). */
+    private static void setShaders(Minecraft mc, boolean on) {
+        try {
+            Iris.toggleShaders(mc, on);
+        } catch (Exception e) {
+            ShadersCompanion.LOGGER.error("Shaders Companion dev run: turning shaders {} failed", on ? "on" : "off", e);
+        }
+    }
+
     private static void finish(Minecraft mc) {
+        if (!shadersOn) {
+            setShaders(mc, true);
+        }
         if (CubeView.lodRangeForChecks() > 0 || System.getProperty("shaderscompanion.devDh") != null) {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: Distant Horizons range {}", CubeView.lodRangeForChecks());
         }

@@ -36,6 +36,7 @@ final class Lods {
     }
 
     static String reason() {
+        available();
         return state > 0 ? DistantHorizonsLods.reason : state < 0 && ModList.get().isLoaded("distanthorizons") ? "turned off after an error" : "not installed";
     }
 

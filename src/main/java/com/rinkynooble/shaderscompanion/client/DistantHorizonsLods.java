@@ -39,7 +39,7 @@ final class DistantHorizonsLods {
 
     static int containersDrawn;
     /** Why the last collect found nothing, for the status line. */
-    static String reason = "";
+    static String reason = "not read yet (the mod draws only while a shader pack reads its views)";
 
     private DistantHorizonsLods() {
     }
