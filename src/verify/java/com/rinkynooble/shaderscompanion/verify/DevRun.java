@@ -90,14 +90,15 @@ import org.lwjgl.opengl.GL33C;
  * <p>
  * -PdevScene=meadow: a lawn with patches of tall grass and flowers, shots every 60 degrees in the morning, at noon and in
  * the afternoon ("shaderscompanion-meadow-&lt;-PdevTag&gt;-t&lt;time&gt;-y&lt;yaw&gt;.png"); -PdevReloads=N reloads the shader pack N
- * times first. For plants drawn wrongly.
+ * times first. For plants drawn wrongly. With -PdevToggle the compass shots give way to the usual toggle rounds.
  * <p>
  * -PdevScene=street: at y 150, a shop front on the camera's left running ahead (+Z): grey pillars every 5 blocks with
  * light grey stained glass set a block back between them over white sills, a lit room with brick walls behind, and a
  * striped tower with lamps across the street on the right. The camera stands beside the glass looking along it
  * (-PdevYaw, -15 by default; -PdevCamX and -PdevCamZ, 1.0 and 0.5, place it), like a player walking past a shop window
  * (-PdevShallow: pillars a block thinner, so the next bays show past them at a grazing angle);
- * shots "-on" and "-off".
+ * shots "-on" and "-off". -PdevImport=&lt;file&gt; also places the blocks listed in a file ("dx dy dz state" per line, from a
+ * scan of the user's world) at -PdevImportAt (from the base, "-8,0,-30" by default); -PdevCamY lifts the camera.
  * <p>
  * -PdevScene=darkspot: the meadow, then the client's sky light set to 0 at a few spots ahead (plants, and air over the
  * lawn), as in worlds whose light data is wrong in spots; shots "shaderscompanion-darkspot-&lt;-PdevTag&gt;-dark" and,
@@ -650,6 +651,32 @@ public final class DevRun {
                         level.setBlock(base.offset(5, 0, z), Math.floorMod(z, 4) == 0 ? Blocks.POTTED_POPPY.defaultBlockState() : Blocks.AIR.defaultBlockState(), 2);
                         level.setBlock(base.offset(9, 1, z), Math.floorMod(z, 2) == 0 ? Blocks.RED_TERRACOTTA.defaultBlockState() : Blocks.BRICKS.defaultBlockState(), 2);
                     }
+                    String importFile = System.getProperty("shaderscompanion.devImport", "");
+                    if (!importFile.isEmpty()) {
+                        // -PdevImport: blocks from a scan of the user's world ("dx dy dz state" per line), from -PdevImportAt
+                        String[] importAt = System.getProperty("shaderscompanion.devImportAt", "-8,0,-30").split(",");
+                        BlockPos origin = base.offset(Integer.parseInt(importAt[0].trim()), Integer.parseInt(importAt[1].trim()), Integer.parseInt(importAt[2].trim()));
+                        int placed = 0;
+                        try {
+                            var blocks = level.holderLookup(net.minecraft.core.registries.Registries.BLOCK);
+                            for (String line : java.nio.file.Files.readAllLines(java.nio.file.Path.of(importFile))) {
+                                String[] part = line.trim().split(" ", 4);
+                                if (part.length < 4) {
+                                    continue;
+                                }
+                                try {
+                                    var state = net.minecraft.commands.arguments.blocks.BlockStateParser.parseForBlock(blocks, part[3], false).blockState();
+                                    level.setBlock(origin.offset(Integer.parseInt(part[0]), Integer.parseInt(part[1]), Integer.parseInt(part[2])), state, 2);
+                                    placed++;
+                                } catch (Exception e) {
+                                    ShadersCompanion.LOGGER.warn("Shaders Companion dev run: can't place {}", line);
+                                }
+                            }
+                        } catch (java.io.IOException e) {
+                            ShadersCompanion.LOGGER.error("Shaders Companion dev run: can't read {}", importFile, e);
+                        }
+                        ShadersCompanion.LOGGER.info("Shaders Companion dev run: placed {} blocks from {} at {}", placed, importFile, origin);
+                    }
                     // A striped tower across the street with lamps on its face and, from 12 blocks up, balconies: a
                     // recess 2 deep and 3 high every 4 blocks with a glass railing and a lamp in its ceiling
                     for (int z = 4; z <= 40; z++) {
@@ -690,7 +717,8 @@ public final class DevRun {
                                         + " lathe:betterblockz__tintedglass_blockz_1_vslab[facing=" + facing + "]");
                             }
                         }
-                        mc.player.connection.sendCommand("tp @s " + (base.getX() + Double.parseDouble(System.getProperty("shaderscompanion.devCamX", "1.0"))) + " " + base.getY() + " " + (base.getZ() + Double.parseDouble(System.getProperty("shaderscompanion.devCamZ", "0.5"))) + " "
+                        mc.player.connection.sendCommand("tp @s " + (base.getX() + Double.parseDouble(System.getProperty("shaderscompanion.devCamX", "1.0"))) + " "
+                                + (base.getY() + Double.parseDouble(System.getProperty("shaderscompanion.devCamY", "0.0"))) + " " + (base.getZ() + Double.parseDouble(System.getProperty("shaderscompanion.devCamZ", "0.5"))) + " "
                                 + Integer.getInteger("shaderscompanion.devYaw", -15) + " " + Integer.getInteger("shaderscompanion.devPitch", 0));
                     });
                 });
@@ -1095,7 +1123,14 @@ public final class DevRun {
             }
             int[] times = {Integer.getInteger("shaderscompanion.devTime", 3000), 6000, 9000};
             int[] yaws = {0, 60, 120, 180, 240, 300};
-            if (t >= 0) {
+            if (t >= 0 && !TOGGLE.isEmpty()) {
+                // -PdevToggle: the usual rounds with the option off and on in turn, from where the scene was built
+                prefix = "shaderscompanion-meadow-" + System.getProperty("shaderscompanion.devTag", "run");
+                timingRound = 0;
+                setPackOption(false);
+                phase = 4;
+                phaseTick = ticks;
+            } else if (t >= 0) {
                 int shot = t / 20;
                 if (shot >= times.length * yaws.length) {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod on: {}", frameTiming());

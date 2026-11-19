@@ -127,7 +127,9 @@ minecraft {
             if (project.hasProperty('devBlocks')) {
                 property 'shaderscompanion.devBlocks', 'true'
             }
-            ['devCamX', 'devCamZ', 'devShallow', 'devNightVision'].each { name ->
+            // -PdevImport=<file>: the street scene also places the blocks listed in the file ("dx dy dz state" per line,
+            // from a scan of the user's world) at -PdevImportAt (x,y,z from the street's base, "-8,0,-30" by default).
+            ['devCamX', 'devCamY', 'devCamZ', 'devShallow', 'devNightVision', 'devImport', 'devImportAt'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }
@@ -238,8 +240,9 @@ dependencies {
 }
 
 tasks.named('processResources', ProcessResources).configure {
-    // The bundled shader pack (see gradle.properties), stored without spaces in its name
-    var bundledPack = file("${bundled_pack_dir}/ABZA Shader v${bundled_pack_version}.zip")
+    // The bundled shader pack (see gradle.properties): the ABZA Shader repo's Shaders Companion copy (its reflection
+    // options on in every preset), stored without spaces in its name
+    var bundledPack = file("${bundled_pack_dir}/ABZA Shader v${bundled_pack_version}-companion.zip")
     inputs.property 'bundled_pack_version', bundled_pack_version
     doFirst {
         if (!bundledPack.isFile()) {
