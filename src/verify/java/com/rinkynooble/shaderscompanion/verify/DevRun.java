@@ -119,7 +119,7 @@ import org.lwjgl.opengl.GL33C;
  * -PdevScene=exposure: a lit block of town (white buildings with glowstone, a lime lawn with sea lanterns) from above
  * at -PdevTime (18000, midnight), a shot every -PdevEvery ticks (200), -PdevShots of them (13), with the time of day
  * logged; -PdevCycle lets the time run, -PdevStep=500 sets the time that much later before each next shot;
- * -PdevNightVision=true gives the player night vision. For exposure that drifts over minutes or with the time of day.
+ * -PdevNightVision=true gives the player night vision (any scene). For exposure that drifts over minutes or with the time of day.
  * <p>
  * A run in which the mod never draws (the pack reads none of its views) logs why after 15 seconds in the world and
  * quits.
@@ -466,8 +466,8 @@ public final class DevRun {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the raincover scene");
             } else if (mobs) {
                 for (String command : new String[]{
-                        "time set noon", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
-                        "difficulty easy", "tp @s ~ ~20 ~ 0 10",
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false",
+                        "gamerule doMobSpawning false", "difficulty easy", "tp @s ~ ~20 ~ 0 10",
                         "fill ~-10 ~-1 ~-10 ~10 ~-1 ~10 minecraft:smooth_stone", "fill ~-10 ~ ~-10 ~10 ~6 ~10 minecraft:air",
                         "summon minecraft:husk ~ ~ ~4 {NoAI:1b,PersistenceRequired:1b,Rotation:[180f,0f]}",
                         "summon minecraft:villager ~ ~ ~-4 {NoAI:1b,PersistenceRequired:1b}",
@@ -947,10 +947,6 @@ public final class DevRun {
                         "tp @s ~ ~16 ~-6 0 " + Integer.getInteger("shaderscompanion.devPitch", 35)}) {
                     mc.player.connection.sendCommand(command);
                 }
-                if (Boolean.getBoolean("shaderscompanion.devNightVision")) {
-                    // -PdevNightVision=true: vanilla night vision for the whole run
-                    mc.player.connection.sendCommand("effect give @s minecraft:night_vision infinite 0 true");
-                }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the exposure scene");
             } else if (shadows) {
                 mc.options.hideGui = true;
@@ -990,6 +986,10 @@ public final class DevRun {
                 mc.player.connection.sendCommand("tp @s ~ ~" + LIFT_BLOCKS + " ~ 0 0");
                 DebugOverlay.setVisible(true);
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: lifted the player {} blocks", LIFT_BLOCKS);
+            }
+            if (Boolean.getBoolean("shaderscompanion.devNightVision")) {
+                // -PdevNightVision=true: vanilla night vision for the whole run (any scene)
+                mc.player.connection.sendCommand("effect give @s minecraft:night_vision infinite 0 true");
             }
             phase = 1;
             phaseTick = ticks;

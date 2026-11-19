@@ -35,8 +35,10 @@ import org.joml.Vector4f;
  * takes over after it has covered more for half a second, sooner the more it covers, or at once when the current one
  * leaves the view.
  * <p>
- * The search runs in real time, not per frame: rays per second and smoothing by time, so the mirror is as quick at 40
- * frames a second as at 200 (the rates were tuned at about 260 frames a second).
+ * The search runs in real time, not per frame: rays per second and smoothing by time (the rates were tuned at about
+ * 260 frames a second). The rays per frame are capped at MAX_RAYS_PER_FRAME to bound the processor time of a slow
+ * frame, so below about 120 frames a second a sweep of the grid takes longer (48 ms instead of 31 at 80 frames a
+ * second); the holds (half a second) are long against either.
  * <p>
  * Rays are traced block by block for RAY_DISTANCE blocks, against the blocks' collision shapes: plants (grass, flowers,
  * petals) let them through to the water behind, as the screen shows it between their blades, where their outline boxes

@@ -415,6 +415,12 @@ public final class CubeView {
         MirrorPlaneSearch.checkLevel(null);
     }
 
+    /** The entity captures' render types with vertex memory, and that memory, for the status line. */
+    static String entityMemory() {
+        return String.format("%d render types, %.1f MB", entities.sinkCount() + playerEntities.sinkCount(),
+                (entities.sinkBytes() + playerEntities.sinkBytes()) / 1048576.0);
+    }
+
     /** Frames drawn since the game started. */
     public static int framesDrawn() {
         return frameCounter;

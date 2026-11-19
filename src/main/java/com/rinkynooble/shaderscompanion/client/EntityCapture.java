@@ -76,6 +76,12 @@ final class EntityCapture implements MultiBufferSource {
     private static final int MAX_REFRESH_INTERVAL = 4;
     /** Kept vertices not used for this many collections are dropped. */
     private static final int KEEP_COLLECTIONS = 40;
+    /**
+     * Render types with vertex memory of their own (and render types looked at) at most: past this, a collection frees
+     * them all and starts over, so a mod that makes new render types as it draws doesn't grow the memory without end.
+     */
+    private static final int MAX_SINKS = 1024;
+    private static final int MAX_TYPES = 4096;
     private static final int INTS_PER_VERTEX = STRIDE / 4;
 
     record TypeInfo(ResourceLocation texture, int kind) {
@@ -102,6 +108,7 @@ final class EntityCapture implements MultiBufferSource {
     private Object keptLevel;
     private int collection;
     private boolean lod;
+    private boolean overflowLogged;
 
     int entitiesDrawn;
     int blockEntitiesDrawn;
@@ -231,6 +238,14 @@ final class EntityCapture implements MultiBufferSource {
      */
     void begin(Object level, boolean lod) {
         this.lod = lod;
+        if (this.sinkList.size() > MAX_SINKS || this.types.size() > MAX_TYPES) {
+            if (!this.overflowLogged) {
+                this.overflowLogged = true;
+                ShadersCompanion.LOGGER.warn("Shaders Companion: entities used {} render types ({} with vertices); their memory is freed and starts over"
+                        + " (logged once)", this.types.size(), this.sinkList.size());
+            }
+            this.releaseSinks();
+        }
         if (!lod || level != this.keptLevel) {
             this.kept.clear();
             this.keptLevel = level;
@@ -247,6 +262,31 @@ final class EntityCapture implements MultiBufferSource {
         if (this.collection % KEEP_COLLECTIONS == 0) {
             this.kept.values().removeIf(entry -> this.collection - entry.usedAt > KEEP_COLLECTIONS);
         }
+    }
+
+    /** Frees every sink's vertex memory and forgets the render types and kept vertices (which point into the sinks). */
+    private void releaseSinks() {
+        for (Sink sink : this.sinkList) {
+            MemoryUtil.memFree(sink.data);
+            sink.data = null;
+        }
+        this.sinkList.clear();
+        this.sinks.clear();
+        this.types.clear();
+        this.kept.clear();
+    }
+
+    /** The render types with vertex memory of their own, and that memory in bytes (for the status line). */
+    int sinkCount() {
+        return this.sinkList.size();
+    }
+
+    long sinkBytes() {
+        long bytes = 0L;
+        for (Sink sink : this.sinkList) {
+            bytes += sink.data.capacity();
+        }
+        return bytes;
     }
 
     /** Lets go of every entity, block entity and world this capture refers to (no world loaded). */
