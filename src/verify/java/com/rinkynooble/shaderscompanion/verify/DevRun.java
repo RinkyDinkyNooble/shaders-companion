@@ -92,6 +92,17 @@ import org.lwjgl.opengl.GL33C;
  * the afternoon ("shaderscompanion-meadow-&lt;-PdevTag&gt;-t&lt;time&gt;-y&lt;yaw&gt;.png"); -PdevReloads=N reloads the shader pack N
  * times first. For plants drawn wrongly.
  * <p>
+ * -PdevScene=street: at y 150, a shop front on the camera's left running ahead (+Z): grey pillars every 5 blocks with
+ * light grey stained glass set a block back between them over white sills, a lit room with brick walls behind, and a
+ * striped tower with lamps across the street on the right. The camera stands beside the glass looking along it
+ * (-PdevYaw, -15 by default; -PdevCamX and -PdevCamZ, 1.0 and 0.5, place it), like a player walking past a shop window
+ * (-PdevShallow: pillars a block thinner, so the next bays show past them at a grazing angle);
+ * shots "-on" and "-off".
+ * <p>
+ * -PdevScene=darkspot: the meadow, then the client's sky light set to 0 at a few spots ahead (plants, and air over the
+ * lawn), as in worlds whose light data is wrong in spots; shots "shaderscompanion-darkspot-&lt;-PdevTag&gt;-dark" and,
+ * after the client relights those spots, "-fixed". With the pack's open-sky light the two should match.
+ * <p>
  * -PdevScene=lodmirror: a black glass wall 4 blocks ahead, 30 blocks up (-PdevLift), so the glass shows the land behind
  * the camera out to Distant Horizons' LODs (-PdevDh); -PdevTime, -PdevCycle, -PdevYaw, -PdevPitch.
  * <p>
@@ -104,8 +115,8 @@ import org.lwjgl.opengl.GL33C;
  * <p>
  * -PdevScene=exposure: a lit block of town (white buildings with glowstone, a lime lawn with sea lanterns) from above
  * at -PdevTime (18000, midnight), a shot every -PdevEvery ticks (200), -PdevShots of them (13), with the time of day
- * logged; -PdevCycle lets the time run, -PdevStep=500 sets the time that much later before each next shot. For
- * exposure that drifts over minutes or with the time of day.
+ * logged; -PdevCycle lets the time run, -PdevStep=500 sets the time that much later before each next shot;
+ * -PdevNightVision=true gives the player night vision. For exposure that drifts over minutes or with the time of day.
  * <p>
  * A run in which the mod never draws (the pack reads none of its views) logs why after 15 seconds in the world and
  * quits.
@@ -298,9 +309,11 @@ public final class DevRun {
         boolean facade = SCENE.equals("facade") || SCENE.equals("lake");
         boolean lake = SCENE.equals("lake");
         boolean glassBox = SCENE.equals("glassbox");
-        boolean meadow = SCENE.equals("meadow");
+        boolean street = SCENE.equals("street");
+        boolean darkSpot = SCENE.equals("darkspot");
+        boolean meadow = SCENE.equals("meadow") || darkSpot;
         boolean lodMirror = SCENE.equals("lodmirror");
-        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || lodMirror || SCENE.equals("match");
+        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || lodMirror || street || SCENE.equals("match");
         boolean shore = SCENE.equals("shore");
         boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
@@ -592,6 +605,96 @@ public final class DevRun {
                     });
                 });
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the {} scene, {} blocks ahead", SCENE, distance);
+            } else if (street) {
+                mc.options.hideGui = true;
+                for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 4000), "weather clear",
+                        "gamerule doDaylightCycle false", "gamerule doMobSpawning false"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                MinecraftServer server = mc.getSingleplayerServer();
+                BlockPos at = mc.player.blockPosition();
+                BlockPos base = new BlockPos(at.getX(), 150, at.getZ());
+                server.execute(() -> {
+                    var level = server.overworld();
+                    var air = Blocks.AIR.defaultBlockState();
+                    for (int x = -30; x <= 14; x++) {
+                        for (int z = -12; z <= 60; z++) {
+                            level.setBlock(base.offset(x, -1, z), x >= -8 && x <= 0 ? Blocks.GRAY_CONCRETE.defaultBlockState() : Blocks.SMOOTH_STONE.defaultBlockState(), 2);
+                            for (int y = 0; y < 34; y++) {
+                                level.setBlock(base.offset(x, y, z), air, 2);
+                            }
+                        }
+                    }
+                    // The shop front: pillars at x 2, glass at x 3, the room from x 4 to 9, 6 high
+                    for (int z = -10; z <= 50; z++) {
+                        for (int y = 0; y <= 7; y++) {
+                            boolean pillar = Math.floorMod(z, 5) == 0;
+                            if (y == 7) {
+                                for (int x = 2; x <= 10; x++) {
+                                    level.setBlock(base.offset(x, y, z), Blocks.GRAY_CONCRETE.defaultBlockState(), 2);
+                                }
+                                continue;
+                            }
+                            if (pillar && !Boolean.getBoolean("shaderscompanion.devShallow")) {
+                                level.setBlock(base.offset(2, y, z), Blocks.GRAY_CONCRETE.defaultBlockState(), 2);
+                            }
+                            level.setBlock(base.offset(3, y, z), pillar ? Blocks.GRAY_CONCRETE.defaultBlockState()
+                                    : y == 0 ? Blocks.WHITE_CONCRETE.defaultBlockState() : Blocks.LIGHT_GRAY_STAINED_GLASS.defaultBlockState(), 2);
+                            level.setBlock(base.offset(10, y, z), Blocks.BRICKS.defaultBlockState(), 2);
+                            if (y == 6) {
+                                for (int x = 4; x <= 9; x++) {
+                                    level.setBlock(base.offset(x, y, z), Math.floorMod(z, 3) == 0 && x % 2 == 0 ? Blocks.GLOWSTONE.defaultBlockState() : Blocks.WHITE_CONCRETE.defaultBlockState(), 2);
+                                }
+                            }
+                        }
+                        level.setBlock(base.offset(5, 0, z), Math.floorMod(z, 4) == 0 ? Blocks.POTTED_POPPY.defaultBlockState() : Blocks.AIR.defaultBlockState(), 2);
+                        level.setBlock(base.offset(9, 1, z), Math.floorMod(z, 2) == 0 ? Blocks.RED_TERRACOTTA.defaultBlockState() : Blocks.BRICKS.defaultBlockState(), 2);
+                    }
+                    // A striped tower across the street with lamps on its face and, from 12 blocks up, balconies: a
+                    // recess 2 deep and 3 high every 4 blocks with a glass railing and a lamp in its ceiling
+                    for (int z = 4; z <= 40; z++) {
+                        for (int y = 0; y < 32; y++) {
+                            int row = y % 4;
+                            boolean balcony = y >= 12 && row != 0;
+                            for (int x = -16; x <= -10; x++) {
+                                boolean face = x == -12;
+                                boolean lamp = face && y % 4 == 2 && Math.floorMod(z, 4) == 1 && !balcony;
+                                var state = lamp ? Blocks.SEA_LANTERN.defaultBlockState()
+                                        : (y / 2) % 2 == 0 ? Blocks.RED_CONCRETE.defaultBlockState() : Blocks.WHITE_CONCRETE.defaultBlockState();
+                                if (x > -12) {
+                                    state = y >= 12 && row == 0 ? Blocks.GRAY_CONCRETE.defaultBlockState()
+                                            : y >= 12 && row == 1 && x == -10 ? Blocks.LIGHT_BLUE_STAINED_GLASS.defaultBlockState() : air;
+                                } else if (balcony && x > -14) {
+                                    state = row == 3 && x == -13 && Math.floorMod(z, 3) == 0 ? Blocks.GLOWSTONE.defaultBlockState()
+                                            : row == 3 ? Blocks.WHITE_CONCRETE.defaultBlockState() : air;
+                                }
+                                level.setBlock(base.offset(x, y, z), state, 2);
+                            }
+                        }
+                    }
+                    mc.tell(() -> {
+                        mc.player.getAbilities().flying = true;
+                        mc.player.onUpdateAbilities();
+                        if (Boolean.getBoolean("shaderscompanion.devBlocks")) {
+                            // -PdevBlocks: the user's blocks, BetterBlockZ's Vect 4 pillars and Lathe's vertical slabs of
+                            // BetterBlockZ's light grey tinted glass (-PdevGlassFacing, east: the back half of the bay)
+                            String facing = System.getProperty("shaderscompanion.devGlassFacing", "east");
+                            int bx = base.getX(), by = base.getY(), bz = base.getZ();
+                            for (int z = -10; z <= 50; z++) {
+                                if (Math.floorMod(z, 5) == 0) {
+                                    mc.player.connection.sendCommand("fill " + (bx + (Boolean.getBoolean("shaderscompanion.devShallow") ? 3 : 2)) + " " + by + " " + (bz + z) + " " + (bx + 3) + " " + (by + 6) + " " + (bz + z) + " betterblockz:vect_blockz_4");
+                                }
+                            }
+                            for (int z = -9; z <= 49; z += 5) {
+                                mc.player.connection.sendCommand("fill " + (bx + 3) + " " + (by + 1) + " " + (bz + z) + " " + (bx + 3) + " " + (by + 6) + " " + (bz + z + 3)
+                                        + " lathe:betterblockz__tintedglass_blockz_1_vslab[facing=" + facing + "]");
+                            }
+                        }
+                        mc.player.connection.sendCommand("tp @s " + (base.getX() + Double.parseDouble(System.getProperty("shaderscompanion.devCamX", "1.0"))) + " " + base.getY() + " " + (base.getZ() + Double.parseDouble(System.getProperty("shaderscompanion.devCamZ", "0.5"))) + " "
+                                + Integer.getInteger("shaderscompanion.devYaw", -15) + " " + Integer.getInteger("shaderscompanion.devPitch", 0));
+                    });
+                });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the street scene");
             } else if (glassBox) {
                 // A lit room (white walls, a dark floor, glowstone in the ceiling) with a hollow box of light grey stained
                 // glass ahead, a white shelf of quartz with dark openings beside the camera and a red "painting" behind the box
@@ -801,6 +904,10 @@ public final class DevRun {
                         "tp @s ~ ~16 ~-6 0 " + Integer.getInteger("shaderscompanion.devPitch", 35)}) {
                     mc.player.connection.sendCommand(command);
                 }
+                if (Boolean.getBoolean("shaderscompanion.devNightVision")) {
+                    // -PdevNightVision=true: vanilla night vision for the whole run
+                    mc.player.connection.sendCommand("effect give @s minecraft:night_vision infinite 0 true");
+                }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the exposure scene");
             } else if (shadows) {
                 mc.options.hideGui = true;
@@ -927,6 +1034,50 @@ public final class DevRun {
             if (s == 261) {
                 finish(mc);
             }
+        } else if (phase == 1 && darkSpot) {
+            // Sky light 0 on the client at spots ahead of the camera, a shot, then a client relight and another shot
+            int t = ticks - phaseTick - WAIT_TICKS;
+            String tag = System.getProperty("shaderscompanion.devTag", "run");
+            BlockPos at = mc.player.blockPosition();
+            int[][] columns = {{-2, 3}, {1, 4}, {3, 5}, {0, 6}, {-4, 6}, {2, 2}};
+            var engine = mc.level.getLightEngine();
+            if (t == 0) {
+                for (int[] c : columns) {
+                    for (int y = 0; y <= 1; y++) {
+                        BlockPos pos = at.offset(c[0], y, c[1]);
+                        var layer = engine.getLayerListener(net.minecraft.world.level.LightLayer.SKY).getDataLayerData(net.minecraft.core.SectionPos.of(pos));
+                        int before = engine.getLayerListener(net.minecraft.world.level.LightLayer.SKY).getLightValue(pos);
+                        if (layer != null) {
+                            layer.set(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15, 0);
+                        }
+                        ShadersCompanion.LOGGER.info("Shaders Companion dev run, dark spot at {} ({}): sky light {} -> {}{}", pos,
+                                mc.level.getBlockState(pos).getBlock(), before,
+                                engine.getLayerListener(net.minecraft.world.level.LightLayer.SKY).getLightValue(pos), layer == null ? " (no data layer)" : "");
+                        mc.levelRenderer.setSectionDirty(pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4);
+                    }
+                }
+            } else if (t == 60) {
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-darkspot-" + tag + "-dark.png", mc.getMainRenderTarget(), message -> { });
+            } else if (t == 62) {
+                for (int[] c : columns) {
+                    for (int y = 0; y <= 1; y++) {
+                        engine.checkBlock(at.offset(c[0], y, c[1]));
+                    }
+                }
+            } else if (t == 70) {
+                for (int[] c : columns) {
+                    BlockPos pos = at.offset(c[0], 0, c[1]);
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, after relight at {}: sky light {}", pos,
+                            engine.getLayerListener(net.minecraft.world.level.LightLayer.SKY).getLightValue(pos));
+                    for (int y = 0; y <= 1; y++) {
+                        mc.levelRenderer.setSectionDirty(pos.getX() >> 4, (pos.getY() + y) >> 4, pos.getZ() >> 4);
+                    }
+                }
+            } else if (t == 130) {
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-darkspot-" + tag + "-fixed.png", mc.getMainRenderTarget(), message -> { });
+            } else if (t == 131) {
+                finish(mc);
+            }
         } else if (phase == 1 && meadow) {
             // Shots around the compass (every 60 degrees) in the morning, at noon and in the afternoon, each 20 ticks
             // after the turn so temporal effects settle
@@ -1042,7 +1193,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {
