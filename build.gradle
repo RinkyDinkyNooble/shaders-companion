@@ -85,6 +85,14 @@ minecraft {
             if (project.hasProperty('devPan')) {
                 property 'shaderscompanion.devPan', project.property('devPan')
             }
+            // -PdevPanTicks=10: -PdevPan turns only for the first 10 ticks of each burst, then the camera holds still.
+            if (project.hasProperty('devPanTicks')) {
+                property 'shaderscompanion.devPanTicks', project.property('devPanTicks')
+            }
+            // -PdevMeadowBlocks: the meadow scene with blocks, glowstone and a tree instead of plants (nothing sways).
+            if (project.hasProperty('devMeadowBlocks')) {
+                property 'shaderscompanion.devMeadowBlocks', 'true'
+            }
             // -PdevStrafe: the player walks left during each -PdevToggle round's burst.
             if (project.hasProperty('devStrafe')) {
                 property 'shaderscompanion.devStrafe', 'true'

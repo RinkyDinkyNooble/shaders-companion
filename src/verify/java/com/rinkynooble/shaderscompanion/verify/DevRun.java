@@ -154,6 +154,10 @@ public final class DevRun {
      * between ticks), with the mirror's state logged every tick: for flicker while the view moves.
      */
     private static final float PAN = Float.parseFloat(System.getProperty("shaderscompanion.devPan", "0"));
+    /** -PdevPanTicks=K: the camera turns only during the first K ticks of each burst, then holds still (settling after a turn). */
+    private static final int PAN_TICKS = Integer.getInteger("shaderscompanion.devPanTicks", Integer.MAX_VALUE);
+    /** -PdevMeadowBlocks: the meadow with blocks, glowstone and a tree instead of plants. */
+    private static final boolean MEADOW_BLOCKS = Boolean.getBoolean("shaderscompanion.devMeadowBlocks");
     /** -PdevStrafe: the player walks left during each round's burst, from the same spot every round. */
     private static final boolean STRAFE = Boolean.getBoolean("shaderscompanion.devStrafe");
     private static float panBaseYaw = Float.NaN;
@@ -861,6 +865,17 @@ public final class DevRun {
                             if (Math.abs(x) <= 1 && Math.abs(z) <= 1) {
                                 continue;
                             }
+                            if (MEADOW_BLOCKS) {
+                                // -PdevMeadowBlocks: no plants (they sway); single blocks and short pillars, then one patch of
+                                // glowstone and a tree (below), for ambient occlusion and shadows that hold still
+                                if (pick == 0 && Math.floorMod(x + 2 * z, 3) == 0) {
+                                    int height = 1 + Math.floorMod(x * z, 3);
+                                    for (int y = 0; y < height; y++) {
+                                        level.setBlock(at.offset(x, y, z), (y + 1 == height ? Blocks.GRASS_BLOCK : Blocks.DIRT).defaultBlockState(), 2 | 16);
+                                    }
+                                }
+                                continue;
+                            }
                             if (pick < 5) {
                                 level.setBlock(at.offset(x, 0, z), lower, 2 | 16);
                                 level.setBlock(at.offset(x, 1, z), upper, 2 | 16);
@@ -869,6 +884,26 @@ public final class DevRun {
                             } else if (pick == 9) {
                                 level.setBlock(at.offset(x, 0, z), (x + z) % 2 == 0 ? Blocks.DANDELION.defaultBlockState() : Blocks.CORNFLOWER.defaultBlockState(), 2 | 16);
                             }
+                        }
+                    }
+                    if (MEADOW_BLOCKS) {
+                        // Ahead after a 90 degree turn right (-X): a grass block beside glowstone in the ground, and a tree
+                        level.setBlock(at.offset(-3, 0, 0), Blocks.GRASS_BLOCK.defaultBlockState(), 2 | 16);
+                        for (int[] g : new int[][]{{-3, -2}, {-4, -2}, {-2, -2}, {-4, -1}}) {
+                            level.setBlock(at.offset(g[0], -1, g[1]), Blocks.GLOWSTONE.defaultBlockState(), 2 | 16);
+                        }
+                        var leaves = Blocks.OAK_LEAVES.defaultBlockState().setValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT, true);
+                        for (int x = -10; x <= -6; x++) {
+                            for (int z = 1; z <= 5; z++) {
+                                for (int y = 3; y <= 5; y++) {
+                                    if (Math.abs(x + 8) + Math.abs(z - 3) + Math.max(0, y - 4) * 2 <= 4) {
+                                        level.setBlock(at.offset(x, y, z), leaves, 2 | 16);
+                                    }
+                                }
+                            }
+                        }
+                        for (int y = 0; y <= 4; y++) {
+                            level.setBlock(at.offset(-8, y, 3), Blocks.OAK_LOG.defaultBlockState(), 2 | 16);
                         }
                     }
                     mc.tell(() -> mc.player.connection.sendCommand("tp @s " + (at.getX() + 0.5) + " " + (at.getY() + 0.2) + " " + (at.getZ() + 0.5) + " 0 "
@@ -1358,8 +1393,8 @@ public final class DevRun {
             Screenshot.grab(mc.gameDirectory, prefix + "-" + TOGGLE + "-" + (on ? "on" : "off") + timingRound + (BURST > 1 ? "-b" + String.format("%03d", shot) : "") + ".png",
                     mc.getMainRenderTarget(), message -> { });
             if (PAN != 0.0F || STRAFE) {
-                mc.player.yRotO = panBaseYaw + PAN * shot;
-                mc.player.setYRot(panBaseYaw + PAN * (shot + 1));
+                mc.player.yRotO = panBaseYaw + PAN * Math.min(shot, PAN_TICKS);
+                mc.player.setYRot(panBaseYaw + PAN * Math.min(shot + 1, PAN_TICKS));
                 mc.options.keyLeft.setDown(STRAFE && shot + 1 < BURST);
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, pan {} {} shot {}: {}", TOGGLE, on ? "on" : "off", shot, mirrorStatus());
             }
