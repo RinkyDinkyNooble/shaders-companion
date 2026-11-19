@@ -40,12 +40,20 @@ import org.joml.Vector4f;
  * <p>
  * Rays are traced block by block for RAY_DISTANCE blocks. A ray going down that reaches nothing in that distance is
  * followed on to the water levels seen so far and the sea level, checked for solid blocks along the way, so a lake far
- * below (seen from a tower) still counts.
+ * below (seen from a tower) still counts. One that leaves the chunk terrain's range going down without meeting
+ * anything may meet a lower water level's Distant Horizons LODs past it: its cell counts towards the drawn part of the
+ * view for those levels and keeps a mirrored one from being let go, and at half weight towards the share of those that
+ * rays hit too (it may as well be land).
  * <p>
  * Screen positions here are in screen halves: -1 to 1 across the screen, as a tangent of the view's angle.
  */
 final class MirrorPlaneSearch {
     static final long NO_PLANE = Long.MIN_VALUE;
+    /**
+     * What {@link #farWater} returns for a ray that leaves the terrain's range going down without meeting anything (no
+     * plane's key: axis 3).
+     */
+    private static final long PAST_TERRAIN = 3L << 1;
 
     private static final int GRID_X = 20;
     private static final int GRID_Y = 12;
@@ -80,6 +88,11 @@ final class MirrorPlaneSearch {
     private static final float EASING_SECONDS = 0.0055F;
     /** Longest time step a frame counts as (after a pause the search goes on as after a slow frame). */
     private static final float MAX_STEP_SECONDS = 0.1F;
+    /**
+     * A cell whose ray leaves the terrain's range above a water level that rays hit counts this much towards the level's
+     * share: its Distant Horizons water may go on there, or land.
+     */
+    private static final float PAST_TERRAIN_WEIGHT = 0.5F;
     /** Share of the weighted screen a plane must cover to be mirrored; the current one stays down to half of it. */
     private static final float MIN_SCORE = 0.01F;
     /** Another plane takes over when it covers this much more than the current one... */
@@ -96,6 +109,11 @@ final class MirrorPlaneSearch {
     private static final long DROP_HOLD_NANOS = 500_000_000L;
     /** A cell's hit keeps counting towards the drawn part of the view for this long after its last ray. */
     private static final long AREA_HOLD_NANOS = DROP_HOLD_NANOS;
+    /**
+     * Rays that leave the terrain's range above the mirrored water level keep it from being let go for this long after
+     * a ray last hit its water (so it isn't drawn on for nothing over far land).
+     */
+    private static final long PAST_TERRAIN_HOLD_NANOS = 5_000_000_000L;
     /** The camera must be at least this far in front of the plane. */
     private static final double MIN_HEIGHT = 0.05;
     private static final RandomSource RANDOM = RandomSource.create(42L);
@@ -108,6 +126,15 @@ final class MirrorPlaneSearch {
     /** The last plane each cell's rays hit (a miss never replaces it), and when. */
     private static final long[] cellHeldPlanes = new long[CELLS];
     private static final long[] cellHeldNanos = new long[CELLS];
+    /**
+     * When each cell's rays last left the terrain's range going down (0 never), the height they left it at, and whether
+     * its last ray did.
+     */
+    private static final long[] cellPastTerrainNanos = new long[CELLS];
+    private static final double[] cellPastTerrainY = new double[CELLS];
+    private static final boolean[] cellPastTerrainNow = new boolean[CELLS];
+    /** The water levels rays hit, for {@link #choosePlane} (room for the remembered ones and the sea level). */
+    private static final long[] seenWaterLevels = new long[WATER_LEVELS + 1];
     /** Each cell's weight this frame, and the sum of the weights with the view still (the scores' unit). */
     private static final float[] cellWeights = new float[CELLS];
     private static final float STILL_TOTAL;
@@ -125,9 +152,13 @@ final class MirrorPlaneSearch {
     private static long lastFindNanos;
     private static float lastStep;
     private static long plane = NO_PLANE;
-    /** When the current plane was chosen, and when a ray last hit it. */
+    /**
+     * When the current plane was chosen, when a ray last counted it as seen, and when a ray last hit it (rays past the
+     * terrain over a water level count as seeing it for a while, see PAST_TERRAIN_HOLD_NANOS).
+     */
     private static long planeSince;
     private static long planeSeen;
+    private static long planeHit;
     /** A plane that covers clearly more than the current one, and since when. */
     private static long challenger = NO_PLANE;
     private static long challengerSince;
@@ -162,6 +193,8 @@ final class MirrorPlaneSearch {
     static void forget() {
         Arrays.fill(cellPlanes, NO_PLANE);
         Arrays.fill(cellHeldPlanes, NO_PLANE);
+        Arrays.fill(cellPastTerrainNanos, 0L);
+        Arrays.fill(cellPastTerrainNow, false);
         waterLevels.clear();
         lastForwardNanos = 0L;
         lastFindNanos = 0L;
@@ -215,9 +248,10 @@ final class MirrorPlaneSearch {
     }
 
     /**
-     * The part of the screen a plane covers: the centres of the grid cells whose rays hit it within AREA_HOLD_NANOS,
-     * widened by {@code marginCells} cells plus half a cell (to the cells' edges), in screen halves as {minX, minY,
-     * maxX, maxY}. False when no cell's ray hit it in that time.
+     * The part of the screen a plane covers: the centres of the grid cells whose rays hit it within AREA_HOLD_NANOS (for
+     * a water level also those whose rays left the terrain's range above it, going down, in that time), widened by
+     * {@code marginCells} cells plus half a cell (to the cells' edges), in screen halves as {minX, minY, maxX, maxY}.
+     * False when no cell counts in that time.
      */
     static boolean coveredArea(long key, float marginCells, float[] bounds) {
         float minX = Float.MAX_VALUE;
@@ -225,8 +259,10 @@ final class MirrorPlaneSearch {
         float maxX = -Float.MAX_VALUE;
         float maxY = -Float.MAX_VALUE;
         long now = System.nanoTime();
+        boolean waterLevel = isWaterLevel(key);
         for (int cell = 0; cell < CELLS; cell++) {
-            if (cellPlanes[cell] == key || cellHeldPlanes[cell] == key && now - cellHeldNanos[cell] < AREA_HOLD_NANOS) {
+            if (cellPlanes[cell] == key || cellHeldPlanes[cell] == key && now - cellHeldNanos[cell] < AREA_HOLD_NANOS
+                    || waterLevel && pastTerrain(cell, key, now)) {
                 minX = Math.min(minX, cellX(cell));
                 minY = Math.min(minY, cellY(cell));
                 maxX = Math.max(maxX, cellX(cell));
@@ -343,6 +379,7 @@ final class MirrorPlaneSearch {
         float tanY = 1.0F / projection.m11();
         Vector4f direction = new Vector4f();
         long now = System.nanoTime();
+        double reach = farReach(mc);
         for (int r = 0; r < rays; r++) {
             int sweep = rayCursor / CELLS;
             int cell = (rayCursor % CELLS) * CELL_STRIDE % CELLS;
@@ -357,8 +394,15 @@ final class MirrorPlaneSearch {
             Vec3 rayDir = new Vec3(direction.x, direction.y, direction.z).normalize();
             Vec3 end = cameraPos.add(rayDir.scale(RAY_DISTANCE));
             BlockHitResult hit = mc.level.clip(new ClipContext(cameraPos, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.WATER, entity));
-            cellPlanes[cell] = hit.getType() == HitResult.Type.MISS ? farWater(mc.level, cameraPos, rayDir, farReach(mc)) : reflectingPlane(mc, hit);
-            if (cellPlanes[cell] != NO_PLANE) {
+            long found = hit.getType() == HitResult.Type.MISS ? farWater(mc.level, cameraPos, rayDir, reach) : reflectingPlane(mc, hit);
+            cellPastTerrainNow[cell] = found == PAST_TERRAIN;
+            if (found == PAST_TERRAIN) {
+                cellPastTerrainNanos[cell] = now;
+                cellPastTerrainY[cell] = cameraPos.y + rayDir.y * reach;
+                found = NO_PLANE;
+            }
+            cellPlanes[cell] = found;
+            if (found != NO_PLANE) {
                 cellHeldPlanes[cell] = cellPlanes[cell];
                 cellHeldNanos[cell] = now;
             }
@@ -370,16 +414,52 @@ final class MirrorPlaneSearch {
         return Math.min(FAR_WATER_DISTANCE, mc.options.getEffectiveRenderDistance() * 16.0);
     }
 
+    /** Whether a cell's rays left the terrain's range above a water level, going down, within AREA_HOLD_NANOS. */
+    private static boolean pastTerrain(int cell, long key, long now) {
+        return cellPastTerrainNanos[cell] != 0L && now - cellPastTerrainNanos[cell] < AREA_HOLD_NANOS && cellPastTerrainY[cell] > coordinate(key);
+    }
+
+    private static boolean contains(long[] keys, int count, long key) {
+        for (int i = 0; i < count; i++) {
+            if (keys[i] == key) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static double seaSurface(ClientLevel level) {
+        return level.getSeaLevel() - 1 + 8.0 / 9.0;
+    }
+
+    /** Whether a plane is a water level: one a ray hit, or the sea level. */
+    private static boolean isWaterLevel(long key) {
+        if (axis(key) != 1 || side(key) < 0) {
+            return false;
+        }
+        if (scoredLevel != null && key == key(Direction.Axis.Y, 1, seaSurface(scoredLevel))) {
+            return true;
+        }
+        for (double waterLevel : waterLevels) {
+            if (key == key(Direction.Axis.Y, 1, waterLevel)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * The plane of a water level a ray going down reaches past RAY_DISTANCE (within reach): the first level below the
      * camera, of the remembered ones and the sea level, where the ray meets water; NO_PLANE when it meets anything solid
-     * first (checked every FAR_WATER_STEP blocks) or no water.
+     * first (checked every FAR_WATER_STEP blocks) or no water. PAST_TERRAIN when the next level lies past reach and
+     * nothing solid is in the way up to it. Rays within about half a degree of level only count for PAST_TERRAIN.
      */
     private static long farWater(ClientLevel level, Vec3 from, Vec3 rayDir, double reach) {
-        if (rayDir.y > -0.01) {
+        if (rayDir.y >= 0.0) {
             return NO_PLANE;
         }
-        double seaSurface = level.getSeaLevel() - 1 + 8.0 / 9.0;
+        boolean grazing = rayDir.y > -0.01;
+        double seaSurface = seaSurface(level);
         double checked = RAY_DISTANCE;
         // The levels in the order the ray reaches them, highest first: each round takes the highest one below the last
         double below = from.y;
@@ -396,6 +476,14 @@ final class MirrorPlaneSearch {
             below = next;
             double t = (from.y - next) / -rayDir.y;
             if (t > reach) {
+                for (; checked < reach; checked += FAR_WATER_STEP) {
+                    if (level.getBlockState(BlockPos.containing(from.add(rayDir.scale(checked)))).canOcclude()) {
+                        return NO_PLANE;
+                    }
+                }
+                return PAST_TERRAIN;
+            }
+            if (grazing) {
                 return NO_PLANE;
             }
             if (t <= RAY_DISTANCE) {
@@ -466,11 +554,26 @@ final class MirrorPlaneSearch {
     }
 
     private static void choosePlane(Vec3 cameraPos, float seconds) {
+        long now = System.nanoTime();
         float smoothing = Smoothing.follow(seconds, SMOOTHING_SECONDS);
         scores.replaceAll((key, value) -> value * (1.0F - smoothing));
+        // The water levels rays hit (within AREA_HOLD_NANOS), whose water may go on past the terrain's range
+        int seenLevels = 0;
+        for (int cell = 0; cell < CELLS && seenLevels < seenWaterLevels.length; cell++) {
+            long key = cellHeldPlanes[cell];
+            if (key != NO_PLANE && now - cellHeldNanos[cell] < AREA_HOLD_NANOS && !contains(seenWaterLevels, seenLevels, key) && isWaterLevel(key)) {
+                seenWaterLevels[seenLevels++] = key;
+            }
+        }
         for (int cell = 0; cell < CELLS; cell++) {
             if (cellPlanes[cell] != NO_PLANE) {
                 scores.merge(cellPlanes[cell], cellWeights[cell] * smoothing, Float::sum);
+            } else if (cellPastTerrainNow[cell]) {
+                for (int i = 0; i < seenLevels; i++) {
+                    if (cellPastTerrainY[cell] > coordinate(seenWaterLevels[i])) {
+                        scores.merge(seenWaterLevels[i], cellWeights[cell] * PAST_TERRAIN_WEIGHT * smoothing, Float::sum);
+                    }
+                }
             }
         }
         scores.values().removeIf(value -> value < 1.0E-4F);
@@ -482,11 +585,17 @@ final class MirrorPlaneSearch {
                 bestScore = entry.getValue();
             }
         }
-        long now = System.nanoTime();
+        // A water level is seen too where rays leave the terrain's range above it (its Distant Horizons water may go on),
+        // for PAST_TERRAIN_HOLD_NANOS after a ray last hit it
+        boolean holdsPastTerrain = plane != NO_PLANE && now - planeHit < PAST_TERRAIN_HOLD_NANOS && isWaterLevel(plane);
         for (int cell = 0; cell < CELLS && plane != NO_PLANE; cell++) {
             if (cellPlanes[cell] == plane) {
                 planeSeen = now;
+                planeHit = now;
                 break;
+            }
+            if (holdsPastTerrain && pastTerrain(cell, plane, now)) {
+                planeSeen = now;
             }
         }
         float currentScore = plane == NO_PLANE ? 0.0F : scores.getOrDefault(plane, 0.0F);
@@ -500,6 +609,7 @@ final class MirrorPlaneSearch {
             plane = best;
             planeSince = now;
             planeSeen = now;
+            planeHit = now;
             challenger = NO_PLANE;
         } else if (bestScore > currentScore * SWITCH_RATIO) {
             if (challenger != best) {
@@ -509,6 +619,7 @@ final class MirrorPlaneSearch {
                 plane = best;
                 planeSince = now;
                 planeSeen = now;
+                planeHit = now;
                 challenger = NO_PLANE;
                 switches++;
             }

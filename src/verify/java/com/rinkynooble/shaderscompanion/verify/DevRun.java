@@ -57,7 +57,9 @@ import org.lwjgl.opengl.GL33C;
  * <li>-PdevScene=ocean: the nearest deep ocean, the camera about 2.7 blocks above the water (standing on a barrier) looking out to the horizon
  * (-PdevLift=6 stands that many blocks higher; -PdevPitch, 5 degrees down by default here; -PdevYaw, by default the way the ocean runs farthest), screenshotted with the mod drawing ("-on") and turned off ("-off").
  * With Distant Horizons (-PdevDh -PdevWait=1400) the far water is LOD water: distant water should look the same in
- * both shots, with no stripes.</li>
+ * both shots, with no stripes. -PdevImport=&lt;file&gt; places a scan of the user's world there instead ("dx y dz state"
+ * per line, heights as in their world, so its water lines up with the ocean's) with the camera's feet at -PdevCamX,
+ * -PdevCamY (height) and -PdevCamZ, flying and held at -PdevYaw (0 to 359) and -PdevPitch.</li>
  * <li>-PdevToggle=WATER_WAVE_FILTER (any scene but city and shadows): after the "-on" shot, six alternating timing rounds
  * with that shader pack option off and on, each with a screenshot ("-WATER_WAVE_FILTER-off0" and so on), instead of the
  * "-off" shot: costs and looks compared within one run (two runs differ by more than most changes, mostly through
@@ -186,6 +188,8 @@ public final class DevRun {
     private static float boatYaw;
     private static float boatPitch;
     private static volatile String boatSummon;
+    /** The ocean scene's camera command with -PdevImport (null otherwise). */
+    private static volatile String importCamera;
     // Frame timing: GPU time between timestamps at the start and end of each frame (read 4 frames later), and the
     // time between frame starts
     private static final int TIMED_FRAMES = 120;
@@ -319,6 +323,27 @@ public final class DevRun {
         boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
         boolean rainCover = SCENE.equals("raincover");
+        if (phase == 1 && importCamera != null && mc.player != null && (ticks - phaseTick == 300 || ticks - phaseTick == 306 || ticks - phaseTick == 312)) {
+            // The ocean scene's -PdevImport camera, 15 seconds in (after the import): in the air after a teleport, flying
+            // holds (on the ground the client turns it off at once), and a second teleport puts the camera back
+            if (ticks - phaseTick == 306) {
+                mc.player.getAbilities().flying = true;
+                mc.player.onUpdateAbilities();
+            } else {
+                mc.player.connection.sendCommand(importCamera);
+            }
+        }
+        if (importCamera != null && mc.player != null && (phase > 1 && PAN == 0.0F && !STRAFE || phase == 1 && ticks - phaseTick > 312)) {
+            // Then held still, as the window takes mouse input while it has the focus (-PdevPan and -PdevStrafe turn
+            // and move it in the toggle rounds)
+            String[] pose = importCamera.split(" ");
+            float yaw = Float.parseFloat(pose[5]);
+            float pitch = Float.parseFloat(pose[6]);
+            mc.player.setYRot(yaw);
+            mc.player.yRotO = yaw;
+            mc.player.setXRot(pitch);
+            mc.player.xRotO = pitch;
+        }
         if (phase == 1 && ticks - phaseTick == 30 && Boolean.getBoolean("shaderscompanion.devRain") && mc.player != null) {
             // -PdevRain: rain for the rest of the run (needs a biome where it rains: the ocean scene's)
             mc.player.connection.sendCommand("weather rain");
@@ -381,6 +406,17 @@ public final class DevRun {
                     }
                     int finalYaw = yaw;
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run: deep ocean at {}, looking at yaw {}", at, yaw);
+                    if (!System.getProperty("shaderscompanion.devImport", "").isEmpty()) {
+                        // -PdevImport: a scan of the user's world with its own heights ("dx y dz state" per line), so its
+                        // water lines up with the ocean's; the camera's feet at -PdevCamX, -PdevCamY (height), -PdevCamZ
+                        importBlocks(server.overworld(), new BlockPos(at.getX(), 0, at.getZ()));
+                        // Sent again in phase 1 around turning flying on, which landing during the import turned off
+                        importCamera = "tp @s " + (at.getX() + Double.parseDouble(System.getProperty("shaderscompanion.devCamX", "0.5")))
+                                + " " + System.getProperty("shaderscompanion.devCamY", "64") + " " + (at.getZ() + Double.parseDouble(System.getProperty("shaderscompanion.devCamZ", "0.5")))
+                                + " " + finalYaw + " " + pitch;
+                        mc.tell(() -> mc.player.connection.sendCommand(importCamera));
+                        return;
+                    }
                     // Placed by the server, which loads the chunk (a setblock command fails while it isn't loaded)
                     server.overworld().setBlock(new BlockPos(at.getX(), 63 + lift, at.getZ()), Blocks.BARRIER.defaultBlockState(), 3);
                     if (Boolean.getBoolean("shaderscompanion.devGlass")) {
@@ -651,31 +687,10 @@ public final class DevRun {
                         level.setBlock(base.offset(5, 0, z), Math.floorMod(z, 4) == 0 ? Blocks.POTTED_POPPY.defaultBlockState() : Blocks.AIR.defaultBlockState(), 2);
                         level.setBlock(base.offset(9, 1, z), Math.floorMod(z, 2) == 0 ? Blocks.RED_TERRACOTTA.defaultBlockState() : Blocks.BRICKS.defaultBlockState(), 2);
                     }
-                    String importFile = System.getProperty("shaderscompanion.devImport", "");
-                    if (!importFile.isEmpty()) {
+                    if (!System.getProperty("shaderscompanion.devImport", "").isEmpty()) {
                         // -PdevImport: blocks from a scan of the user's world ("dx dy dz state" per line), from -PdevImportAt
                         String[] importAt = System.getProperty("shaderscompanion.devImportAt", "-8,0,-30").split(",");
-                        BlockPos origin = base.offset(Integer.parseInt(importAt[0].trim()), Integer.parseInt(importAt[1].trim()), Integer.parseInt(importAt[2].trim()));
-                        int placed = 0;
-                        try {
-                            var blocks = level.holderLookup(net.minecraft.core.registries.Registries.BLOCK);
-                            for (String line : java.nio.file.Files.readAllLines(java.nio.file.Path.of(importFile))) {
-                                String[] part = line.trim().split(" ", 4);
-                                if (part.length < 4) {
-                                    continue;
-                                }
-                                try {
-                                    var state = net.minecraft.commands.arguments.blocks.BlockStateParser.parseForBlock(blocks, part[3], false).blockState();
-                                    level.setBlock(origin.offset(Integer.parseInt(part[0]), Integer.parseInt(part[1]), Integer.parseInt(part[2])), state, 2);
-                                    placed++;
-                                } catch (Exception e) {
-                                    ShadersCompanion.LOGGER.warn("Shaders Companion dev run: can't place {}", line);
-                                }
-                            }
-                        } catch (java.io.IOException e) {
-                            ShadersCompanion.LOGGER.error("Shaders Companion dev run: can't read {}", importFile, e);
-                        }
-                        ShadersCompanion.LOGGER.info("Shaders Companion dev run: placed {} blocks from {} at {}", placed, importFile, origin);
+                        importBlocks(level, base.offset(Integer.parseInt(importAt[0].trim()), Integer.parseInt(importAt[1].trim()), Integer.parseInt(importAt[2].trim())));
                     }
                     // A striped tower across the street with lamps on its face and, from 12 blocks up, balconies: a
                     // recess 2 deep and 3 high every 4 blocks with a glass railing and a lamp in its ceiling
@@ -1370,6 +1385,30 @@ public final class DevRun {
      * 90 to 104 blocks away (a low white wall at the waterline, towers with lit windows behind it) and a black glass
      * facade to the camera's left, like a tall building beside a lake.
      */
+    private static void importBlocks(net.minecraft.server.level.ServerLevel level, BlockPos origin) {
+        String importFile = System.getProperty("shaderscompanion.devImport", "");
+        int placed = 0;
+        try {
+            var blocks = level.holderLookup(net.minecraft.core.registries.Registries.BLOCK);
+            for (String line : java.nio.file.Files.readAllLines(java.nio.file.Path.of(importFile))) {
+                String[] part = line.trim().split(" ", 4);
+                if (part.length < 4) {
+                    continue;
+                }
+                try {
+                    var state = net.minecraft.commands.arguments.blocks.BlockStateParser.parseForBlock(blocks, part[3], false).blockState();
+                    level.setBlock(origin.offset(Integer.parseInt(part[0]), Integer.parseInt(part[1]), Integer.parseInt(part[2])), state, 2);
+                    placed++;
+                } catch (Exception e) {
+                    ShadersCompanion.LOGGER.warn("Shaders Companion dev run: can't place {}", line);
+                }
+            }
+        } catch (java.io.IOException e) {
+            ShadersCompanion.LOGGER.error("Shaders Companion dev run: can't read {}", importFile, e);
+        }
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run: placed {} blocks from {} at {}", placed, importFile, origin);
+    }
+
     private static void buildShore(net.minecraft.server.level.ServerLevel level, BlockPos at, int lift) {
         var wall = Blocks.WHITE_CONCRETE.defaultBlockState();
         var light = Blocks.GLOWSTONE.defaultBlockState();
