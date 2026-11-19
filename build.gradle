@@ -74,6 +74,10 @@ minecraft {
                 property 'shaderscompanion.devToggle', project.property('devToggle')
             }
             // -PdevBurst=6: shots per -PdevToggle round, on consecutive ticks (flicker shows as change between them).
+            // -PdevCells: logs the mirror plane search's grid, how much of each cell rays reach water in (outline/collider)
+            if (project.hasProperty('devCells')) {
+                property 'shaderscompanion.devCells', 'true'
+            }
             if (project.hasProperty('devBurst')) {
                 property 'shaderscompanion.devBurst', project.property('devBurst')
             }

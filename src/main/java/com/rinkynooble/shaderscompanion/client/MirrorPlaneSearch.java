@@ -38,8 +38,10 @@ import org.joml.Vector4f;
  * The search runs in real time, not per frame: rays per second and smoothing by time, so the mirror is as quick at 40
  * frames a second as at 200 (the rates were tuned at about 260 frames a second).
  * <p>
- * Rays are traced block by block for RAY_DISTANCE blocks. A ray going down that reaches nothing in that distance is
- * followed on to the water levels seen so far and the sea level, checked for solid blocks along the way, so a lake far
+ * Rays are traced block by block for RAY_DISTANCE blocks, against the blocks' collision shapes: plants (grass, flowers,
+ * petals) let them through to the water behind, as the screen shows it between their blades, where their outline boxes
+ * stopped most rays into a strip of water seen past a grassy bank. A ray going down that reaches nothing in that
+ * distance is followed on to the water levels seen so far and the sea level, checked for solid blocks along the way, so a lake far
  * below (seen from a tower) still counts. One that leaves the chunk terrain's range going down without meeting
  * anything may meet a lower water level's Distant Horizons LODs past it: its cell counts towards the drawn part of the
  * view for those levels and keeps a mirrored one from being let go, and at half weight towards the share of those that
@@ -393,7 +395,7 @@ final class MirrorPlaneSearch {
             direction.set(x * tanX, y * tanY, -1.0F, 0.0F).mul(toWorld);
             Vec3 rayDir = new Vec3(direction.x, direction.y, direction.z).normalize();
             Vec3 end = cameraPos.add(rayDir.scale(RAY_DISTANCE));
-            BlockHitResult hit = mc.level.clip(new ClipContext(cameraPos, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.WATER, entity));
+            BlockHitResult hit = mc.level.clip(new ClipContext(cameraPos, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.WATER, entity));
             long found = hit.getType() == HitResult.Type.MISS ? farWater(mc.level, cameraPos, rayDir, reach) : reflectingPlane(mc, hit);
             cellPastTerrainNow[cell] = found == PAST_TERRAIN;
             if (found == PAST_TERRAIN) {

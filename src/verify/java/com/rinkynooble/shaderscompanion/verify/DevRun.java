@@ -1287,6 +1287,9 @@ public final class DevRun {
             }
             ShadersCompanion.LOGGER.info("Shaders Companion dev run at {}: {}", mc.player == null ? "?" : mc.player.position(),
                     String.join(" | ", DebugOverlay.statusLines()));
+            if (System.getProperty("shaderscompanion.devCells") != null) {
+                logRayCoverage(mc);
+            }
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod on: {}", frameTiming());
             if (!TOGGLE.isEmpty() && !shadows) {
                 // Timing rounds with the option off, on, off, on..., each with a screenshot
@@ -1362,6 +1365,9 @@ public final class DevRun {
             }
             if (shot + 1 < BURST) {
                 return;
+            }
+            if (System.getProperty("shaderscompanion.devCells") != null) {
+                logRayCoverage(mc);
             }
             String[] lines = DebugOverlay.statusLines();
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with {} {}: {} | {}", TOGGLE, on ? "on" : "off", frameTiming(),
@@ -1445,6 +1451,66 @@ public final class DevRun {
     }
 
     /** The status overlay's mirror view line, without its label. */
+    /**
+     * -PdevCells: for each cell of the mirror plane search's grid (20 x 12 over 1.3 screen halves), the share of 8 x 8
+     * rays that reach a water surface, traced against block outlines (as the search did up to 2.0.0-dev5) and against
+     * collision shapes (as it does since 2.0.0-dev6), as "outline/collider" in percent; and a star on the search's own
+     * cells that hold the mirrored plane now. Rows from the top of the screen (row 0 is the bottom).
+     */
+    private static void logRayCoverage(Minecraft mc) {
+        net.minecraft.client.Camera camera = mc.gameRenderer.getMainCamera();
+        net.minecraft.world.phys.Vec3 eye = camera.getPosition();
+        org.joml.Vector3f look = camera.getLookVector();
+        org.joml.Vector3f up = camera.getUpVector();
+        org.joml.Vector3f left = camera.getLeftVector();
+        double tanY = Math.tan(Math.toRadians(mc.options.fov().get()) / 2.0);
+        double tanX = tanY * mc.getWindow().getWidth() / mc.getWindow().getHeight();
+        long[] held = null;
+        long[] heldNanos = null;
+        long plane = Long.MIN_VALUE;
+        try {
+            Class<?> search = Class.forName("com.rinkynooble.shaderscompanion.client.MirrorPlaneSearch");
+            java.lang.reflect.Field f = search.getDeclaredField("cellHeldPlanes");
+            f.setAccessible(true);
+            held = (long[]) f.get(null);
+            f = search.getDeclaredField("cellHeldNanos");
+            f.setAccessible(true);
+            heldNanos = (long[]) f.get(null);
+            f = search.getDeclaredField("plane");
+            f.setAccessible(true);
+            plane = f.getLong(null);
+        } catch (ReflectiveOperationException e) {
+            ShadersCompanion.LOGGER.error("Shaders Companion dev run: no plane search fields", e);
+        }
+        long now = System.nanoTime();
+        for (int row = 11; row >= 0; row--) {
+            StringBuilder line = new StringBuilder();
+            for (int col = 0; col < 20; col++) {
+                int[] hits = new int[2];
+                for (int s = 0; s < 64; s++) {
+                    double x = ((col + ((s % 8) + 0.5) / 8.0) / 20.0 * 2.0 - 1.0) * 1.3;
+                    double y = ((row + ((s / 8) + 0.5) / 8.0) / 12.0 * 2.0 - 1.0) * 1.3;
+                    net.minecraft.world.phys.Vec3 dir = new net.minecraft.world.phys.Vec3(
+                            look.x() - left.x() * x * tanX + up.x() * y * tanY,
+                            look.y() - left.y() * x * tanX + up.y() * y * tanY,
+                            look.z() - left.z() * x * tanX + up.z() * y * tanY).normalize();
+                    for (int mode = 0; mode < 2; mode++) {
+                        net.minecraft.world.phys.BlockHitResult hit = mc.level.clip(new net.minecraft.world.level.ClipContext(eye, eye.add(dir.scale(64.0)),
+                                mode == 0 ? net.minecraft.world.level.ClipContext.Block.OUTLINE : net.minecraft.world.level.ClipContext.Block.COLLIDER,
+                                net.minecraft.world.level.ClipContext.Fluid.WATER, mc.player));
+                        if (hit.getType() != net.minecraft.world.phys.HitResult.Type.MISS && hit.getDirection() == net.minecraft.core.Direction.UP
+                                && mc.level.getFluidState(hit.getBlockPos()).is(net.minecraft.tags.FluidTags.WATER)) {
+                            hits[mode]++;
+                        }
+                    }
+                }
+                boolean holds = held != null && held[row * 20 + col] == plane && now - heldNanos[row * 20 + col] < 500_000_000L;
+                line.append(String.format(" %2d/%2d%s", hits[0] * 100 / 64, hits[1] * 100 / 64, holds ? "*" : " "));
+            }
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, cells row {}:{}", row, line);
+        }
+    }
+
     private static String mirrorStatus() {
         for (String line : DebugOverlay.statusLines()) {
             int at = line.indexOf("Mirror view: ");
