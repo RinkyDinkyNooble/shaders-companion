@@ -84,7 +84,7 @@ final class ViewProgram {
         GL20C.glUniform3f(this.camera, x, y, z);
     }
 
-    private static int compile(int type, String name) {
+    static int compile(int type, String name) {
         String source;
         try (InputStream in = ViewProgram.class.getResourceAsStream("/assets/shaderscompanion/shaders/" + name)) {
             if (in == null) {

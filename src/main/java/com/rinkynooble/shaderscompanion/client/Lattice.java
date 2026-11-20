@@ -61,6 +61,7 @@ public final class Lattice {
     private static final long NONE = Long.MIN_VALUE;
 
     private static final TextureDemand demand = new TextureDemand(CompanionTexture.LATTICE);
+    private static final TextureDemand fieldDemand = new TextureDemand(CompanionTexture.LATTICE_FIELD);
     private static int cellsTexture;
     private static int shapeTexture;
     private static int size;
@@ -70,6 +71,8 @@ public final class Lattice {
     private static long[] slotSection;
     private static boolean[] slotDirty;
     private static long[] slotHash;
+    /** Per slot: a hash of the shapes and the flags that matter to the openness field. */
+    private static long[] slotShapeHash;
     /** Section offsets from the camera's section covering the window, nearest first (x, y, z per entry). */
     private static int[] offsets;
     private static int refreshCursor;
@@ -79,6 +82,10 @@ public final class Lattice {
     private static int infoX = Integer.MIN_VALUE;
     private static int infoY;
     private static int infoZ;
+    private static boolean infoField;
+    private static int fieldCentreX;
+    private static int fieldCentreY;
+    private static int fieldCentreZ;
 
     // Per block state: shape cells, cell bits (emission and flags), whether worked out
     private static long[] stateShape = new long[0];
@@ -125,7 +132,74 @@ public final class Lattice {
                 return shapeTexture;
             };
         }
+        if (LatticeField.OPEN_A.equals(location)) {
+            return () -> {
+                CompanionTexture.countRequest(CompanionTexture.LATTICE_FIELD);
+                CompanionTexture.countRequest(CompanionTexture.LATTICE);
+                return LatticeField.openA();
+            };
+        }
+        if (LatticeField.OPEN_B.equals(location)) {
+            return () -> {
+                CompanionTexture.countRequest(CompanionTexture.LATTICE_FIELD);
+                CompanionTexture.countRequest(CompanionTexture.LATTICE);
+                return LatticeField.openB();
+            };
+        }
         return null;
+    }
+
+    static int cellsTexture() {
+        return cellsTexture;
+    }
+
+    static int shapeTexture() {
+        return shapeTexture;
+    }
+
+    static int width() {
+        return size;
+    }
+
+    static int windowMinX() {
+        return infoX;
+    }
+
+    static int windowMinY() {
+        return infoY;
+    }
+
+    static int windowMinZ() {
+        return infoZ;
+    }
+
+    /**
+     * A stamp of the shapes in a section and its 26 neighbours (the openness field bakes the section again when it
+     * changes), or {@link Long#MIN_VALUE} while any of them inside the window isn't read yet. Neighbours outside the
+     * window count as unchanging.
+     */
+    static long neighbourhoodStamp(int x, int y, int z, int cameraX, int cameraY, int cameraZ) {
+        long stamp = 0x9E3779B97F4A7C15L;
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int nx = x + dx;
+                    int ny = y + dy;
+                    int nz = z + dz;
+                    long hash = 0;
+                    if (Math.abs(2 * (nx - cameraX) + 1) <= sectionsXZ && Math.abs(2 * (ny - cameraY) + 1) <= SECTIONS_Y
+                            && Math.abs(2 * (nz - cameraZ) + 1) <= sectionsXZ) {
+                        int slot = slot(nx, ny, nz);
+                        if (slotSection[slot] != SectionPos.asLong(nx, ny, nz) || slotDirty[slot]) {
+                            return Long.MIN_VALUE;
+                        }
+                        hash = slotShapeHash[slot];
+                    }
+                    stamp = (stamp ^ hash) * 0x100000001B3L + 0x632BE59BD9B4E019L;
+                }
+            }
+        }
+        return stamp == Long.MIN_VALUE ? stamp + 1 : stamp;
     }
 
     /** A block changed (render thread). */
@@ -185,9 +259,12 @@ public final class Lattice {
             return;
         }
         long start = System.nanoTime();
-        int cameraX = Mth.floor(camera.getPosition().x) >> 4;
-        int cameraY = Mth.floor(camera.getPosition().y) >> 4;
-        int cameraZ = Mth.floor(camera.getPosition().z) >> 4;
+        int blockX = Mth.floor(camera.getPosition().x);
+        int blockY = Mth.floor(camera.getPosition().y);
+        int blockZ = Mth.floor(camera.getPosition().z);
+        int cameraX = blockX >> 4;
+        int cameraY = blockY >> 4;
+        int cameraZ = blockZ >> 4;
         int previous3d = GL11C.glGetInteger(GL12C.GL_TEXTURE_BINDING_3D);
         int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
         GL11C.glPixelStorei(GL12C.GL_UNPACK_IMAGE_HEIGHT, 0);
@@ -232,8 +309,20 @@ public final class Lattice {
             int minX = (cameraX - sectionsXZ / 2) * 16;
             int minY = (cameraY - SECTIONS_Y / 2) * 16;
             int minZ = (cameraZ - sectionsXZ / 2) * 16;
-            if (minX != infoX || minY != infoY || minZ != infoZ) {
+            boolean field = fieldDemand.update() && LatticeField.available();
+            int centreX = LatticeField.centre(blockX);
+            int centreY = LatticeField.centre(blockY);
+            int centreZ = LatticeField.centre(blockZ);
+            if (minX != infoX || minY != infoY || minZ != infoZ || field != infoField
+                    || centreX != fieldCentreX || centreY != fieldCentreY || centreZ != fieldCentreZ) {
+                infoField = field;
+                fieldCentreX = centreX;
+                fieldCentreY = centreY;
+                fieldCentreZ = centreZ;
                 writeInfo(MAGIC, minX, minY, minZ);
+            }
+            if (field) {
+                LatticeField.update(centreX, centreY, centreZ, cameraX, cameraY, cameraZ);
             }
         } finally {
             CompanionTexture.restorePixelBuffers(pixelBuffers);
@@ -252,7 +341,8 @@ public final class Lattice {
         }
         status = String.format("%d x %d x %d blocks, %d of %d sections%s; built %d last frame (%.2f ms, %.0f us per section), %d uploaded; %d block states; %d MB",
                 size, HEIGHT, size, filled, sections, waiting > 0 ? " (" + waiting + " waiting)" : "", builtLastFrame, nanosLastFrame / 1.0e6,
-                nanosPerSection / 1.0e3, uploadedLastFrame, statesKnown, (long) size * HEIGHT * size * 12 / (1024 * 1024));
+                nanosPerSection / 1.0e3, uploadedLastFrame, statesKnown, (long) size * HEIGHT * size * 12 / (1024 * 1024))
+                + (infoField ? "; " + LatticeField.status() : "");
     }
 
     private static int slot(int x, int y, int z) {
@@ -270,6 +360,7 @@ public final class Lattice {
             slotSection = new long[slots];
             slotDirty = new boolean[slots];
             slotHash = new long[slots];
+            slotShapeHash = new long[slots];
             offsets = sectionOffsets();
             refreshCursor = 0;
             if (cellsTexture == 0) {
@@ -288,7 +379,9 @@ public final class Lattice {
         Arrays.fill(slotSection, NONE);
         Arrays.fill(slotDirty, false);
         Arrays.fill(slotHash, 0L);
+        Arrays.fill(slotShapeHash, 0L);
         infoX = Integer.MIN_VALUE;
+        LatticeField.reset();
         fillStart = System.nanoTime();
         fillFrames = 0;
         fillNanos = 0;
@@ -365,7 +458,10 @@ public final class Lattice {
         writeInfo(0, 0, 0, 0);
     }
 
-    /** The info texture: magic, protocol and window size, then the window's lowest corner in blocks. */
+    /**
+     * The info texture: magic, protocol and window size, then the window's lowest corner in blocks; then the openness
+     * field's magic (0 while it isn't baked), protocol, width and reach in quarter blocks, then its lowest corner.
+     */
     private static void writeInfo(int magic, int minX, int minY, int minZ) {
         infoX = minX;
         infoY = minY;
@@ -373,10 +469,12 @@ public final class Lattice {
         int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
         Gl.bindTexture(CubeTextures.LATTICE_INFO.glId());
         int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        IntBuffer info = MemoryUtil.memAllocInt(8);
+        IntBuffer info = MemoryUtil.memAllocInt(16);
         try {
-            info.put(magic).put(PROTOCOL).put(size).put(HEIGHT).put(minX).put(minY).put(minZ).put(0).flip();
-            GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, 2, 1, GL30C.GL_RGBA_INTEGER, GL11C.GL_INT, info);
+            info.put(magic).put(PROTOCOL).put(size).put(HEIGHT).put(minX).put(minY).put(minZ).put(0)
+                    .put(magic != 0 && infoField ? LatticeField.MAGIC : 0).put(LatticeField.PROTOCOL).put(LatticeField.WIDTH).put((int) (LatticeField.REACH * 4))
+                    .put(LatticeField.windowMin(fieldCentreX)).put(LatticeField.windowMin(fieldCentreY)).put(LatticeField.windowMin(fieldCentreZ)).put(0).flip();
+            GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, 4, 1, GL30C.GL_RGBA_INTEGER, GL11C.GL_INT, info);
         } finally {
             MemoryUtil.memFree(info);
             CompanionTexture.restorePixelBuffers(pixelBuffers);
@@ -398,6 +496,7 @@ public final class Lattice {
         int tag = VALID | parity << 28;
         fill(sectionX, sectionY, sectionZ, tag);
         long hash = hash();
+        slotShapeHash[slot] = shapeHash();
         if (!(refresh || sameSection) || hash != slotHash[slot]) {
             slotHash[slot] = hash;
             int x0 = Math.floorMod(sectionX, sectionsXZ) * 16;
@@ -487,6 +586,17 @@ public final class Lattice {
         }
         for (int i = 0; i < 8192; i++) {
             h = (h ^ shapeUpload.get(i)) * 0x100000001B3L;
+        }
+        return h;
+    }
+
+    /** Shapes and the plant and see-through flags: what the openness field reads. */
+    private static long shapeHash() {
+        long h = 0xC2B2AE3D27D4EB4FL;
+        for (int i = 0; i < 4096; i++) {
+            h = (h ^ (cellsUpload.get(i) & (SEE_THROUGH | NO_COLLISION))) * 0x100000001B3L;
+            h = (h ^ shapeUpload.get(2 * i)) * 0x100000001B3L;
+            h = (h ^ shapeUpload.get(2 * i + 1)) * 0x100000001B3L;
         }
         return h;
     }

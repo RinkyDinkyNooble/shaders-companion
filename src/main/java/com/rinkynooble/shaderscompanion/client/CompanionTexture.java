@@ -26,9 +26,11 @@ final class CompanionTexture extends AbstractTexture {
     static final int RAIN = 4;
     /** The lattice's textures ({@link Lattice}). */
     static final int LATTICE = 5;
+    /** The lattice's openness field ({@link LatticeField}). */
+    static final int LATTICE_FIELD = 6;
 
     /** Per group: how often a texture's id was asked for from outside the mod (render thread only). */
-    private static final long[] requests = new long[6];
+    private static final long[] requests = new long[7];
 
     private final int group;
     private final int internalFormat;

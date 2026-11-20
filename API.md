@@ -169,7 +169,7 @@ A copy of the blocks around the camera, built from the client's world rather tha
 
 **Window.** `W x 128 x W` blocks, `W` the `latticeSize` config (64, 128 by default, or 256), centred on the camera's 16-block section. The block at `(x, y, z)` is at texel `(x & (W - 1), y & 127, z & (W - 1))` (`texelFetch`; two's complement makes this right for negative coordinates).
 
-**`lattice_info`** (`RGBA32I`, 2 x 1): texel 0 is `(4242, protocol 1, W, 128)` (magic 0 while the mod isn't keeping the lattice; without the mod, Oculus binds Minecraft's missing texture, which is no integer texture: check the magic), texel 1 `xyz` the window's lowest block. Blocks outside `[min, min + (W, 128, W))` are unknown.
+**`lattice_info`** (`RGBA32I`, 4 x 1): texel 0 is `(4242, protocol 1, W, 128)` (magic 0 while the mod isn't keeping the lattice; without the mod, Oculus binds Minecraft's missing texture, which is no integer texture: check the magic), texel 1 `xyz` the window's lowest block. Blocks outside `[min, min + (W, 128, W))` are unknown. Texels 2 and 3 describe the openness field (below).
 
 **`lattice_cells`** (`R32UI`), per block:
 
@@ -182,7 +182,25 @@ A copy of the blocks around the camera, built from the client's world rather tha
 
 **`lattice_shape`** (`RG32UI`), per block: its outline shape in 4 x 4 x 4 quarter-block cells, bit `x + 4 z + 16 y` for the cell at `(x, y, z)`; `r` holds the bits 0 to 31 (y 0 and 1), `g` the bits 32 to 63. A cell is filled when the shape covers more than 1/64 of a block of it along every axis, so panes, carpets and thin plates keep a layer of cells. The outline shape is the one you see around a block you look at: plants are their boxes (use bit 15 to treat them as sparse), fluids have none (bits 12 and 13).
 
-**Updates.** Sections are read nearest the camera first, within `latticeBudget` microseconds a frame (1000 by default): on joining a world the whole window (512 sections at 128) took 80 frames in the dev client, about 1.2 ms a frame, 94 ms in all. After that, about 40 microseconds per changed section, plus one section read again each frame in turn and uploaded only if it changed. Written only while the pack binds the textures. Video memory: 24 MB at 128, 96 MB at 256.
+**Openness field.**
+
+```properties
+customTexture.abzaLatticeOpenA = shaderscompanion:lattice_open_a
+customTexture.abzaLatticeOpenB = shaderscompanion:lattice_open_b
+```
+
+```glsl
+uniform sampler3D abzaLatticeOpenA;
+uniform sampler3D abzaLatticeOpenB;
+```
+
+Ambient occlusion baked from the lattice by the mod (a compute shader of its own, OpenGL 4.4), so a pack samples a field that holds still instead of tracing per pixel per frame. A probe every half block in a 64-block window centred on the section boundary nearest the camera (so it reaches at least 24 blocks every way), each with how open it is in six directions: 48 fixed rays (the same for every probe) through the quarter-block shapes, each counting `t / reach` of its light for a solid hit at distance `t` (reach 1 block), 0.8 per quarter block of plants (no collision) and 0.7 per quarter block of see-through blocks passed, all of it where nothing is in the way; a direction's openness is the rays' average weighted by their cosine to it. A section's probes are baked when it enters the window and again when the shapes or plant and see-through flags of it or its 26 neighbours change, nearest first, at most 4 sections a frame (about 0.22 ms of GPU each on an RTX 5050); never because the camera moved.
+
+- `lattice_info` texel 2: `(4243, protocol 1, 64, reach in quarter blocks)`, magic 0 while the field isn't baked (the pack doesn't bind the textures, or no OpenGL 4.4); texel 3 `xyz` the window's lowest block.
+- Both `RGBA8`, 128 x 128 x 128. The probe at world position `p` (a multiple of half a block) is at texel `ivec3(p * 2) & 127`. `A` = openness towards +x, -x, +y, -y; `B` = +z, -z, 1 for a probe in open space (0 inside solid matter: leave it out), and the window tile's parity + 1 over 255, the parity being `((q >> 7) & 1) | ((q.y >> 7) & 1) << 1 | ((q.z >> 7) & 1) << 2` for `q = ivec3(p * 2)`: when it doesn't match, the probe isn't baked for this place: leave it out.
+- Sample a surface point by the eight probes around it pushed a little along its normal, trilinear, leaving out probes inside solid matter, behind the surface or not baked; evaluate each with the normal `n` as `n.x^2 * (n.x > 0 ? +x : -x) + n.y^2 * ... + n.z^2 * ...`.
+
+**Updates.** Sections are read nearest the camera first, within `latticeBudget` microseconds a frame (1000 by default): on joining a world the whole window (512 sections at 128) took 80 frames in the dev client, about 1.2 ms a frame, 94 ms in all. After that, about 40 microseconds per changed section, plus one section read again each frame in turn and uploaded only if it changed. Written only while the pack binds the textures. Video memory: 24 MB at 128, 96 MB at 256, and 16 MB for the openness field.
 
 ## Versions
 

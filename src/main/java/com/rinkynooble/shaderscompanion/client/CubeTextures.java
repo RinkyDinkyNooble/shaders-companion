@@ -52,7 +52,7 @@ public final class CubeTextures {
     static final CompanionTexture MIRROR_BEHIND_DISTANCE = new CompanionTexture(CompanionTexture.MIRROR_BEHIND, GL30C.GL_R32F, GL11C.GL_RED, GL11C.GL_FLOAT, GL11C.GL_NEAREST);
     /** The height rain falls to around the camera ({@link RainCover}). */
     static final CompanionTexture RAIN_COVER = new CompanionTexture(CompanionTexture.RAIN, GL30C.GL_R32F, GL11C.GL_RED, GL11C.GL_FLOAT, GL11C.GL_NEAREST);
-    /** The lattice's magic, protocol, size and window corner (two texels; {@link Lattice}). */
+    /** The lattice's and its openness field's magic, protocol, size and window corner (four texels; {@link Lattice}). */
     static final CompanionTexture LATTICE_INFO = new CompanionTexture(CompanionTexture.LATTICE, GL30C.GL_RGBA32I, GL30C.GL_RGBA_INTEGER, GL11C.GL_INT, GL11C.GL_NEAREST);
 
     private CubeTextures() {
@@ -78,7 +78,7 @@ public final class CubeTextures {
         manager.register(MIRROR_BEHIND_DISTANCE_ID, MIRROR_BEHIND_DISTANCE);
         manager.register(RAIN_COVER_ID, RAIN_COVER);
         manager.register(LATTICE_INFO_ID, LATTICE_INFO);
-        LATTICE_INFO.allocate(2, 1);
+        LATTICE_INFO.allocate(4, 1);
         INFO.allocate(INFO_WIDTH, 1);
         MIRROR_INFO.allocate(MIRROR_INFO_WIDTH, 1);
         // Until the mirror view is first drawn, its textures are 1 x 1, so a pack binding them never gets Minecraft's missing texture
