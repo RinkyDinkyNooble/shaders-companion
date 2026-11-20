@@ -1,4 +1,4 @@
-# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 2, rain cover protocol 1)
+# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 2, rain cover protocol 1, lattice protocol 1)
 
 Shaders Companion draws two views for the active shader pack and hands them over as textures:
 
@@ -151,10 +151,44 @@ Where rain falls to: Minecraft's `MOTION_BLOCKING` heightmap, the one the game s
 
 Row 512 is the header: texel 0 is 4242 (0 while the mod isn't writing it), texel 1 the protocol (1), texel 2 the window size (512). Check the texture's size first: without the mod, Oculus binds Minecraft's 16 x 16 missing texture. Chunks entering the window are read at once and every chunk again within 32 frames, for blocks placed or broken; written only while the pack binds it.
 
+## Lattice (2.0.0)
+
+```properties
+customTexture.abzaLatticeCells = shaderscompanion:lattice_cells
+customTexture.abzaLatticeShape = shaderscompanion:lattice_shape
+customTexture.abzaLatticeInfo = shaderscompanion:lattice_info
+```
+
+```glsl
+uniform usampler3D abzaLatticeCells;
+uniform usampler3D abzaLatticeShape;
+uniform isampler2D abzaLatticeInfo;
+```
+
+A copy of the blocks around the camera, built from the client's world rather than from what is drawn: every block within the window, whatever is on screen, the sun's direction or the shadow settings, with modded blocks in their own shapes and the light engine's light. It changes only where the world changes (a block placed or broken, light changing, a chunk loading), so it holds still while you look around. The two 3D textures are bound as 3D textures (the mod hands them to Oculus itself).
+
+**Window.** `W x 128 x W` blocks, `W` the `latticeSize` config (64, 128 by default, or 256), centred on the camera's 16-block section. The block at `(x, y, z)` is at texel `(x & (W - 1), y & 127, z & (W - 1))` (`texelFetch`; two's complement makes this right for negative coordinates).
+
+**`lattice_info`** (`RGBA32I`, 2 x 1): texel 0 is `(4242, protocol 1, W, 128)` (magic 0 while the mod isn't keeping the lattice; without the mod, Oculus binds Minecraft's missing texture, which is no integer texture: check the magic), texel 1 `xyz` the window's lowest block. Blocks outside `[min, min + (W, 128, W))` are unknown.
+
+**`lattice_cells`** (`R32UI`), per block:
+
+- bits 0-3: block light, 4-7: sky light (the light engine's, 0 to 15; solid blocks hold 0, so light a face by the block in front of it)
+- bits 8-11: the block's own light emission
+- bit 12: water (waterlogged blocks too), 13: lava, 14: see-through (glass, leaves, plants: the block doesn't hide its neighbours), 15: no collision (plants, flowers, cobwebs, torches)
+- bits 16-27: material class (0 for now)
+- bits 28-30: the window tile's parity per axis, `((x >> log2 W) & 1) | ((y >> 7) & 1) << 1 | ((z >> log2 W) & 1) << 2`; when it isn't the parity of the block you asked for, the texel holds a block a window away: unknown
+- bit 31: known. 0 where the chunk isn't loaded, below the world, or not read yet
+
+**`lattice_shape`** (`RG32UI`), per block: its outline shape in 4 x 4 x 4 quarter-block cells, bit `x + 4 z + 16 y` for the cell at `(x, y, z)`; `r` holds the bits 0 to 31 (y 0 and 1), `g` the bits 32 to 63. A cell is filled when the shape covers more than 1/64 of a block of it along every axis, so panes, carpets and thin plates keep a layer of cells. The outline shape is the one you see around a block you look at: plants are their boxes (use bit 15 to treat them as sparse), fluids have none (bits 12 and 13).
+
+**Updates.** Sections are read nearest the camera first, within `latticeBudget` microseconds a frame (1000 by default): on joining a world the whole window (512 sections at 128) took 80 frames in the dev client, about 1.2 ms a frame, 94 ms in all. After that, about 40 microseconds per changed section, plus one section read again each frame in turn and uploaded only if it changed. Written only while the pack binds the textures. Video memory: 24 MB at 128, 96 MB at 256.
+
 ## Versions
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
+- 2.0.0 (development): `lattice_*` (protocol 1): the lattice.
 - 1.0.0: the same protocols and textures. The plane search traces collision shapes (plants no longer stop its rays) and counts water past the chunk terrain's range; chunk terrain is drawn over Distant Horizons LODs in the views by a stencil, so far terrain no longer shows through near terrain; the entity capture frees its kept memory when mods create render types without end. Comes with ABZA Shader 1.1.0.
 - 0.9.3: the same protocols. `mirror_info` texel 8: how far a newly mirrored plane has faded in. A small or far plane is held through frames its rays miss. Comes with ABZA Shader 1.0.30.
 - 0.9.2: the same protocols and textures; comes with ABZA Shader 1.0.29.

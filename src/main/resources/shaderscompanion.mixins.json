@@ -6,7 +6,10 @@
   "compatibilityLevel": "JAVA_17",
   "refmap": "shaderscompanion.refmap.json",
   "client": [
+    "ClientChunkCacheMixin",
+    "ClientLevelMixin",
     "GameRendererMixin",
+    "LatticeTextureMixin",
     "RenderBuffersMixin",
     "ShadowCullingMixin"
   ],

@@ -24,9 +24,11 @@ final class CompanionTexture extends AbstractTexture {
     static final int MIRROR_BEHIND = 3;
     /** Where rain falls to ({@link RainCover}). */
     static final int RAIN = 4;
+    /** The lattice's textures ({@link Lattice}). */
+    static final int LATTICE = 5;
 
     /** Per group: how often a texture's id was asked for from outside the mod (render thread only). */
-    private static final long[] requests = new long[5];
+    private static final long[] requests = new long[6];
 
     private final int group;
     private final int internalFormat;
@@ -52,6 +54,11 @@ final class CompanionTexture extends AbstractTexture {
     public int getId() {
         requests[this.group]++;
         return super.getId();
+    }
+
+    /** Counts a request for a group's texture that isn't bound through the texture manager (the lattice's 3D textures). */
+    static void countRequest(int group) {
+        requests[group]++;
     }
 
     /** How often the textures of a group were asked for from outside the mod so far. */

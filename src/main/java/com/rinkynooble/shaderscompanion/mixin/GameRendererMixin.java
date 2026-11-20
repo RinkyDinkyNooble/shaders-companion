@@ -2,6 +2,7 @@ package com.rinkynooble.shaderscompanion.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.rinkynooble.shaderscompanion.client.CubeView;
+import com.rinkynooble.shaderscompanion.client.Lattice;
 import com.rinkynooble.shaderscompanion.client.RainCover;
 import net.minecraft.client.renderer.GameRenderer;
 import org.joml.Matrix4f;
@@ -11,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Draws the cube and mirror views (and updates the rain cover) each frame just before the world is rendered, outside Oculus's world pass, and
+ * Draws the cube and mirror views (and updates the lattice and the rain cover) each frame just before the world is rendered, outside Oculus's world pass, and
  * collects the entities for the next frame's views just after it.
  */
 @Mixin(GameRenderer.class)
@@ -24,6 +25,7 @@ public abstract class GameRendererMixin {
             )
     )
     private void shaderscompanion$beforeLevel(float partialTick, long finishNanos, PoseStack poseStack, CallbackInfo ci) {
+        Lattice.update(((GameRenderer) (Object) this).getMainCamera());
         RainCover.update(((GameRenderer) (Object) this).getMainCamera());
         CubeView.renderFrame(((GameRenderer) (Object) this).getMainCamera(), partialTick, new Matrix4f(poseStack.last().pose()));
     }

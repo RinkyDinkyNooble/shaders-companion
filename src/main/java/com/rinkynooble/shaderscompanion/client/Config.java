@@ -23,6 +23,9 @@ public final class Config {
     public static final ForgeConfigSpec.BooleanValue MIRROR_LOD;
     public static final ForgeConfigSpec.BooleanValue MIRROR_SHADOWS;
     public static final ForgeConfigSpec.BooleanValue INSTALL_BUNDLED_PACK;
+    public static final ForgeConfigSpec.BooleanValue LATTICE;
+    public static final ForgeConfigSpec.ConfigValue<Integer> LATTICE_SIZE;
+    public static final ForgeConfigSpec.IntValue LATTICE_BUDGET;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -80,6 +83,15 @@ public final class Config {
         INSTALL_BUNDLED_PACK = builder
                 .comment("Install the shader pack this mod comes with (ABZA Shader) as shaderpacks/ABZA Shader.zip at startup, and update it with the mod. A file you put there yourself is never replaced.")
                 .define("installBundledPack", true);
+        LATTICE = builder
+                .comment("Keep the lattice while a shader pack reads it: a copy of the blocks around you (their shapes in quarter blocks, their light and what kind of block they are) that the pack uses for lighting that doesn't depend on what is on screen. Built from the world and updated only where blocks or light change.")
+                .define("lattice", true);
+        LATTICE_SIZE = builder
+                .comment("Width of the lattice around you, in blocks (it is 128 blocks tall). 128 uses 24 MB of video memory, 256 uses 96 MB.")
+                .defineInList("latticeSize", 128, java.util.List.of(64, 128, 256));
+        LATTICE_BUDGET = builder
+                .comment("Most processor time spent on the lattice per frame, in microseconds. It is used up only while blocks wait to be read: on joining a world, after a teleport or while flying fast.")
+                .defineInRange("latticeBudget", 1000, 100, 20000);
         SPEC = builder.build();
     }
 
