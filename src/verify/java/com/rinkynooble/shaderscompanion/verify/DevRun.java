@@ -37,7 +37,8 @@ import org.lwjgl.opengl.GL33C;
  * <li>-PdevScene=hand: on foot on a white floor before a white wall 2 blocks ahead (with a quartz block and a slab), a
  * held item (a TaCZ AK-47 with -PdevTacz, else an iron sword); with -PdevShowHand the hand and HUD stay drawn, and
  * -PdevStrafe -PdevBurst=N -PdevToggle=... walks left during each burst so the item sways over the wall and floor (for
- * ambient occlusion around the hand).</li>
+ * ambient occlusion around the hand); -PdevOutlineBlock=minecraft:cobweb places that block just ahead, before the wall
+ * (for the selection outline).</li>
  * <li>-PdevScene=pool: builds a water pool 30 blocks up with a red, glowstone-lit ceiling above the camera's view,
  * looks down at the water, and saves a screenshot with the mod drawing ("-on") and one with it turned off ("-off").
  * The ceiling should show in the water's reflection only in "-on". The dump's "-mirror.png" is the mirror view of the
@@ -400,6 +401,7 @@ public final class DevRun {
                         "fill ~-14 ~-1 ~-6 ~14 ~-1 ~6 minecraft:white_concrete", "fill ~-14 ~ ~-6 ~14 ~5 ~6 minecraft:air",
                         "fill ~-14 ~ ~2 ~14 ~4 ~2 minecraft:white_concrete",
                         "setblock ~1 ~ ~1 minecraft:quartz_block", "setblock ~-1 ~ ~1 minecraft:smooth_quartz_slab",
+                        "setblock ~ ~ ~1 " + System.getProperty("shaderscompanion.devOutlineBlock", "minecraft:air"),
                         Boolean.getBoolean("shaderscompanion.devTacz")
                                 ? "item replace entity @s weapon.mainhand with tacz:modern_kinetic_gun{GunId:\"tacz:ak47\"}"
                                 : "item replace entity @s weapon.mainhand with minecraft:iron_sword"}) {

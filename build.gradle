@@ -101,6 +101,10 @@ minecraft {
             if (project.hasProperty('devShowHand')) {
                 property 'shaderscompanion.devShowHand', 'true'
             }
+            // -PdevOutlineBlock=minecraft:cobweb: the hand scene places that block just ahead, before the wall (for the selection outline).
+            if (project.hasProperty('devOutlineBlock')) {
+                property 'shaderscompanion.devOutlineBlock', project.property('devOutlineBlock')
+            }
             // -PdevFacadeDist=50: how far ahead the facade scene's glass stands.
             if (project.hasProperty('devFacadeSize')) {
                 property 'shaderscompanion.devFacadeSize', project.property('devFacadeSize')
