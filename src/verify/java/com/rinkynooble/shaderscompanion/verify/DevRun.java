@@ -34,6 +34,10 @@ import org.lwjgl.opengl.GL33C;
  * <li>default: lifts the player (-PdevLift, 60 blocks), shows the debug overlay, waits until the cube has been drawn N
  * more times, saves the cube and a screenshot, quits. From above, the up face must be empty sky, the down face a map
  * of the ground and the side faces horizons.</li>
+ * <li>-PdevScene=hand: on foot on a white floor before a white wall 2 blocks ahead (with a quartz block and a slab), a
+ * held item (a TaCZ AK-47 with -PdevTacz, else an iron sword); with -PdevShowHand the hand and HUD stay drawn, and
+ * -PdevStrafe -PdevBurst=N -PdevToggle=... walks left during each burst so the item sways over the wall and floor (for
+ * ambient occlusion around the hand).</li>
  * <li>-PdevScene=pool: builds a water pool 30 blocks up with a red, glowstone-lit ceiling above the camera's view,
  * looks down at the water, and saves a screenshot with the mod drawing ("-on") and one with it turned off ("-off").
  * The ceiling should show in the water's reflection only in "-on". The dump's "-mirror.png" is the mirror view of the
@@ -160,6 +164,8 @@ public final class DevRun {
     private static final boolean MEADOW_BLOCKS = Boolean.getBoolean("shaderscompanion.devMeadowBlocks");
     /** -PdevStrafe: the player walks left during each round's burst, from the same spot every round. */
     private static final boolean STRAFE = Boolean.getBoolean("shaderscompanion.devStrafe");
+    /** -PdevShowHand: the hand, held item and HUD stay drawn once the scene is built (scenes hide them by default). */
+    private static final boolean SHOW_HAND = Boolean.getBoolean("shaderscompanion.devShowHand");
     private static float panBaseYaw = Float.NaN;
     private static net.minecraft.world.phys.Vec3 panBasePos;
     /** Ticks a round waits after the pack reloads before its timed ticks. */
@@ -287,6 +293,9 @@ public final class DevRun {
         if (++ticks % 200 == 0) {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: {}", String.join(" | ", DebugOverlay.statusLines()));
         }
+        if (SHOW_HAND && phase >= 1) {
+            mc.options.hideGui = false;
+        }
         if (!shadersOn) {
             // -PdevShadersLate: shaders come on once the world has run that long without them
             if (mc.player != null && ++lateTicks >= SHADERS_LATE) {
@@ -301,6 +310,7 @@ public final class DevRun {
             return;
         }
         boolean pool = SCENE.equals("pool");
+        boolean hand = SCENE.equals("hand");
         boolean mirror = SCENE.equals("mirror");
         boolean mobs = SCENE.equals("mobs") || mirror;
         boolean corner = SCENE.equals("corner");
@@ -378,6 +388,24 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the pool scene");
+            } else if (hand) {
+                // A white floor and a white wall 2 blocks ahead with a quartz block and a slab against it, on foot, a held item
+                // (a TaCZ gun with -PdevTacz); with -PdevShowHand -PdevStrafe the item sways over the wall and floor
+                mc.options.hideGui = true;
+                mc.player.getAbilities().flying = false;
+                mc.player.onUpdateAbilities();
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false",
+                        "gamerule doMobSpawning false", "tp @s ~ ~30 ~ 0 " + PITCH,
+                        "fill ~-14 ~-1 ~-6 ~14 ~-1 ~6 minecraft:white_concrete", "fill ~-14 ~ ~-6 ~14 ~5 ~6 minecraft:air",
+                        "fill ~-14 ~ ~2 ~14 ~4 ~2 minecraft:white_concrete",
+                        "setblock ~1 ~ ~1 minecraft:quartz_block", "setblock ~-1 ~ ~1 minecraft:smooth_quartz_slab",
+                        Boolean.getBoolean("shaderscompanion.devTacz")
+                                ? "item replace entity @s weapon.mainhand with tacz:modern_kinetic_gun{GunId:\"tacz:ak47\"}"
+                                : "item replace entity @s weapon.mainhand with minecraft:iron_sword"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the hand scene");
             } else if (ocean) {
                 mc.options.hideGui = true;
                 for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false"}) {
@@ -1278,7 +1306,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {
@@ -1307,7 +1335,7 @@ public final class DevRun {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, pig (+X): {}", CubeDump.describeTexel(size / 2, size * 7 / 20));
                     // The chest at +X 4, +Z 2 (face 0), its lid about 0.75 blocks below eye level
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, chest (+X): {}", CubeDump.describeTexel(size * 778 / 1000, size * 39 / 100));
-                } else if (!pool && !glass && !ocean) {
+                } else if (!pool && !hand && !glass && !ocean) {
                     // Just below the horizon of the +X face (face 0: column 0, row 0): far ground, LODs with Distant Horizons
                     for (int percent : new int[]{46, 43, 40}) {
                         ShadersCompanion.LOGGER.info("Shaders Companion dev run, +X horizon {}%: {}", percent, CubeDump.describeTexel(size / 2, size * percent / 100));
@@ -1316,7 +1344,7 @@ public final class DevRun {
                 if (overlay) {
                     logOverlayContainer(mc);
                 }
-                Screenshot.grab(mc.gameDirectory, prefix + (pool || glass || ocean ? "-on.png" : "-main.png"), mc.getMainRenderTarget(), message -> { });
+                Screenshot.grab(mc.gameDirectory, prefix + (pool || hand || glass || ocean ? "-on.png" : "-main.png"), mc.getMainRenderTarget(), message -> { });
             } catch (Exception e) {
                 ShadersCompanion.LOGGER.error("Shaders Companion dev run: saving failed", e);
             }
@@ -1344,7 +1372,7 @@ public final class DevRun {
                 timingRound = 0;
                 phase = 3;
                 phaseTick = ticks;
-            } else if (pool || glass || ocean) {
+            } else if (pool || hand || glass || ocean) {
                 Config.ENABLED.set(false);
                 phase = 2;
                 phaseTick = ticks;

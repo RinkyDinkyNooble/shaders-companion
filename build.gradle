@@ -97,6 +97,10 @@ minecraft {
             if (project.hasProperty('devStrafe')) {
                 property 'shaderscompanion.devStrafe', 'true'
             }
+            // -PdevShowHand: the hand, held item and HUD stay drawn in the scenes.
+            if (project.hasProperty('devShowHand')) {
+                property 'shaderscompanion.devShowHand', 'true'
+            }
             // -PdevFacadeDist=50: how far ahead the facade scene's glass stands.
             if (project.hasProperty('devFacadeSize')) {
                 property 'shaderscompanion.devFacadeSize', project.property('devFacadeSize')
