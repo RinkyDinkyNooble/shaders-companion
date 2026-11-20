@@ -38,7 +38,7 @@ import org.lwjgl.opengl.GL33C;
  * held item (a TaCZ AK-47 with -PdevTacz, else an iron sword); with -PdevShowHand the hand and HUD stay drawn, and
  * -PdevStrafe -PdevBurst=N -PdevToggle=... walks left during each burst so the item sways over the wall and floor (for
  * ambient occlusion around the hand); -PdevOutlineBlock=minecraft:cobweb places that block just ahead, before the wall
- * (for the selection outline).</li>
+ * (for the selection outline; "a|b": a there and b on top of it).</li>
  * <li>-PdevScene=pool: builds a water pool 30 blocks up with a red, glowstone-lit ceiling above the camera's view,
  * looks down at the water, and saves a screenshot with the mod drawing ("-on") and one with it turned off ("-off").
  * The ceiling should show in the water's reflection only in "-on". The dump's "-mirror.png" is the mirror view of the
@@ -329,11 +329,13 @@ public final class DevRun {
         boolean facade = SCENE.equals("facade") || SCENE.equals("lake");
         boolean lake = SCENE.equals("lake");
         boolean glassBox = SCENE.equals("glassbox");
+        boolean skyRoom = SCENE.equals("skyroom");
+        boolean enclosure = SCENE.equals("enclosure");
         boolean street = SCENE.equals("street");
         boolean darkSpot = SCENE.equals("darkspot");
         boolean meadow = SCENE.equals("meadow") || darkSpot;
         boolean lodMirror = SCENE.equals("lodmirror");
-        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || lodMirror || street || SCENE.equals("match");
+        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || skyRoom || enclosure || lodMirror || street || SCENE.equals("match");
         boolean shore = SCENE.equals("shore");
         boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
@@ -401,7 +403,9 @@ public final class DevRun {
                         "fill ~-14 ~-1 ~-6 ~14 ~-1 ~6 minecraft:white_concrete", "fill ~-14 ~ ~-6 ~14 ~5 ~6 minecraft:air",
                         "fill ~-14 ~ ~2 ~14 ~4 ~2 minecraft:white_concrete",
                         "setblock ~1 ~ ~1 minecraft:quartz_block", "setblock ~-1 ~ ~1 minecraft:smooth_quartz_slab",
-                        "setblock ~ ~ ~1 " + System.getProperty("shaderscompanion.devOutlineBlock", "minecraft:air"),
+                        "setblock ~ ~ ~1 " + System.getProperty("shaderscompanion.devOutlineBlock", "minecraft:air").split("[|]")[0],
+                        "setblock ~ ~1 ~1 " + (System.getProperty("shaderscompanion.devOutlineBlock", "").contains("|")
+                                ? System.getProperty("shaderscompanion.devOutlineBlock").split("[|]")[1] : "minecraft:air"),
                         Boolean.getBoolean("shaderscompanion.devTacz")
                                 ? "item replace entity @s weapon.mainhand with tacz:modern_kinetic_gun{GunId:\"tacz:ak47\"}"
                                 : "item replace entity @s weapon.mainhand with minecraft:iron_sword"}) {
@@ -791,6 +795,38 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the glassbox scene");
+            } else if (enclosure) {
+                // Standing in a three-sided enclosure of light grey stained glass (open behind and above) in a street: a
+                // red building ahead, white concrete behind, bricks and stone bricks to the sides. The glass reflects the
+                // buildings around, not the sky (the cube sees only the enclosure's glass around the camera)
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~20 ~ " + Integer.getInteger("shaderscompanion.devYaw", 0) + " " + Integer.getInteger("shaderscompanion.devPitch", 5),
+                        "fill ~-12 ~-1 ~-12 ~12 ~-1 ~30 minecraft:smooth_stone", "fill ~-12 ~ ~-12 ~12 ~14 ~30 minecraft:air",
+                        "fill ~-2 ~ ~-1 ~-2 ~2 ~3 minecraft:light_gray_stained_glass", "fill ~2 ~ ~-1 ~2 ~2 ~3 minecraft:light_gray_stained_glass",
+                        "fill ~-2 ~ ~3 ~2 ~2 ~3 minecraft:light_gray_stained_glass",
+                        "fill ~-6 ~-1 ~12 ~6 ~10 ~14 minecraft:red_wool", "fill ~-12 ~-1 ~-12 ~12 ~10 ~-10 minecraft:white_concrete",
+                        "fill ~-12 ~-1 ~-9 ~-8 ~8 ~30 minecraft:bricks", "fill ~8 ~-1 ~-9 ~12 ~8 ~30 minecraft:stone_bricks"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the enclosure scene");
+            } else if (skyRoom) {
+                // A white room lit by the sky through a hole in its ceiling behind the camera, a low table of light grey
+                // stained glass ahead and a wall of it at the far end, a red building across the street outside: the
+                // glass reflects the room, never the sky
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~20 ~ " + Integer.getInteger("shaderscompanion.devYaw", 20) + " " + Integer.getInteger("shaderscompanion.devPitch", 15),
+                        "fill ~-8 ~-1 ~-6 ~8 ~6 ~12 minecraft:white_concrete", "fill ~-7 ~ ~-5 ~7 ~5 ~11 minecraft:air",
+                        "fill ~-7 ~-1 ~-5 ~7 ~-1 ~11 minecraft:dark_oak_planks", "fill ~-7 ~6 ~-5 ~-4 ~6 ~-3 minecraft:air",
+                        "fill ~-2 ~ ~4 ~2 ~ ~6 minecraft:light_gray_stained_glass",
+                        "fill ~-6 ~ ~12 ~6 ~4 ~12 minecraft:light_gray_stained_glass",
+                        "fill ~-10 ~-1 ~22 ~10 ~12 ~24 minecraft:red_wool"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the skyroom scene");
             } else if (turn) {
                 // A water pool below and a black glass wall 3 blocks to the west (yaw 90); the view starts level, looking south (yaw 0)
                 mc.options.hideGui = true;

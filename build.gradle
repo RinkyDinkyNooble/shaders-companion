@@ -225,6 +225,11 @@ dependencies {
     if (project.hasProperty('devDh')) {
         runtimeOnly fg.deobf("local:distanthorizons:${distanthorizons_version}")
     }
+    // -PdevFurniture: the user's Modern Furniture Forked (libs/modern-furniture-fixed-1.0.2.jar from the instance's mods),
+    // for airy furniture shapes such as the bathroom radiator (-PdevOutlineBlock=mdm:bathroom_radiator[part=main]).
+    if (project.hasProperty('devFurniture')) {
+        runtimeOnly fg.deobf("local:modern-furniture-fixed:1.0.2")
+    }
     // Superb Warfare is loaded in dev runs only with -PdevSbw (the boat scene): its jar without the nested ones, and
     // the mods it needs (SimpleBedrockModel, GeckoLib, Curios, Cloth Config, Ponder, Flywheel) remapped, its script
     // library as it is. Kotlin for Forge goes in run/mods. HANDOFF "Build and test" says where each jar comes from.
