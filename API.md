@@ -155,6 +155,7 @@ Row 512 is the header: texel 0 is 4242 (0 while the mod isn't writing it), texel
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
+- 1.0.0: the same protocols and textures. The plane search traces collision shapes (plants no longer stop its rays) and counts water past the chunk terrain's range; chunk terrain is drawn over Distant Horizons LODs in the views by a stencil, so far terrain no longer shows through near terrain; the entity capture frees its kept memory when mods create render types without end. Comes with ABZA Shader 1.1.0.
 - 0.9.3: the same protocols. `mirror_info` texel 8: how far a newly mirrored plane has faded in. A small or far plane is held through frames its rays miss. Comes with ABZA Shader 1.0.30.
 - 0.9.2: the same protocols and textures; comes with ABZA Shader 1.0.29.
 - 0.9.1: the same protocols. `rain_cover` (protocol 1): where rain falls to.
