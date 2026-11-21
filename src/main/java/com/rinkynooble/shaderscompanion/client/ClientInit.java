@@ -1,5 +1,6 @@
 package com.rinkynooble.shaderscompanion.client;
 
+import net.minecraftforge.client.event.ModelEvent;
 import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
 import net.minecraftforge.common.MinecraftForge;
@@ -18,6 +19,7 @@ public final class ClientInit {
         ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, Config.SPEC);
         modBus.addListener(ClientInit::onClientSetup);
         modBus.addListener(ClientInit::onRegisterOverlays);
+        modBus.addListener(ClientInit::onModelsBaked);
         MinecraftForge.EVENT_BUS.addListener(ClientInit::onRegisterCommands);
         MinecraftForge.EVENT_BUS.addListener(ClientInit::onLevelUnload);
         MinecraftForge.EVENT_BUS.addListener(ClientInit::onChunkLoad);
@@ -42,6 +44,10 @@ public final class ClientInit {
         if (event.getLevel().isClientSide()) {
             Lattice.markChunk(event.getChunk().getPos().x, event.getChunk().getPos().z);
         }
+    }
+
+    private static void onModelsBaked(ModelEvent.BakingCompleted event) {
+        Lattice.modelsChanged();
     }
 
     private static void onClientSetup(FMLClientSetupEvent event) {

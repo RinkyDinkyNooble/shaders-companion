@@ -78,7 +78,7 @@ public final class CubeTextures {
         manager.register(MIRROR_BEHIND_DISTANCE_ID, MIRROR_BEHIND_DISTANCE);
         manager.register(RAIN_COVER_ID, RAIN_COVER);
         manager.register(LATTICE_INFO_ID, LATTICE_INFO);
-        LATTICE_INFO.allocate(4, 1);
+        LATTICE_INFO.allocate(8, 1);
         INFO.allocate(INFO_WIDTH, 1);
         MIRROR_INFO.allocate(MIRROR_INFO_WIDTH, 1);
         // Until the mirror view is first drawn, its textures are 1 x 1, so a pack binding them never gets Minecraft's missing texture

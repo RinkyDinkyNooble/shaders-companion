@@ -169,7 +169,7 @@ A copy of the blocks around the camera, built from the client's world rather tha
 
 **Window.** `W x 128 x W` blocks, `W` the `latticeSize` config (64, 128 by default, or 256), centred on the camera's 16-block section. The block at `(x, y, z)` is at texel `(x & (W - 1), y & 127, z & (W - 1))` (`texelFetch`; two's complement makes this right for negative coordinates).
 
-**`lattice_info`** (`RGBA32I`, 4 x 1): texel 0 is `(4242, protocol 1, W, 128)` (magic 0 while the mod isn't keeping the lattice; without the mod, Oculus binds Minecraft's missing texture, which is no integer texture: check the magic), texel 1 `xyz` the window's lowest block. Blocks outside `[min, min + (W, 128, W))` are unknown. Texels 2 and 3 describe the openness field (below).
+**`lattice_info`** (`RGBA32I`, 8 x 1): texel 0 is `(4242, protocol 1, W, 128)` (magic 0 while the mod isn't keeping the lattice; without the mod, Oculus binds Minecraft's missing texture, which is no integer texture: check the magic), texel 1 `xyz` the window's lowest block. Blocks outside `[min, min + (W, 128, W))` are unknown. Texels 2 and 3 describe the openness field, texel 4 the detail (below).
 
 **`lattice_cells`** (`R32UI`), per block:
 
@@ -200,13 +200,32 @@ Ambient occlusion baked from the lattice by the mod (a compute shader of its own
 - Both `RGBA8`, 128 x 128 x 128. The probe at world position `p` (a multiple of half a block) is at texel `ivec3(p * 2) & 127`. `A` = openness towards +x, -x, +y, -y; `B` = +z, -z, 1 for a probe in open space (0 inside solid matter: leave it out), and the window tile's parity + 1 over 255, the parity being `((q >> 7) & 1) | ((q.y >> 7) & 1) << 1 | ((q.z >> 7) & 1) << 2` for `q = ivec3(p * 2)`: when it doesn't match, the probe isn't baked for this place: leave it out.
 - Sample a surface point by the eight probes around it pushed a little along its normal, trilinear, leaving out probes inside solid matter, behind the surface or not baked; evaluate each with the normal `n` as `n.x^2 * (n.x > 0 ? +x : -x) + n.y^2 * ... + n.z^2 * ...`.
 
-**Updates.** Sections are read nearest the camera first, within `latticeBudget` microseconds a frame (1000 by default): on joining a world the whole window (512 sections at 128) took 80 frames in the dev client, about 1.2 ms a frame, 94 ms in all. After that, about 40 microseconds per changed section, plus one section read again each frame in turn and uploaded only if it changed. Written only while the pack binds the textures. Video memory: 24 MB at 128, 96 MB at 256, and 16 MB for the openness field.
+**Detail (2.0.0-dev12).**
+
+```properties
+customTexture.abzaLatticeDetail = shaderscompanion:lattice_detail
+customTexture.abzaLatticeDetailDistance = shaderscompanion:lattice_detail_distance
+```
+
+```glsl
+uniform usampler3D abzaLatticeDetail;
+uniform sampler3D abzaLatticeDetailDistance;
+```
+
+Each block's shape as it is drawn, at full resolution, for contact shading finer than the quarter blocks: per block state, the distance from points in the block to the nearest surface of its model (the quads Minecraft draws for it, translucent parts left out; the outline boxes for blocks drawn otherwise, such as chests), worked out once per state on the processor and kept in an atlas slot shared by every state with the same shape. Blocks without collision (plants, torches), translucent blocks and blocks drawn offset (bamboo) shade nothing; full cubes take no slot.
+
+- `lattice_info` texel 4: `(4244, protocol 1, 16, 0)`; magic 0 while the lattice isn't kept.
+- `lattice_detail` (`R32UI`), per block, the window and addressing of `lattice_cells`: bits 0-25 the detail (0 shades nothing or unknown, 1 a full cube, from 2 an atlas slot), bit 26 a block in or next to this one has a detail the openness field doesn't hold as it is (from 2 or 1 without bit 27: a cheap test for whether a surface on this block needs a contact shade at all), bit 27 the openness field holds this block as it is (a solid block whose model lies on quarter blocks: full cubes, slabs, stairs; furniture and other blocks that don't hide their neighbours count as see-through in the field and don't have it), bits 28-30 the window tile's parity, bit 31 known (as `lattice_cells`).
+- `lattice_detail_distance` (`R8`, linear filtering, 256 x 256 x 16 per layer of 256 slots; it grows by layers): slot `s` (from 2) at texel `((s - 2) & 15, (s - 2) >> 4 & 15, (s - 2) >> 8) * 16`, 16 x 16 x 16 texels, texel `(x, y, z)` the distance in half blocks (1 = half a block or more) from the point `((x, y, z) + 0.5) / 16` of the block to its drawn surfaces. Sample with `clamp(p * 16, 0.5, 15.5)` inside the slot so the filter stays in it. Outside the block, `sqrt(|p - q|^2 + d(q)^2)` with `q` the nearest point of the block is a lower bound. A slot reads as 1 everywhere until it is baked (about 0.3 ms of processor time a frame while shapes wait; 1264 shapes of Modern Furniture Forked took about 20 seconds).
+- Block models baked again (a resource reload) work every state out again.
+
+**Updates.** Sections are read nearest the camera first, within `latticeBudget` microseconds a frame (1000 by default): on joining a world the whole window (512 sections at 128) took 80 frames in the dev client, about 1.2 ms a frame, 94 ms in all. After that, about 40 to 60 microseconds per changed section (a section also reads the blocks around it when a neighbour may have a fine detail), plus one section read again each frame in turn and uploaded only if it changed. Written only while the pack binds the textures. Video memory: 32 MB at 128, 128 MB at 256, 16 MB for the openness field, and 1 MB per 256 detail shapes.
 
 ## Versions
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
-- 2.0.0 (development): `lattice_*` (protocol 1): the lattice.
+- 2.0.0 (development): `lattice_*` (protocol 1): the lattice; from 2.0.0-dev12 its detail (`lattice_detail*`, `lattice_info` texel 4).
 - 1.0.0: the same protocols and textures. The plane search traces collision shapes (plants no longer stop its rays) and counts water past the chunk terrain's range; chunk terrain is drawn over Distant Horizons LODs in the views by a stencil, so far terrain no longer shows through near terrain; the entity capture frees its kept memory when mods create render types without end. Comes with ABZA Shader 1.1.0.
 - 0.9.3: the same protocols. `mirror_info` texel 8: how far a newly mirrored plane has faded in. A small or far plane is held through frames its rays miss. Comes with ABZA Shader 1.0.30.
 - 0.9.2: the same protocols and textures; comes with ABZA Shader 1.0.29.

@@ -39,6 +39,8 @@ import org.lwjgl.opengl.GL33C;
  * -PdevStrafe -PdevBurst=N -PdevToggle=... walks left during each burst so the item sways over the wall and floor (for
  * ambient occlusion around the hand); -PdevOutlineBlock=minecraft:cobweb places that block just ahead, before the wall
  * (for the selection outline; "a|b": a there and b on top of it).</li>
+ * <li>-PdevScene=bathroom -PdevFurniture: the hand scene's flow in a room open behind the camera, with Modern Furniture
+ * Forked's bathtub, sink cabinet and wall-hung sink along the back wall (the fine shade between parts of a block).</li>
  * <li>-PdevScene=pool: builds a water pool 30 blocks up with a red, glowstone-lit ceiling above the camera's view,
  * looks down at the water, and saves a screenshot with the mod drawing ("-on") and one with it turned off ("-off").
  * The ceiling should show in the water's reflection only in "-on". The dump's "-mirror.png" is the mirror view of the
@@ -146,12 +148,13 @@ public final class DevRun {
     private static final int WAIT_TICKS = Integer.getInteger("shaderscompanion.devWait", 160);
     /**
      * A shader pack on/off option, or config.<name> for the mod's own, to time in alternating rounds (-PdevToggle);
-     * NAME:a:b switches an option with values between a ("off" rounds) and b ("on" rounds).
+     * NAME:a:b switches an option with values between a ("off" rounds) and b ("on" rounds); NAME:a:b:c... takes each
+     * value in turn (shots named "-v<value>"), every value twice.
      */
     private static final String TOGGLE_SPEC = System.getProperty("shaderscompanion.devToggle", "");
     private static final String TOGGLE = TOGGLE_SPEC.split(":")[0];
     private static final String[] TOGGLE_VALUES = TOGGLE_SPEC.contains(":") ? TOGGLE_SPEC.substring(TOGGLE.length() + 1).split(":") : null;
-    private static final int TOGGLE_ROUNDS = 6;
+    private static final int TOGGLE_ROUNDS = TOGGLE_VALUES != null && TOGGLE_VALUES.length > 2 ? 2 * TOGGLE_VALUES.length : 6;
     /** Shots per toggle round, on consecutive ticks (-PdevBurst). */
     private static final int BURST = Integer.getInteger("shaderscompanion.devBurst", 1);
     /**
@@ -311,7 +314,9 @@ public final class DevRun {
             return;
         }
         boolean pool = SCENE.equals("pool");
-        boolean hand = SCENE.equals("hand");
+        boolean bathroom = SCENE.equals("bathroom");
+        boolean showroom = SCENE.equals("showroom");
+        boolean hand = SCENE.equals("hand") || bathroom || showroom;
         boolean mirror = SCENE.equals("mirror");
         boolean mobs = SCENE.equals("mobs") || mirror;
         boolean corner = SCENE.equals("corner");
@@ -391,6 +396,86 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the pool scene");
+            } else if (showroom) {
+                // Every block state of a mod (-PdevNamespace, mdm by default) on a white floor, 2 blocks apart, the camera
+                // -PdevLift (20) blocks above the middle
+                mc.options.hideGui = true;
+                mc.player.getAbilities().flying = true;
+                mc.player.onUpdateAbilities();
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false",
+                        "gamerule doMobSpawning false"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                MinecraftServer server = mc.getSingleplayerServer();
+                BlockPos origin = mc.player.blockPosition().above(30);
+                String namespace = System.getProperty("shaderscompanion.devNamespace", "mdm");
+                int lift = Integer.getInteger("shaderscompanion.devLift", 20);
+                server.execute(() -> {
+                    java.util.List<net.minecraft.world.level.block.state.BlockState> states = new java.util.ArrayList<>();
+                    for (var entry : net.minecraftforge.registries.ForgeRegistries.BLOCKS.getEntries()) {
+                        if (entry.getKey().location().getNamespace().equals(namespace)) {
+                            states.addAll(entry.getValue().getStateDefinition().getPossibleStates());
+                        }
+                    }
+                    int side = (int) Math.ceil(Math.sqrt(states.size()));
+                    var world = server.overworld();
+                    for (int x = -side - 2; x <= side + 2; x++) {
+                        for (int z = -side - 2; z <= side + 2; z++) {
+                            world.setBlock(origin.offset(x, -1, z), Blocks.WHITE_CONCRETE.defaultBlockState(), 2 | 16);
+                        }
+                    }
+                    for (int i = 0; i < states.size(); i++) {
+                        world.setBlock(origin.offset((i % side) * 2 - side, 0, (i / side) * 2 - side), states.get(i), 2 | 16);
+                    }
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the showroom scene, {} block states of {}", states.size(), namespace);
+                    server.getPlayerList().getPlayers().get(0).teleportTo(world, origin.getX() + 0.5, origin.getY() + lift, origin.getZ() + 0.5, 0.0F, PITCH);
+                });
+            } else if (bathroom) {
+                // -PdevFurniture: a room open behind the camera (beige walls, white floor and ceiling), Modern Furniture
+                // Forked's white bathtub along the back wall on the left, its sink cabinet and a wall-hung sink on the right.
+                // -PdevNamespace=mdm: every block state of that mod 40 blocks below first, so the room's shapes are not
+                // the first the lattice's detail sees
+                if (System.getProperty("shaderscompanion.devNamespace") != null) {
+                    MinecraftServer server = mc.getSingleplayerServer();
+                    BlockPos below = mc.player.blockPosition().above(30 - 40);
+                    String namespace = System.getProperty("shaderscompanion.devNamespace");
+                    server.execute(() -> {
+                        java.util.List<net.minecraft.world.level.block.state.BlockState> states = new java.util.ArrayList<>();
+                        for (var entry : net.minecraftforge.registries.ForgeRegistries.BLOCKS.getEntries()) {
+                            if (entry.getKey().location().getNamespace().equals(namespace)) {
+                                states.addAll(entry.getValue().getStateDefinition().getPossibleStates());
+                            }
+                        }
+                        int side = (int) Math.ceil(Math.sqrt(states.size()));
+                        for (int i = 0; i < states.size(); i++) {
+                            server.overworld().setBlock(below.offset((i % side) - side / 2, 0, (i / side) - side / 2), states.get(i), 2 | 16);
+                        }
+                    });
+                }
+                mc.options.hideGui = true;
+                mc.player.getAbilities().flying = false;
+                mc.player.onUpdateAbilities();
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false",
+                        "gamerule doMobSpawning false", "tp @s ~ ~30 ~ 0 " + PITCH,
+                        "fill ~-6 ~-1 ~-6 ~6 ~-1 ~6 minecraft:white_concrete", "fill ~-6 ~ ~-6 ~6 ~5 ~6 minecraft:air",
+                        "fill ~-5 ~ ~3 ~5 ~4 ~3 minecraft:smooth_sandstone",
+                        "fill ~-5 ~ ~-2 ~-5 ~4 ~3 minecraft:smooth_sandstone", "fill ~5 ~ ~-2 ~5 ~4 ~3 minecraft:smooth_sandstone",
+                        "fill ~-5 ~5 ~-2 ~5 ~5 ~3 minecraft:white_concrete",
+                        "setblock ~-1 ~ ~2 mdm:white_bathtub[facing=east,part=main]", "setblock ~-2 ~ ~2 mdm:white_bathtub[facing=east,part=back]",
+                        "setblock ~1 ~ ~2 mdm:bathroom_sink_with_shelf[facing=north]", "setblock ~2 ~ ~2 mdm:bathroom_sink[facing=north]",
+                        "item replace entity @s weapon.mainhand with minecraft:air"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                int up = Integer.getInteger("shaderscompanion.devLift", 0);
+                if (up > 0) {
+                    // -PdevLift=N: the camera that many blocks higher, flying (to look into the bathtub)
+                    mc.player.getAbilities().flying = true;
+                    mc.player.onUpdateAbilities();
+                    mc.player.connection.sendCommand("tp @s ~ ~" + up + " ~ 0 " + PITCH);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the bathroom scene");
             } else if (hand) {
                 // A white floor and a white wall 2 blocks ahead with a quartz block and a slab against it, on foot, a held item
                 // (a TaCZ gun with -PdevTacz); with -PdevShowHand -PdevStrafe the item sways over the wall and floor
@@ -1243,7 +1328,7 @@ public final class DevRun {
                 // -PdevToggle: the usual rounds with the option off and on in turn, from where the scene was built
                 prefix = "shaderscompanion-meadow-" + System.getProperty("shaderscompanion.devTag", "run");
                 timingRound = 0;
-                setPackOption(false);
+                setPackRound(0);
                 phase = 4;
                 phaseTick = ticks;
             } else if (t >= 0) {
@@ -1395,7 +1480,7 @@ public final class DevRun {
             if (!TOGGLE.isEmpty() && !shadows) {
                 // Timing rounds with the option off, on, off, on..., each with a screenshot
                 timingRound = 0;
-                setPackOption(false);
+                setPackRound(0);
                 phase = 4;
                 phaseTick = ticks;
             } else if (city) {
@@ -1453,16 +1538,17 @@ public final class DevRun {
             }
         } else if (phase == 4 && ticks - phaseTick >= TOGGLE_SETTLE_TICKS + TIMING_TICKS) {
             boolean on = timingRound % 2 == 1;
+            String label = roundLabel(timingRound);
             // -PdevBurst=N: N shots on consecutive ticks at the round's end (for flicker: the camera holds still, or turns
             // PAN degrees a tick)
             int shot = ticks - phaseTick - TOGGLE_SETTLE_TICKS - TIMING_TICKS;
-            Screenshot.grab(mc.gameDirectory, prefix + "-" + TOGGLE + "-" + (on ? "on" : "off") + timingRound + (BURST > 1 ? "-b" + String.format("%03d", shot) : "") + ".png",
+            Screenshot.grab(mc.gameDirectory, prefix + "-" + TOGGLE + "-" + label + timingRound + (BURST > 1 ? "-b" + String.format("%03d", shot) : "") + ".png",
                     mc.getMainRenderTarget(), message -> { });
             if (PAN != 0.0F || STRAFE) {
                 mc.player.yRotO = panBaseYaw + PAN * Math.min(shot, PAN_TICKS);
                 mc.player.setYRot(panBaseYaw + PAN * Math.min(shot + 1, PAN_TICKS));
                 mc.options.keyLeft.setDown(STRAFE && shot + 1 < BURST);
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, pan {} {} shot {}: {}", TOGGLE, on ? "on" : "off", shot, mirrorStatus());
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, pan {} {} shot {}: {}", TOGGLE, label, shot, mirrorStatus());
             }
             if (shot + 1 < BURST) {
                 return;
@@ -1471,11 +1557,16 @@ public final class DevRun {
                 logRayCoverage(mc);
             }
             String[] lines = DebugOverlay.statusLines();
-            ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with {} {}: {} | {}", TOGGLE, on ? "on" : "off", frameTiming(),
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with {} {}: {} | {}", TOGGLE, label, frameTiming(),
                     lines.length > 3 ? lines[1] + " | " + lines[3] : "");
             phaseTick = ticks;
+            if (timingRound == 1 && Boolean.getBoolean("shaderscompanion.devResourceReload")) {
+                // -PdevResourceReload: block models are baked again before the third round
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: reloading resources");
+                mc.reloadResourcePacks();
+            }
             if (++timingRound < TOGGLE_ROUNDS) {
-                setPackOption(!on);
+                setPackRound(timingRound);
             } else {
                 finish(mc);
             }
@@ -1646,12 +1737,22 @@ public final class DevRun {
         Config.ENTITY_LOD.set(round < 0 || !CITY_ROUNDS[round].equals("entity LOD off"));
     }
 
+    /** A toggle round's name in shots and the log: "off" and "on", or "v<value>" for an option with more than two values. */
+    private static String roundLabel(int round) {
+        if (TOGGLE_VALUES != null && TOGGLE_VALUES.length > 2) {
+            return "v" + TOGGLE_VALUES[round % TOGGLE_VALUES.length];
+        }
+        return round % 2 == 1 ? "on" : "off";
+    }
+
     /**
-     * Sets the shader pack's on/off option named by -PdevToggle and reloads the pack; "config.<name>" sets the mod's own
-     * boolean setting of that name instead.
+     * Sets the shader pack's option named by -PdevToggle for a toggle round and reloads the pack; "config.<name>" sets the
+     * mod's own setting of that name instead.
      */
-    private static void setPackOption(boolean on) {
-        String text = TOGGLE_VALUES == null ? Boolean.toString(on) : TOGGLE_VALUES[on ? 1 : 0];
+    private static void setPackRound(int round) {
+        boolean on = round % 2 == 1;
+        String text = TOGGLE_VALUES == null ? Boolean.toString(on)
+                : TOGGLE_VALUES.length > 2 ? TOGGLE_VALUES[round % TOGGLE_VALUES.length] : TOGGLE_VALUES[on ? 1 : 0];
         if (TOGGLE.startsWith("config.")) {
             String name = TOGGLE.substring("config.".length());
             for (java.lang.reflect.Field field : Config.class.getFields()) {

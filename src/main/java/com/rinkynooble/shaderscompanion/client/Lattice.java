@@ -48,6 +48,7 @@ public final class Lattice {
     static final int HEIGHT = 128;
     static final String CELLS = "lattice_cells";
     static final String SHAPE = "lattice_shape";
+    static final String DETAIL = "lattice_detail";
 
     // Cell bits
     private static final int WATER = 1 << 12;
@@ -64,6 +65,7 @@ public final class Lattice {
     private static final TextureDemand fieldDemand = new TextureDemand(CompanionTexture.LATTICE_FIELD);
     private static int cellsTexture;
     private static int shapeTexture;
+    private static int detailTexture;
     private static int size;
     private static int log2Size;
     private static int sectionsXZ;
@@ -73,12 +75,16 @@ public final class Lattice {
     private static long[] slotHash;
     /** Per slot: a hash of the shapes and the flags that matter to the openness field. */
     private static long[] slotShapeHash;
+    /** Per slot: whether the section has a block with a fine detail (LatticeDetail.fine). */
+    private static boolean[] slotFine;
     /** Section offsets from the camera's section covering the window, nearest first (x, y, z per entry). */
     private static int[] offsets;
     private static int refreshCursor;
     private static ClientLevel level;
     private static boolean idle;
     private static boolean failed;
+    /** Set when Minecraft's block models were baked again (the detail follows the models). */
+    private static volatile boolean modelsChanged;
     private static int infoX = Integer.MIN_VALUE;
     private static int infoY;
     private static int infoZ;
@@ -87,14 +93,21 @@ public final class Lattice {
     private static int fieldCentreY;
     private static int fieldCentreZ;
 
-    // Per block state: shape cells, cell bits (emission and flags), whether worked out
+    // Per block state: shape cells, cell bits (emission and flags), detail (LatticeDetail), whether worked out
     private static long[] stateShape = new long[0];
     private static int[] stateBits = new int[0];
+    private static int[] stateDetail = new int[0];
     private static boolean[] stateKnown = new boolean[0];
 
     private static IntBuffer cellsUpload;
     private static IntBuffer shapeUpload;
+    private static IntBuffer detailUpload;
     private static final int[] columnSky = new int[256];
+    /** A section and the blocks around it (18 x 18 x 18, x fastest): whether each has a fine detail, then near one. */
+    private static final boolean[] fineAround = new boolean[18 * 18 * 18];
+    private static final LevelChunkSection[] sectionsAround = new LevelChunkSection[27];
+    /** Whether the section {@link #fill} read last has a block with a fine detail. */
+    private static boolean sectionFine;
     private static final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
     // For the status line
@@ -130,6 +143,18 @@ public final class Lattice {
             return () -> {
                 CompanionTexture.countRequest(CompanionTexture.LATTICE);
                 return shapeTexture;
+            };
+        }
+        if (DETAIL.equals(location)) {
+            return () -> {
+                CompanionTexture.countRequest(CompanionTexture.LATTICE);
+                return detailTexture;
+            };
+        }
+        if (LatticeDetail.DISTANCE.equals(location)) {
+            return () -> {
+                CompanionTexture.countRequest(CompanionTexture.LATTICE);
+                return LatticeDetail.atlas();
             };
         }
         if (LatticeField.OPEN_A.equals(location)) {
@@ -202,9 +227,18 @@ public final class Lattice {
         return stamp == Long.MIN_VALUE ? stamp + 1 : stamp;
     }
 
-    /** A block changed (render thread). */
+    /** A block changed (render thread): its section, and the sections it touches (their blocks' near-fine flags). */
     public static void markBlock(BlockPos blockPos) {
-        markSection(blockPos.getX() >> 4, blockPos.getY() >> 4, blockPos.getZ() >> 4);
+        int x = blockPos.getX();
+        int y = blockPos.getY();
+        int z = blockPos.getZ();
+        for (int dy = (y & 15) == 0 ? -1 : 0; dy <= ((y & 15) == 15 ? 1 : 0); dy++) {
+            for (int dz = (z & 15) == 0 ? -1 : 0; dz <= ((z & 15) == 15 ? 1 : 0); dz++) {
+                for (int dx = (x & 15) == 0 ? -1 : 0; dx <= ((x & 15) == 15 ? 1 : 0); dx++) {
+                    markSection((x >> 4) + dx, (y >> 4) + dy, (z >> 4) + dz);
+                }
+            }
+        }
     }
 
     /** A section's blocks or light changed (render thread). */
@@ -222,6 +256,11 @@ public final class Lattice {
         for (int y = 0; y < SECTIONS_Y; y++) {
             slotDirty[slot(x, y, z)] = true;
         }
+    }
+
+    /** Minecraft's block models were baked again (resource reload): every block state is worked out again. */
+    public static void modelsChanged() {
+        modelsChanged = true;
     }
 
     /** Lets the world go (it is unloading); the next frame starts the window over. */
@@ -278,6 +317,13 @@ public final class Lattice {
                 Arrays.fill(slotDirty, true);
             }
             idle = false;
+            if (modelsChanged) {
+                modelsChanged = false;
+                Arrays.fill(stateKnown, false);
+                statesKnown = 0;
+                LatticeDetail.reset();
+                Arrays.fill(slotDirty, true);
+            }
 
             long budget = Config.LATTICE_BUDGET.get() * 1000L;
             waiting = 0;
@@ -306,6 +352,7 @@ public final class Lattice {
                 int z = cameraZ + offsets[refreshCursor + 2];
                 build(slot(x, y, z), x, y, z, true);
             }
+            LatticeDetail.update();
             int minX = (cameraX - sectionsXZ / 2) * 16;
             int minY = (cameraY - SECTIONS_Y / 2) * 16;
             int minZ = (cameraZ - sectionsXZ / 2) * 16;
@@ -341,8 +388,8 @@ public final class Lattice {
         }
         status = String.format("%d x %d x %d blocks, %d of %d sections%s; built %d last frame (%.2f ms, %.0f us per section), %d uploaded; %d block states; %d MB",
                 size, HEIGHT, size, filled, sections, waiting > 0 ? " (" + waiting + " waiting)" : "", builtLastFrame, nanosLastFrame / 1.0e6,
-                nanosPerSection / 1.0e3, uploadedLastFrame, statesKnown, (long) size * HEIGHT * size * 12 / (1024 * 1024))
-                + (infoField ? "; " + LatticeField.status() : "");
+                nanosPerSection / 1.0e3, uploadedLastFrame, statesKnown, (long) size * HEIGHT * size * 16 / (1024 * 1024))
+                + "; " + LatticeDetail.status() + (infoField ? "; " + LatticeField.status() : "");
     }
 
     private static int slot(int x, int y, int z) {
@@ -361,25 +408,32 @@ public final class Lattice {
             slotDirty = new boolean[slots];
             slotHash = new long[slots];
             slotShapeHash = new long[slots];
+            slotFine = new boolean[slots];
             offsets = sectionOffsets();
             refreshCursor = 0;
             if (cellsTexture == 0) {
                 cellsTexture = GL11C.glGenTextures();
                 shapeTexture = GL11C.glGenTextures();
+                detailTexture = GL11C.glGenTextures();
             }
             allocate(cellsTexture, GL30C.GL_R32UI, GL30C.GL_RED_INTEGER);
             allocate(shapeTexture, GL30C.GL_RG32UI, GL30C.GL_RG_INTEGER);
+            allocate(detailTexture, GL30C.GL_R32UI, GL30C.GL_RED_INTEGER);
             if (cellsUpload == null) {
                 cellsUpload = MemoryUtil.memAllocInt(4096);
                 shapeUpload = MemoryUtil.memAllocInt(8192);
+                detailUpload = MemoryUtil.memAllocInt(4096);
             }
         }
         clear(cellsTexture, GL30C.GL_RED_INTEGER, 1);
         clear(shapeTexture, GL30C.GL_RG_INTEGER, 2);
+        clear(detailTexture, GL30C.GL_RED_INTEGER, 1);
+        LatticeDetail.ensureLayers(1);
         Arrays.fill(slotSection, NONE);
         Arrays.fill(slotDirty, false);
         Arrays.fill(slotHash, 0L);
         Arrays.fill(slotShapeHash, 0L);
+        Arrays.fill(slotFine, false);
         infoX = Integer.MIN_VALUE;
         LatticeField.reset();
         fillStart = System.nanoTime();
@@ -460,7 +514,8 @@ public final class Lattice {
 
     /**
      * The info texture: magic, protocol and window size, then the window's lowest corner in blocks; then the openness
-     * field's magic (0 while it isn't baked), protocol, width and reach in quarter blocks, then its lowest corner.
+     * field's magic (0 while it isn't baked), protocol, width and reach in quarter blocks, then its lowest corner; then
+     * the detail's magic, protocol and samples per block.
      */
     private static void writeInfo(int magic, int minX, int minY, int minZ) {
         infoX = minX;
@@ -469,12 +524,13 @@ public final class Lattice {
         int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
         Gl.bindTexture(CubeTextures.LATTICE_INFO.glId());
         int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        IntBuffer info = MemoryUtil.memAllocInt(16);
+        IntBuffer info = MemoryUtil.memAllocInt(20);
         try {
             info.put(magic).put(PROTOCOL).put(size).put(HEIGHT).put(minX).put(minY).put(minZ).put(0)
                     .put(magic != 0 && infoField ? LatticeField.MAGIC : 0).put(LatticeField.PROTOCOL).put(LatticeField.WIDTH).put((int) (LatticeField.REACH * 4))
-                    .put(LatticeField.windowMin(fieldCentreX)).put(LatticeField.windowMin(fieldCentreY)).put(LatticeField.windowMin(fieldCentreZ)).put(0).flip();
-            GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, 4, 1, GL30C.GL_RGBA_INTEGER, GL11C.GL_INT, info);
+                    .put(LatticeField.windowMin(fieldCentreX)).put(LatticeField.windowMin(fieldCentreY)).put(LatticeField.windowMin(fieldCentreZ)).put(0)
+                    .put(magic != 0 && LatticeDetail.atlas() != 0 ? LatticeDetail.MAGIC : 0).put(LatticeDetail.PROTOCOL).put(LatticeDetail.RES).put(0).flip();
+            GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, 5, 1, GL30C.GL_RGBA_INTEGER, GL11C.GL_INT, info);
         } finally {
             MemoryUtil.memFree(info);
             CompanionTexture.restorePixelBuffers(pixelBuffers);
@@ -490,11 +546,26 @@ public final class Lattice {
         long start = System.nanoTime();
         long key = SectionPos.asLong(sectionX, sectionY, sectionZ);
         boolean sameSection = slotSection[slot] == key;
+        boolean wasFine = sameSection && slotFine[slot];
         slotSection[slot] = key;
         slotDirty[slot] = false;
         int parity = ((sectionX * 16 >> log2Size) & 1) | ((sectionY * 16 >> 7) & 1) << 1 | ((sectionZ * 16 >> log2Size) & 1) << 2;
         int tag = VALID | parity << 28;
+        sectionFine = false;
         fill(sectionX, sectionY, sectionZ, tag);
+        slotFine[slot] = sectionFine;
+        if (sectionFine != wasFine) {
+            // The neighbours' blocks next to this section may have a fine detail beside them now, or no longer
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if ((dx | dy | dz) != 0) {
+                            markSection(sectionX + dx, sectionY + dy, sectionZ + dz);
+                        }
+                    }
+                }
+            }
+        }
         long hash = hash();
         slotShapeHash[slot] = shapeHash();
         if (!(refresh || sameSection) || hash != slotHash[slot]) {
@@ -506,6 +577,8 @@ public final class Lattice {
             GL12C.glTexSubImage3D(GL12C.GL_TEXTURE_3D, 0, x0, y0, z0, 16, 16, 16, GL30C.GL_RED_INTEGER, GL11C.GL_UNSIGNED_INT, cellsUpload);
             GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, shapeTexture);
             GL12C.glTexSubImage3D(GL12C.GL_TEXTURE_3D, 0, x0, y0, z0, 16, 16, 16, GL30C.GL_RG_INTEGER, GL11C.GL_UNSIGNED_INT, shapeUpload);
+            GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, detailTexture);
+            GL12C.glTexSubImage3D(GL12C.GL_TEXTURE_3D, 0, x0, y0, z0, 16, 16, 16, GL30C.GL_RED_INTEGER, GL11C.GL_UNSIGNED_INT, detailUpload);
             uploadedLastFrame++;
         }
         builtLastFrame++;
@@ -517,6 +590,7 @@ public final class Lattice {
     private static void fill(int sectionX, int sectionY, int sectionZ, int tag) {
         cellsUpload.clear();
         shapeUpload.clear();
+        detailUpload.clear();
         LevelChunk chunk = level.getChunkSource().getChunk(sectionX, sectionZ, false);
         int index = level.getSectionIndexFromSectionY(sectionY);
         if (chunk == null || index < 0) {
@@ -525,6 +599,7 @@ public final class Lattice {
                 cellsUpload.put(i, 0);
                 shapeUpload.put(2 * i, 0);
                 shapeUpload.put(2 * i + 1, 0);
+                detailUpload.put(i, 0);
             }
             return;
         }
@@ -535,6 +610,7 @@ public final class Lattice {
                 cellsUpload.put(i, air);
                 shapeUpload.put(2 * i, 0);
                 shapeUpload.put(2 * i + 1, 0);
+                detailUpload.put(i, tag);
             }
             return;
         }
@@ -561,6 +637,7 @@ public final class Lattice {
                 for (int x = 0; x < 16; x++, i++) {
                     long shape = 0;
                     int bits = 0;
+                    int detail = LatticeDetail.NONE;
                     if (!onlyAir) {
                         BlockState state = section.getBlockState(x, y, z);
                         if (state != lastState) {
@@ -569,11 +646,88 @@ public final class Lattice {
                         }
                         shape = stateShape[lastId];
                         bits = stateBits[lastId];
+                        detail = stateDetail[lastId];
                     }
                     int light = (blockLight == null ? 0 : blockLight.get(x, y, z)) | (skyLight == null ? columnSky[x + 16 * z] : skyLight.get(x, y, z)) << 4;
                     cellsUpload.put(i, tag | light | bits);
                     shapeUpload.put(2 * i, (int) shape);
                     shapeUpload.put(2 * i + 1, (int) (shape >>> 32));
+                    detailUpload.put(i, tag | detail);
+                }
+            }
+        }
+        if (!onlyAir) {
+            markNearFine(sectionX, sectionY, sectionZ);
+        }
+    }
+
+    /**
+     * Sets {@link LatticeDetail#NEAR_FINE} on the section's blocks that have a fine detail in or next to them, reading the
+     * blocks around the section from the world (unloaded ones count as not fine), except in neighbours the lattice holds
+     * as they are without a fine detail.
+     */
+    private static void markNearFine(int sectionX, int sectionY, int sectionZ) {
+        boolean any = false;
+        for (int z = 0; z < 16; z++) {
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    boolean fine = LatticeDetail.fine(detailUpload.get((z * 16 + y) * 16 + x));
+                    fineAround[((z + 1) * 18 + y + 1) * 18 + x + 1] = fine;
+                    any |= fine;
+                }
+            }
+        }
+        sectionFine = any;
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int nx = sectionX + dx;
+                    int ny = sectionY + dy;
+                    int nz = sectionZ + dz;
+                    int neighbour = slot(nx, ny, nz);
+                    boolean knownPlain = (dx | dy | dz) != 0 && slotSection[neighbour] == SectionPos.asLong(nx, ny, nz)
+                            && !slotDirty[neighbour] && !slotFine[neighbour];
+                    LevelChunk chunk = knownPlain ? null : level.getChunkSource().getChunk(nx, nz, false);
+                    int index = level.getSectionIndexFromSectionY(ny);
+                    sectionsAround[(dy + 1) * 9 + (dz + 1) * 3 + dx + 1] = chunk == null || index < 0 || index >= level.getSectionsCount()
+                            ? null : chunk.getSection(index);
+                }
+            }
+        }
+        for (int z = -1; z <= 16; z++) {
+            for (int y = -1; y <= 16; y++) {
+                boolean edge = z < 0 || z > 15 || y < 0 || y > 15;
+                for (int x = -1; x <= 16; x += edge ? 1 : 17) {
+                    LevelChunkSection section = sectionsAround[((y >> 4) + 1) * 9 + ((z >> 4) + 1) * 3 + (x >> 4) + 1];
+                    boolean fine = false;
+                    if (section != null && !section.hasOnlyAir()) {
+                        BlockState state = section.getBlockState(x & 15, y & 15, z & 15);
+                        fine = !state.isAir() && LatticeDetail.fine(stateDetail[stateId(state, sectionX * 16 + x, sectionY * 16 + y, sectionZ * 16 + z)]);
+                    }
+                    fineAround[((z + 1) * 18 + y + 1) * 18 + x + 1] = fine;
+                    any |= fine;
+                }
+            }
+        }
+        if (!any) {
+            return;
+        }
+        // Grown by one block along each axis in turn
+        for (int axis = 0; axis < 3; axis++) {
+            int step = axis == 0 ? 1 : axis == 1 ? 18 : 18 * 18;
+            boolean[] from = fineAround.clone();
+            for (int i = 0; i < from.length; i++) {
+                int c = axis == 0 ? i % 18 : axis == 1 ? i / 18 % 18 : i / (18 * 18);
+                fineAround[i] = from[i] || (c > 0 && from[i - step]) || (c < 17 && from[i + step]);
+            }
+        }
+        for (int z = 0; z < 16; z++) {
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    if (fineAround[((z + 1) * 18 + y + 1) * 18 + x + 1]) {
+                        int i = (z * 16 + y) * 16 + x;
+                        detailUpload.put(i, detailUpload.get(i) | LatticeDetail.NEAR_FINE);
+                    }
                 }
             }
         }
@@ -586,6 +740,9 @@ public final class Lattice {
         }
         for (int i = 0; i < 8192; i++) {
             h = (h ^ shapeUpload.get(i)) * 0x100000001B3L;
+        }
+        for (int i = 0; i < 4096; i++) {
+            h = (h ^ detailUpload.get(i)) * 0x100000001B3L;
         }
         return h;
     }
@@ -611,6 +768,7 @@ public final class Lattice {
             int length = Math.max(id + 1, Math.max(Block.BLOCK_STATE_REGISTRY.size(), stateKnown.length * 2));
             stateShape = Arrays.copyOf(stateShape, length);
             stateBits = Arrays.copyOf(stateBits, length);
+            stateDetail = Arrays.copyOf(stateDetail, length);
             stateKnown = Arrays.copyOf(stateKnown, length);
         }
         if (!stateKnown[id]) {
@@ -624,13 +782,16 @@ public final class Lattice {
     private static void describe(int id, BlockState state, BlockPos blockPos) {
         long shape;
         boolean collides;
+        int detail;
         try {
             shape = cells(state.getShape(level, blockPos, CollisionContext.empty()));
             collides = !state.getCollisionShape(level, blockPos, CollisionContext.empty()).isEmpty();
+            detail = LatticeDetail.describe(state, level, blockPos, collides);
         } catch (RuntimeException e) {
             // A modded block that needs more of the world than is at hand: a full block if it hides its neighbours
             shape = state.canOcclude() ? -1L : 0L;
             collides = shape != 0;
+            detail = shape != 0 ? LatticeDetail.FULL | LatticeDetail.FIELD_EXACT : LatticeDetail.NONE;
         }
         int emission;
         try {
@@ -653,6 +814,7 @@ public final class Lattice {
         }
         stateShape[id] = shape;
         stateBits[id] = bits & STATE_BITS;
+        stateDetail[id] = detail;
     }
 
     /** A shape as 4 x 4 x 4 cells: bit x + 4 z + 16 y for the cell at (x, y, z), each cell a quarter block. */

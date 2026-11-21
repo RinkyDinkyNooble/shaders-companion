@@ -105,6 +105,13 @@ minecraft {
             if (project.hasProperty('devOutlineBlock')) {
                 property 'shaderscompanion.devOutlineBlock', project.property('devOutlineBlock')
             }
+            // -PdevNamespace=mdm: the showroom scene's mod; -PdevResourceReload: resources reloaded after the second toggle round.
+            if (project.hasProperty('devNamespace')) {
+                property 'shaderscompanion.devNamespace', project.property('devNamespace')
+            }
+            if (project.hasProperty('devResourceReload')) {
+                property 'shaderscompanion.devResourceReload', 'true'
+            }
             // -PdevFacadeDist=50: how far ahead the facade scene's glass stands.
             if (project.hasProperty('devFacadeSize')) {
                 property 'shaderscompanion.devFacadeSize', project.property('devFacadeSize')
