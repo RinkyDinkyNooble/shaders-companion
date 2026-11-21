@@ -359,10 +359,11 @@ public final class DevRun {
         boolean darkSpot = SCENE.equals("darkspot");
         boolean meadow = SCENE.equals("meadow") || darkSpot;
         boolean lodMirror = SCENE.equals("lodmirror");
-        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || skyRoom || enclosure || lodMirror || street || SCENE.equals("match");
+        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || skyRoom || enclosure || lodMirror || street || SCENE.equals("match") || SCENE.equals("materials");
         boolean shore = SCENE.equals("shore");
         boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
+        boolean materials = SCENE.equals("materials");
         boolean rainCover = SCENE.equals("raincover");
         if (phase == 1 && importCamera != null && mc.player != null && (ticks - phaseTick == 300 || ticks - phaseTick == 306 || ticks - phaseTick == 312)) {
             // The ocean scene's -PdevImport camera, 15 seconds in (after the import): in the air after a teleport, flying
@@ -652,6 +653,25 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the match scene");
+            } else if (materials) {
+                // A row of blocks the material system gives classes (and plain stone between them) on a smooth stone
+                // floor in the morning sun, seen at an angle so smooth and metal faces catch the sky and the sun
+                mc.options.hideGui = true;
+                String[] row = {"minecraft:iron_block", "minecraft:gold_block", "minecraft:copper_block", "minecraft:exposed_copper",
+                        "minecraft:netherite_block", "minecraft:diamond_block", "minecraft:glass", "minecraft:ice", "minecraft:slime_block",
+                        "minecraft:polished_andesite", "minecraft:quartz_block", "minecraft:white_glazed_terracotta", "minecraft:white_concrete",
+                        "minecraft:obsidian", "minecraft:stone"};
+                java.util.List<String> commands = new java.util.ArrayList<>(java.util.List.of(
+                        "time set 1000", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~20 ~ -60 25",
+                        "fill ~-4 ~-1 ~-4 ~16 ~-1 ~20 minecraft:smooth_stone", "fill ~-4 ~ ~-4 ~16 ~6 ~20 minecraft:air"));
+                for (int i = 0; i < row.length; i++) {
+                    commands.add("fill ~" + (2 + (i % 5) * 3) + " ~ ~" + (4 + (i / 5) * 4) + " ~" + (3 + (i % 5) * 3) + " ~1 ~" + (5 + (i / 5) * 4) + " " + row[i]);
+                }
+                for (String command : commands) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the materials scene");
             } else if (city) {
                 // A dense block of towers at y 150 around a street: stone brick walls with light grey stained glass
                 // windows, chests, furnaces and signs inside, villagers on the street, and a black glass wall on the
@@ -1467,7 +1487,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {

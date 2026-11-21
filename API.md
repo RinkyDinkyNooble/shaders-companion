@@ -1,4 +1,4 @@
-# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 3, rain cover protocol 1, lattice protocol 1)
+# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 3, rain cover protocol 1, lattice protocol 1, material table protocol 1)
 
 Shaders Companion draws two views for the active shader pack and hands them over as textures:
 
@@ -230,6 +230,24 @@ Each block's shape as it is drawn, at full resolution, for contact shading finer
 - Block models baked again (a resource reload) work every state out again.
 
 **Updates.** Sections are read nearest the camera first, within `latticeBudget` microseconds a frame (1000 by default): on joining a world the whole window (512 sections at 128) took 80 frames in the dev client, about 1.2 ms a frame, 94 ms in all. After that, about 40 to 60 microseconds per changed section (a section also reads the blocks around it when a neighbour may have a fine detail), plus one section read again each frame in turn and uploaded only if it changed. Written only while the pack binds the textures. Video memory: 32 MB at 128, 128 MB at 256, 16 MB for the openness field, and 1 MB per 256 detail shapes.
+
+## Material classes (2.0.0)
+
+```properties
+customTexture.scMaterials = shaderscompanion:material_table
+```
+
+A pack that binds this texture asks the mod to give blocks material classes. When Oculus builds the pipeline's block state to id map from the pack's `block.properties`, the mod puts a class (1 to 511) into bits 0-8 of the ids, in Sundial's convention for feature-flag ids:
+
+- a block the pack doesn't list gets `16384 | class`;
+- a block the pack lists with an id of 16384 or more whose bits 0-8 are 0 gets `id | class`;
+- any other listed block keeps its id (no class). Unlisted blocks without collision (plants) get none.
+
+So `mc_Entity.x` (and `blockEntityId`), the cube and mirror views' ids (`cube_data.b - 1`) and the lattice all carry the class: `id >= 16384 ? id & 0x1FF : 0`.
+
+**`material_table`** (`RGBA8`, 512 x 1, read with `texelFetch(...) * 255`): texel 0 is `(42, 42, protocol 1, 0)` (all 0 without the mod: check it); texel `c` is class `c`'s LabPBR 1.3 bytes: r smoothness, g F0 (0-229) or metal (230-237 the named metals, 255 metal by albedo), b porosity / subsurface scattering, a 255 for a class in use. Use the class where the block's own specular map is absent (Oculus's default specular is 0 in every channel).
+
+Classes come from `config/shaderscompanion-materials.json` (class name -> block ids and `#tags`; `none` takes blocks out), then the mod's vanilla table, then inference from a modded block's sound type, tags (`forge:glass`, `forge:storage_blocks/<metal>`, ...) and name. The classes and their values: `research/MATERIALS.md` in the mod's repository; the first 17 are glass, ice, gel, polished, glazed, concrete, obsidian, gem, iron, gold, aluminum, chrome, copper, exposed_copper, silver, metal, dark_metal (numbers 1 to 17 in that order). The config's `materials` switch turns it off.
 
 ## Versions
 

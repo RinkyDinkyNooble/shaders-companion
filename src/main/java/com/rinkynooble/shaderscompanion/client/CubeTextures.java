@@ -35,6 +35,7 @@ public final class CubeTextures {
     public static final ResourceLocation MIRROR_BEHIND_DATA_ID = id("mirror_behind_data");
     public static final ResourceLocation MIRROR_BEHIND_DISTANCE_ID = id("mirror_behind_distance");
     public static final ResourceLocation RAIN_COVER_ID = id("rain_cover");
+    public static final ResourceLocation MATERIAL_TABLE_ID = id(Materials.TABLE);
     public static final ResourceLocation LATTICE_INFO_ID = id("lattice_info");
 
     static final CompanionTexture ALBEDO = new CompanionTexture(CompanionTexture.CUBE, GL11C.GL_RGBA8, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, GL11C.GL_LINEAR);
@@ -52,6 +53,8 @@ public final class CubeTextures {
     static final CompanionTexture MIRROR_BEHIND_DISTANCE = new CompanionTexture(CompanionTexture.MIRROR_BEHIND, GL30C.GL_R32F, GL11C.GL_RED, GL11C.GL_FLOAT, GL11C.GL_NEAREST);
     /** The height rain falls to around the camera ({@link RainCover}). */
     static final CompanionTexture RAIN_COVER = new CompanionTexture(CompanionTexture.RAIN, GL30C.GL_R32F, GL11C.GL_RED, GL11C.GL_FLOAT, GL11C.GL_NEAREST);
+    /** Each material class's LabPBR values ({@link Materials}). */
+    static final CompanionTexture MATERIAL_TABLE = new CompanionTexture(CompanionTexture.UNTRACKED, GL11C.GL_RGBA8, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, GL11C.GL_NEAREST);
     /** The lattice's and its openness field's magic, protocol, size and window corner (four texels; {@link Lattice}). */
     static final CompanionTexture LATTICE_INFO = new CompanionTexture(CompanionTexture.LATTICE, GL30C.GL_RGBA32I, GL30C.GL_RGBA_INTEGER, GL11C.GL_INT, GL11C.GL_NEAREST);
 
@@ -81,6 +84,17 @@ public final class CubeTextures {
         manager.register(MIRROR_BEHIND_DATA_ID, MIRROR_BEHIND_DATA);
         manager.register(MIRROR_BEHIND_DISTANCE_ID, MIRROR_BEHIND_DISTANCE);
         manager.register(RAIN_COVER_ID, RAIN_COVER);
+        manager.register(MATERIAL_TABLE_ID, MATERIAL_TABLE);
+        MATERIAL_TABLE.allocate(Materials.TABLE_WIDTH, 1);
+        int previousTexture = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+        Gl.bindTexture(MATERIAL_TABLE.glId());
+        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
+        try {
+            Materials.uploadTable();
+        } finally {
+            CompanionTexture.restorePixelBuffers(pixelBuffers);
+            Gl.bindTextureIfAlive(previousTexture);
+        }
         manager.register(LATTICE_INFO_ID, LATTICE_INFO);
         LATTICE_INFO.allocate(8, 1);
         INFO.allocate(INFO_WIDTH, 1);

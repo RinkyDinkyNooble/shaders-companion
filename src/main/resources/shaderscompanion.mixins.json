@@ -11,6 +11,7 @@
     "ClientLevelMixin",
     "GameRendererMixin",
     "LatticeTextureMixin",
+    "MaterialMappingMixin",
     "RenderBuffersMixin",
     "ShadowCullingMixin"
   ],

@@ -2,6 +2,7 @@ package com.rinkynooble.shaderscompanion.mixin;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import com.rinkynooble.shaderscompanion.client.Lattice;
+import com.rinkynooble.shaderscompanion.client.Materials;
 import java.util.function.IntSupplier;
 import net.irisshaders.iris.gl.texture.TextureAccess;
 import net.irisshaders.iris.gl.texture.TextureType;
@@ -22,6 +23,7 @@ public abstract class LatticeTextureMixin {
     @Inject(method = "createCustomTexture", at = @At("HEAD"), cancellable = true)
     private void shaderscompanion$latticeTexture(CustomTextureData data, CallbackInfoReturnable<TextureAccess> cir) {
         if (data instanceof CustomTextureData.ResourceData resource && ShadersCompanion.MOD_ID.equals(resource.getNamespace())) {
+            Materials.noteCustomTexture(resource.getLocation());
             IntSupplier texture = Lattice.textureForPack(resource.getLocation());
             if (texture != null) {
                 cir.setReturnValue(new TextureWrapper(texture, TextureType.TEXTURE_3D));
