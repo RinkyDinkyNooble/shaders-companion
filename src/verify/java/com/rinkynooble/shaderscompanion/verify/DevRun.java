@@ -66,7 +66,8 @@ import org.lwjgl.opengl.GL33C;
  * With Distant Horizons (-PdevDh -PdevWait=1400) the far water is LOD water: distant water should look the same in
  * both shots, with no stripes. -PdevImport=&lt;file&gt; places a scan of the user's world there instead ("dx y dz state"
  * per line, heights as in their world, so its water lines up with the ocean's) with the camera's feet at -PdevCamX,
- * -PdevCamY (height) and -PdevCamZ, flying and held at -PdevYaw (0 to 359) and -PdevPitch.</li>
+ * -PdevCamY (height) and -PdevCamZ, flying and held at -PdevYaw (0 to 359) and -PdevPitch. -PdevTrunk adds a walkway
+ * and a cherry tree just ahead (with -PdevStrafe, the view behind its trunk opens up during each burst).</li>
  * <li>-PdevToggle=WATER_WAVE_FILTER (any scene but city and shadows): after the "-on" shot, six alternating timing rounds
  * with that shader pack option off and on, each with a screenshot ("-WATER_WAVE_FILTER-off0" and so on), instead of the
  * "-off" shot: costs and looks compared within one run (two runs differ by more than most changes, mostly through
@@ -570,6 +571,9 @@ public final class DevRun {
                     }
                     if (shore) {
                         buildShore(server.overworld(), at, lift);
+                    }
+                    if (Boolean.getBoolean("shaderscompanion.devTrunk")) {
+                        buildTrunk(server.overworld(), at, lift, finalYaw);
                     }
                     mc.tell(() -> mc.player.connection.sendCommand("tp @s " + (at.getX() + 0.5) + " " + (64 + lift) + " " + (at.getZ() + 0.5) + " " + finalYaw + " " + pitch));
                 });
@@ -1635,6 +1639,40 @@ public final class DevRun {
             ShadersCompanion.LOGGER.error("Shaders Companion dev run: can't read {}", importFile, e);
         }
         ShadersCompanion.LOGGER.info("Shaders Companion dev run: placed {} blocks from {} at {}", placed, importFile, origin);
+    }
+
+    /**
+     * -PdevTrunk: a grass walkway from the camera's spot to its left (the way -PdevStrafe walks), and a cherry tree 4
+     * blocks ahead and 2 to the left, its trunk 8 blocks high under a canopy, so walking left uncovers the sky, the
+     * clouds and the water behind the trunk.
+     */
+    private static void buildTrunk(net.minecraft.server.level.ServerLevel level, BlockPos at, int lift, int yaw) {
+        double forwardX = -Math.sin(Math.toRadians(yaw));
+        double forwardZ = Math.cos(Math.toRadians(yaw));
+        int floor = 63 + lift;
+        for (int ahead = -1; ahead <= 1; ahead++) {
+            for (int left = -2; left <= 8; left++) {
+                level.setBlock(trunkOffset(at, floor, ahead, left, forwardX, forwardZ), Blocks.GRASS_BLOCK.defaultBlockState(), 2);
+            }
+        }
+        for (int up = 0; up < 8; up++) {
+            level.setBlock(trunkOffset(at, floor + up, 4, 2, forwardX, forwardZ), Blocks.CHERRY_LOG.defaultBlockState(), 2);
+        }
+        for (int ahead = 2; ahead <= 6; ahead++) {
+            for (int left = 0; left <= 4; left++) {
+                for (int up = 8; up <= 9; up++) {
+                    level.setBlock(trunkOffset(at, floor + up, ahead, left, forwardX, forwardZ), Blocks.CHERRY_LEAVES.defaultBlockState()
+                            .setValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT, true), 2);
+                }
+            }
+        }
+    }
+
+    /** The block at height y, ahead and to the left of at as seen looking along (forwardX, forwardZ). */
+    private static BlockPos trunkOffset(BlockPos at, int y, int ahead, int left, double forwardX, double forwardZ) {
+        // Left of the view: the forward direction turned a quarter towards +x from +z
+        return new BlockPos(at.getX() + (int) Math.round(forwardX * ahead + forwardZ * left), y,
+                at.getZ() + (int) Math.round(forwardZ * ahead - forwardX * left));
     }
 
     private static void buildShore(net.minecraft.server.level.ServerLevel level, BlockPos at, int lift) {

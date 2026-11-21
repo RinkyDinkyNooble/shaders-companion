@@ -166,6 +166,11 @@ minecraft {
                     property "shaderscompanion.${name}", project.property(name)
                 }
             }
+            // -PdevTrunk: the ocean scene gets a walkway and a cherry tree just ahead of it (things uncovered behind a
+            // trunk while strafing, with -PdevStrafe).
+            if (project.hasProperty('devTrunk')) {
+                property 'shaderscompanion.devTrunk', 'true'
+            }
             if (project.hasProperty('devGlassFacing')) {
                 property 'shaderscompanion.devGlassFacing', project.property('devGlassFacing')
             }
