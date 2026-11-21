@@ -1,6 +1,9 @@
 package com.rinkynooble.shaderscompanion.client;
 
+import com.mojang.blaze3d.platform.GlStateManager;
+import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import java.nio.FloatBuffer;
+import me.jellysquid.mods.sodium.client.render.chunk.region.RenderRegionManager;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.material.FogType;
@@ -8,6 +11,8 @@ import net.minecraft.world.phys.Vec3;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.lwjgl.opengl.GL11C;
+import org.lwjgl.opengl.GL30C;
 import org.lwjgl.system.MemoryUtil;
 
 /**
@@ -36,9 +41,11 @@ final class MirrorView {
 
     static String status = "no reflecting surface in view";
     static long cpuNanos;
-    static int width;
-    static int height;
 
+    /** The view's textures, and the copy of its opaque surfaces taken before water and glass are drawn over them. */
+    private static final ViewTarget target = new ViewTarget("mirror", CubeTextures.MIRROR_ALBEDO, CubeTextures.MIRROR_DATA, CubeTextures.MIRROR_DISTANCE);
+    private static final ViewTarget behindTarget = new ViewTarget("mirror behind", false, CubeTextures.MIRROR_BEHIND_ALBEDO,
+            CubeTextures.MIRROR_BEHIND_DATA, CubeTextures.MIRROR_BEHIND_DISTANCE);
     private static boolean active;
     private static boolean linked;
     private static final MirrorArea area = new MirrorArea(MARGIN);
@@ -48,6 +55,8 @@ final class MirrorView {
     private static long lodWaitingSince;
 
     // This frame's view, valid while active
+    private static int width;
+    private static int height;
     private static int axis;
     private static int side;
     private static double coordinate;
@@ -78,7 +87,7 @@ final class MirrorView {
             active = false;
             MirrorPlaneSearch.checkLevel(mc.level);
             if (camera.getFluidInCamera() != FogType.NONE) {
-                status = "camera under water";
+                status = "camera under water, in lava or in powder snow";
                 MirrorPlaneSearch.forget();
                 return false;
             }
@@ -151,9 +160,32 @@ final class MirrorView {
         return lodPercent;
     }
 
-    /** The pixels of the view that are drawn (x, y, width, height); the rest of it says "not drawn". */
-    static int[] drawnPixels() {
-        return area.pixels();
+    /**
+     * Draws this frame's view: the same surfaces as a cube face, from the mirrored camera, with everything on the far
+     * side of the plane cut away, in the part of the view the plane covers; the rest says "not drawn". With
+     * {@code behind} (the pack reads them), the opaque surfaces are copied before water and glass are drawn over them:
+     * what lies behind those, for shading them as water and glass.
+     */
+    static void draw(Vec3 camera, float maxDistance, float lodDistance, RenderRegionManager regions, boolean behind) {
+        if (target.ensureSize(width, height)) {
+            ShadersCompanion.LOGGER.info("Shaders Companion: mirror view of {} x {} pixels", width, height);
+        }
+        if (behind) {
+            behindTarget.ensureSize(width, height);
+        }
+        target.bind();
+        GlStateManager._viewport(0, 0, width, height);
+        GlStateManager._scissorBox(0, 0, width, height);
+        // Outside the part of the screen the mirror covers, the distance says "not drawn" (-1); inside it, 0 is open sky
+        target.clear(-1.0F);
+        int[] drawn = area.pixels();
+        GlStateManager._scissorBox(drawn[0], drawn[1], drawn[2], drawn[3]);
+        GL30C.glClearBufferfv(GL11C.GL_COLOR, ViewProgram.DISTANCE_OUTPUT, new float[]{0.0F, 0.0F, 0.0F, 0.0F});
+
+        float[] cameraOffset = {(float) (camera.x - originWorld.x), (float) (camera.y - originWorld.y), (float) (camera.z - originWorld.z)};
+        Runnable copyBehind = behind ? () -> target.copyTo(behindTarget, drawn[0], drawn[1], drawn[2], drawn[3]) : null;
+        ViewRenderer.drawView(drawMatrix, seen(), frustumSeen(), camera, originWorld, clipPlane(), cameraOffset, maxDistance, lodDistance, regions, true,
+                copyBehind);
     }
 
     private static String describePlane() {
@@ -195,18 +227,8 @@ final class MirrorView {
         return front > CLIP_EPSILON && test.testAab((float) minX, (float) minY, (float) minZ, (float) maxX, (float) maxY, (float) maxZ);
     }
 
-    /** The mirrored camera in world coordinates: the view's origin. */
-    static Vec3 originWorld() {
-        return originWorld;
-    }
-
-    /** View-projection for positions relative to the mirrored camera. */
-    static Matrix4f drawMatrix() {
-        return drawMatrix;
-    }
-
     /** The cut plane for positions relative to the mirrored camera: drawn where dot(xyz, p) + w >= 0. */
-    static float[] clipPlane() {
+    private static float[] clipPlane() {
         return new float[]{normal.x, normal.y, normal.z, (float) -heightAbove - CLIP_EPSILON};
     }
 

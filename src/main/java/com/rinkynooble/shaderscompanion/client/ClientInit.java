@@ -57,6 +57,7 @@ public final class ClientInit {
 
     private static void onModelsBaked(ModelEvent.BakingCompleted event) {
         Lattice.modelsChanged();
+        MirrorPlaneSearch.modelsChanged();
     }
 
     private static void onClientSetup(FMLClientSetupEvent event) {

@@ -150,6 +150,8 @@ final class MirrorPlaneSearch {
     /** Each plane's smoothed share of the weighted grid. */
     private static final Map<Long, Float> scores = new HashMap<>();
     private static final Map<BlockState, Boolean> translucent = new IdentityHashMap<>();
+    /** Set when Minecraft's block models were baked again: a resource pack can change which blocks are translucent. */
+    private static volatile boolean modelsChanged;
     private static final ArrayDeque<Double> waterLevels = new ArrayDeque<>();
     private static ClientLevel scoredLevel;
     private static int rayCursor;
@@ -184,13 +186,25 @@ final class MirrorPlaneSearch {
     private MirrorPlaneSearch() {
     }
 
-    /** Starts over in a new world: block states are looked at again and nothing seen so far counts. */
+    /**
+     * Starts over in a new world: block states are looked at again and nothing seen so far counts. After a resource
+     * reload only the block states are looked at again.
+     */
     static void checkLevel(ClientLevel level) {
         if (level != scoredLevel) {
             scoredLevel = level;
             translucent.clear();
             forget();
         }
+        if (modelsChanged) {
+            modelsChanged = false;
+            translucent.clear();
+        }
+    }
+
+    /** Minecraft's block models were baked again (resource reload). */
+    static void modelsChanged() {
+        modelsChanged = true;
     }
 
     /** Forgets every plane seen, so the next frames start the search from nothing. */

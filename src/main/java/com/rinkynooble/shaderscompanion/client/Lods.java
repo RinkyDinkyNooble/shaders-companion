@@ -52,6 +52,8 @@ final class Lods {
 
     static void fail(Throwable t) {
         if (state > 0) {
+            // Lets go of the frame's collected buffers: clear() won't reach them once the state is off
+            DistantHorizonsLods.clear();
             state = -1;
             ShadersCompanion.LOGGER.error("Shaders Companion: Distant Horizons terrain turned off after an error", t);
         }

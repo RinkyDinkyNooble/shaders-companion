@@ -87,11 +87,8 @@ final class EntityCapture implements MultiBufferSource {
     record TypeInfo(ResourceLocation texture, int kind) {
     }
 
-    /**
-     * A run of vertices sharing a texture and kind, at {@code firstVertex} in the uploaded buffer. Mirror-only batches
-     * hold the local player in first person, which only the mirror view draws.
-     */
-    record Batch(ResourceLocation texture, int kind, int firstVertex, int vertexCount, boolean mirrorOnly) {
+    /** A run of vertices sharing a texture and kind, at {@code firstVertex} in the uploaded buffer. */
+    record Batch(ResourceLocation texture, int kind, int firstVertex, int vertexCount) {
     }
 
     private final Map<RenderType, TypeInfo> types = new IdentityHashMap<>();
@@ -119,7 +116,8 @@ final class EntityCapture implements MultiBufferSource {
     /**
      * Draws the local player in first person into the sinks, for the mirror view only ({@code mirrorSeen}, boxes
      * relative to the camera): the cube's camera sits inside its head. The game doesn't draw that player itself, so
-     * this can run before the world is drawn and show this frame's pose.
+     * this can run before the world is drawn and show this frame's pose. Meant for a capture of its own, which only
+     * the mirror view draws.
      */
     void collectLocalPlayer(Minecraft mc, Camera camera, float partialTick, BoxTest mirrorSeen) {
         this.mirrorPlayerDrawn = false;
@@ -136,12 +134,11 @@ final class EntityCapture implements MultiBufferSource {
         }
         this.candidates.clear();
         this.candidates.add(entity);
-        // Never kept or reused: these vertices are marked mirror-only below
+        // Never kept or reused: drawn fresh each frame
         this.lod = false;
         this.drawCandidates(dispatcher, origin, partialTick, 1, Long.MAX_VALUE);
         this.mirrorPlayerDrawn = this.entitiesDrawn > 0;
         this.entitiesDrawn = 0;
-        this.markMirrorOnly();
     }
 
     /**
@@ -225,13 +222,6 @@ final class EntityCapture implements MultiBufferSource {
         }
     }
 
-    /** Marks every vertex collected so far (the local player's) as mirror-only. */
-    private void markMirrorOnly() {
-        for (Sink sink : this.sinkList) {
-            sink.mirrorOnly = sink.vertices - sink.vertices % 4;
-        }
-    }
-
     /**
      * Starts a collection: empties every sink, and drops kept vertices that went unused for a while. Entity LOD is used
      * when {@code lod} is set; kept vertices are dropped when it isn't or the world changed.
@@ -252,7 +242,6 @@ final class EntityCapture implements MultiBufferSource {
         }
         for (Sink sink : this.sinkList) {
             sink.vertices = 0;
-            sink.mirrorOnly = 0;
         }
         this.entitiesDrawn = 0;
         this.blockEntitiesDrawn = 0;
@@ -465,7 +454,6 @@ final class EntityCapture implements MultiBufferSource {
             Sink sink = this.sinkList.get(i);
             // Sinks created during the failed entity come after the marked ones and start empty.
             sink.vertices = i < marks.length ? marks[i] : 0;
-            sink.mirrorOnly = Math.min(sink.mirrorOnly, sink.vertices);
             sink.discardPartialVertex();
         }
     }
@@ -481,7 +469,7 @@ final class EntityCapture implements MultiBufferSource {
 
     /**
      * Copies the collected vertices to {@code target} (at least {@link #vertexCount()} * STRIDE bytes) and returns the
-     * batches, opaque ones first; each sink's mirror-only vertices (its first ones) form a batch of their own.
+     * batches, opaque ones first.
      */
     List<Batch> write(ByteBuffer target) {
         List<Batch> batches = new ArrayList<>();
@@ -493,13 +481,7 @@ final class EntityCapture implements MultiBufferSource {
                     continue;
                 }
                 MemoryUtil.memCopy(MemoryUtil.memAddress(sink.data), MemoryUtil.memAddress(target) + (long) vertex * STRIDE, (long) count * STRIDE);
-                int mirrorOnly = Math.min(sink.mirrorOnly, count);
-                if (mirrorOnly > 0) {
-                    batches.add(new Batch(sink.info.texture, kind, vertex, mirrorOnly, true));
-                }
-                if (count > mirrorOnly) {
-                    batches.add(new Batch(sink.info.texture, kind, vertex + mirrorOnly, count - mirrorOnly, false));
-                }
+                batches.add(new Batch(sink.info.texture, kind, vertex, count));
                 vertex += count;
             }
         }
@@ -679,8 +661,6 @@ final class EntityCapture implements MultiBufferSource {
         final TypeInfo info;
         ByteBuffer data;
         int vertices;
-        /** Vertices at the start that only the mirror view draws. */
-        int mirrorOnly;
         private float x;
         private float y;
         private float z;

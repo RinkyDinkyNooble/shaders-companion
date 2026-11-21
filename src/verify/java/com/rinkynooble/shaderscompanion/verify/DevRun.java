@@ -251,7 +251,11 @@ public final class DevRun {
         }
         mc.tell(() -> {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: creating world {}", WORLD);
-            LevelSettings settings = new LevelSettings(WORLD, GameType.CREATIVE, false, Difficulty.PEACEFUL, true, new GameRules(), WorldDataConfiguration.DEFAULT);
+            // Spawn radius 0: the player starts on the world's spawn point, not up to 10 blocks off it at random, so
+            // every run builds its scene in the same place and shots of two runs can be compared pixel by pixel
+            GameRules rules = new GameRules();
+            rules.getRule(GameRules.RULE_SPAWN_RADIUS).set(0, null);
+            LevelSettings settings = new LevelSettings(WORLD, GameType.CREATIVE, false, Difficulty.PEACEFUL, true, rules, WorldDataConfiguration.DEFAULT);
             mc.createWorldOpenFlows().createFreshLevel(WORLD, settings, new WorldOptions(20261108L, false, false), WorldPresets::createNormalWorldDimensions);
         });
     }
