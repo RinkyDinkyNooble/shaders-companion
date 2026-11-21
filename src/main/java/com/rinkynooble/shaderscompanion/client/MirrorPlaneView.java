@@ -104,7 +104,8 @@ final class MirrorPlaneView {
 
     /** mirrorLod: the resolution for the plane's share of the screen (percent), changed only once it has held. */
     private int chooseLod() {
-        float share = MirrorPlaneSearch.share(this.slot);
+        // The held share: the fast one would step a plane near a threshold up and down every second or two
+        float share = MirrorPlaneSearch.heldShare(this.slot);
         int wanted = !Config.MIRROR_LOD.get() || share >= LOD_75_BELOW ? 100 : share >= LOD_50_BELOW ? 75 : 50;
         long now = System.nanoTime();
         if (wanted == this.lodPercent) {

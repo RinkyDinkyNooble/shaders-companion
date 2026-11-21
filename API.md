@@ -242,6 +242,7 @@ A pack that binds this texture asks the mod to give blocks material classes. Whe
 - a block the pack doesn't list gets `16384 | class`;
 - a block the pack lists with an id of 16384 or more whose bits 0-8 are 0 gets `id | class`;
 - any other listed block keeps its id (no class). Unlisted blocks without collision (plants) get none.
+- every other block state the pack doesn't list gets `16384` (class 0, no flags) when it gives no light, has collision and isn't a plant by its sound or name. Packs that make unlisted blocks glow at full block light (Sundial's modded light detection) then glow only real light sources: a face pointing at a light-15 block samples that block's cell and has full light too (glass beside a lamp, its far face seen through it). Unlisted light sources and plants stay unlisted (-1).
 
 So `mc_Entity.x` (and `blockEntityId`), the cube and mirror views' ids (`cube_data.b - 1`) and the lattice all carry the class: `id >= 16384 ? id & 0x1FF : 0`.
 

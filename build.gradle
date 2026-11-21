@@ -106,6 +106,10 @@ minecraft {
                 property 'shaderscompanion.devLeakLog', project.property('devLeakLog')
             }
             // -PdevOutlineBlock=minecraft:cobweb: the hand scene places that block just ahead, before the wall (for the selection outline).
+            // -PdevBlockz: Better Blockz and Lathe loaded (see the dependencies); the lampglass scene adds their blocks
+            if (project.hasProperty('devBlockz')) {
+                property 'shaderscompanion.devBlockz', 'true'
+            }
             if (project.hasProperty('devOutlineBlock')) {
                 property 'shaderscompanion.devOutlineBlock', project.property('devOutlineBlock')
             }
@@ -245,6 +249,13 @@ dependencies {
     // for airy furniture shapes such as the bathroom radiator (-PdevOutlineBlock=mdm:bathroom_radiator[part=main]).
     if (project.hasProperty('devFurniture')) {
         runtimeOnly fg.deobf("local:modern-furniture-fixed:1.0.2")
+    }
+    // -PdevBlockz: Better Blockz and Lathe (libs/betterblockz-0.2.10.jar and libs/lathe-0.3.0.jar from the instance's
+    // mods), the blocks of the user's buildings: lit "stone" blocks beside Lathe's tinted glass slabs, and nearly
+    // every Better Blockz block sounding like metal.
+    if (project.hasProperty('devBlockz')) {
+        runtimeOnly fg.deobf("local:betterblockz:0.2.10")
+        runtimeOnly fg.deobf("local:lathe:0.3.0")
     }
     // Superb Warfare is loaded in dev runs only with -PdevSbw (the boat scene): its jar without the nested ones, and
     // the mods it needs (SimpleBedrockModel, GeckoLib, Curios, Cloth Config, Ponder, Flywheel) remapped, its script

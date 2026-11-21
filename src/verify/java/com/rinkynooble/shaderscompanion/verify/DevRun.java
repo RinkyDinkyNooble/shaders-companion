@@ -355,11 +355,13 @@ public final class DevRun {
         boolean skyRoom = SCENE.equals("skyroom");
         boolean enclosure = SCENE.equals("enclosure");
         boolean stairWall = SCENE.equals("stairwall");
+        boolean store = SCENE.equals("store");
+        boolean lampGlass = SCENE.equals("lampglass");
         boolean street = SCENE.equals("street");
         boolean darkSpot = SCENE.equals("darkspot");
         boolean meadow = SCENE.equals("meadow") || darkSpot;
         boolean lodMirror = SCENE.equals("lodmirror");
-        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || skyRoom || enclosure || lodMirror || street || SCENE.equals("match") || SCENE.equals("materials");
+        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || skyRoom || enclosure || lodMirror || street || store || lampGlass || SCENE.equals("match") || SCENE.equals("materials");
         boolean shore = SCENE.equals("shore");
         boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
@@ -938,6 +940,58 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the enclosure scene");
+            } else if (store) {
+                // A hall like the user's hardware store (2026-11-21), where metal surfaces share planes with glass: iron
+                // walls and ceiling (the iron material class), a quartz floor, light grey stained glass skylights flush
+                // in the ceiling, shop windows set in an iron wall on the right, a mezzanine with a glass railing on the
+                // left and sea lantern strips in the ceiling. Looking along the hall and up at the ceiling
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~20 ~ " + Integer.getInteger("shaderscompanion.devYaw", 0) + " " + Integer.getInteger("shaderscompanion.devPitch", -20),
+                        "fill ~-14 ~-2 ~-6 ~14 ~10 ~32 minecraft:air",
+                        "fill ~-13 ~-1 ~-5 ~13 ~9 ~31 minecraft:iron_block", "fill ~-12 ~ ~-4 ~12 ~8 ~30 minecraft:air",
+                        "fill ~-12 ~-1 ~-4 ~12 ~-1 ~30 minecraft:quartz_block",
+                        "fill ~-7 ~9 ~6 ~-5 ~9 ~8 minecraft:light_gray_stained_glass", "fill ~3 ~9 ~14 ~5 ~9 ~16 minecraft:light_gray_stained_glass",
+                        "fill ~-2 ~9 ~22 ~0 ~9 ~24 minecraft:light_gray_stained_glass",
+                        "fill ~-10 ~9 ~0 ~-10 ~9 ~28 minecraft:sea_lantern", "fill ~1 ~9 ~0 ~1 ~9 ~20 minecraft:sea_lantern", "fill ~10 ~9 ~0 ~10 ~9 ~28 minecraft:sea_lantern",
+                        "fill ~7 ~ ~-4 ~7 ~8 ~30 minecraft:iron_block",
+                        "fill ~7 ~ ~8 ~7 ~3 ~13 minecraft:light_gray_stained_glass", "fill ~7 ~ ~18 ~7 ~3 ~23 minecraft:light_gray_stained_glass",
+                        "fill ~10 ~ ~9 ~11 ~2 ~12 minecraft:bookshelf", "fill ~10 ~ ~19 ~11 ~2 ~22 minecraft:red_wool",
+                        "fill ~-12 ~3 ~-4 ~-8 ~3 ~30 minecraft:white_concrete", "fill ~-7 ~4 ~-4 ~-7 ~4 ~30 minecraft:light_gray_stained_glass_pane",
+                        "fill ~-3 ~ ~6 ~-2 ~2 ~20 minecraft:barrel", "fill ~2 ~ ~6 ~3 ~1 ~20 minecraft:bookshelf"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the store scene");
+            } else if (lampGlass) {
+                // A closed white wool room at night lit by one lantern on the floor 4 blocks ahead, with light grey
+                // stained glass to its right, behind it and above it and wool to its left: faces pointing at the lantern
+                // must not glow (the user's lamp beside a glass slab, 2026-11-21)
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 18000), "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~20 ~ " + Integer.getInteger("shaderscompanion.devYaw", 0) + " " + Integer.getInteger("shaderscompanion.devPitch", 20),
+                        "fill ~-7 ~-2 ~-3 ~7 ~7 ~10 minecraft:air",
+                        "fill ~-6 ~-1 ~-2 ~6 ~5 ~8 minecraft:white_wool", "fill ~-5 ~ ~-1 ~5 ~4 ~7 minecraft:air",
+                        "setblock ~ ~ ~4 minecraft:lantern", "setblock ~1 ~ ~4 minecraft:light_gray_stained_glass",
+                        "setblock ~ ~ ~5 minecraft:light_gray_stained_glass", "setblock ~ ~1 ~4 minecraft:light_gray_stained_glass",
+                        "setblock ~-1 ~ ~4 minecraft:white_wool"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                if (Boolean.getBoolean("shaderscompanion.devBlockz")) {
+                    // The user's bedroom corner (their world at -1382 91 -1378, 2026-11-21), with -PdevFurniture too: a
+                    // desk lamp on a nightstand, Lathe's light grey tinted glass slabs (facing north) just south of it
+                    // and above, ironslate beside, the orange curtain slabs on the other side, myst blocks below
+                    String slab = "lathe:betterblockz__%s_vslab[facing=north,type=single,waterlogged=false]";
+                    for (String command : new String[]{
+                            "fill ~-4 ~ ~4 ~-4 ~2 ~5 betterblockz:ironslate_blockz_1", "fill ~-3 ~ ~5 ~-2 ~ ~5 betterblockz:myst_blockz_1",
+                            "setblock ~-3 ~ ~4 mdm:bedroom_set_1whitenightstand_1[facing=north]", "setblock ~-3 ~1 ~4 mdm:modern_desk_lamp_1[facing=north]",
+                            "fill ~-3 ~1 ~5 ~-3 ~2 ~5 " + String.format(slab, "tintedglass_blockz_4"),
+                            "fill ~-2 ~1 ~5 ~-2 ~2 ~5 " + String.format(slab, "zeno_orange_blockz_4")}) {
+                        mc.player.connection.sendCommand(command);
+                    }
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the lampglass scene");
             } else if (stairWall) {
                 // A closed room of smooth sandstone at noon, lit only by a lantern behind the camera. Its far wall (+Z) is
                 // oak stairs on the left (+X) half, their flat backs to the room and their open steps to the sunlit
@@ -1487,7 +1541,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall || store || lampGlass ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {

@@ -33,7 +33,8 @@ import org.joml.Vector4f;
  * with the most area, weighted towards where the view will be a moment from now (the screen's centre, moved along the
  * camera's turn), are chosen, one per slot (as many slots as the shader pack asks for), so a surface the camera turns
  * towards is mirrored before it comes into view. A plane keeps its slot while it is chosen. An empty slot takes the
- * best plane left at once; with every slot taken, another plane takes the weakest one's slot after it has covered more
+ * best plane left at once; with every slot taken, another plane takes the weakest one's slot (comparing shares smoothed
+ * over 1.5 seconds, see STEADY_SECONDS) after it has covered more
  * for half a second, sooner the more it covers. A plane that leaves the view frees its slot.
  * <p>
  * The search runs in real time, not per frame: rays per second and smoothing by time (the rates were tuned at about
@@ -100,11 +101,29 @@ final class MirrorPlaneSearch {
     private static final float PAST_TERRAIN_WEIGHT = 0.5F;
     /** Share of the weighted screen a plane must cover to be mirrored; a chosen one stays down to half of it. */
     private static final float MIN_SCORE = 0.01F;
-    /** With every slot taken, another plane takes over when it covers this much more than the weakest chosen one... */
+    /**
+     * Switches between chosen planes compare shares smoothed this long. A small surface covers a few cells, and a ray
+     * landing on the other side of its edge changes its share by a large part from one sweep to the next: on the fast
+     * shares, three glass surfaces of 2 to 4 % of the screen traded the one slot about once a second with the camera
+     * still (the dev client's store scene, 2026-11-21), each time switching the reflections on them; smoothed over half
+     * a second, still once every 12 seconds.
+     */
+    private static final float STEADY_SECONDS = 1.5F;
+    /**
+     * With every slot taken, another plane takes over when its steady share is this much more than the weakest chosen
+     * one's and at least SWITCH_MARGIN more of the weighted screen, for SWITCH_DELAY_NANOS...
+     */
     private static final float SWITCH_RATIO = 1.2F;
-    /** ...for this long, or for FAST_SWITCH_DELAY_NANOS when it covers FAST_SWITCH_RATIO times as much. */
+    private static final float SWITCH_MARGIN = 0.01F;
     private static final long SWITCH_DELAY_NANOS = 500_000_000L;
+    /**
+     * ...or when its share now is FAST_SWITCH_RATIO times the weakest one's (steady, or now where lower) and
+     * FAST_SWITCH_MARGIN more of the weighted screen, for FAST_SWITCH_DELAY_NANOS: a large surface the camera turns to,
+     * which the steady shares would follow only slowly. Small surfaces never qualify, however their shares jump (the
+     * store scene's peak at 5 %).
+     */
     private static final float FAST_SWITCH_RATIO = 2.0F;
+    private static final float FAST_SWITCH_MARGIN = 0.08F;
     private static final long FAST_SWITCH_DELAY_NANOS = 60_000_000L;
     /**
      * A chosen plane is let go (below half of MIN_SCORE) only once no ray has hit it for this long: a small or far
@@ -150,6 +169,8 @@ final class MirrorPlaneSearch {
     private static long lastForwardNanos;
     /** Each plane's smoothed share of the weighted grid. */
     private static final Map<Long, Float> scores = new HashMap<>();
+    /** The same shares smoothed over STEADY_SECONDS, which switches between chosen planes compare. */
+    private static final Map<Long, Float> steadyScores = new HashMap<>();
     private static final Map<BlockState, Boolean> translucent = new IdentityHashMap<>();
     /** Set when Minecraft's block models were baked again: a resource pack can change which blocks are translucent. */
     private static volatile boolean modelsChanged;
@@ -172,6 +193,7 @@ final class MirrorPlaneSearch {
     private static long challengerSince;
     // Each slot's plane's weighted share of the screen, and for the status line the best plane not chosen
     private static final float[] slotShares = new float[MirrorView.MAX_PLANES];
+    private static final float[] slotSteadyShares = new float[MirrorView.MAX_PLANES];
     private static long rival = NO_PLANE;
     private static float rivalShare;
 
@@ -220,8 +242,10 @@ final class MirrorPlaneSearch {
         lastForwardNanos = 0L;
         lastFindNanos = 0L;
         scores.clear();
+        steadyScores.clear();
         Arrays.fill(slotPlanes, NO_PLANE);
         Arrays.fill(slotShares, 0.0F);
+        Arrays.fill(slotSteadyShares, 0.0F);
         challenger = NO_PLANE;
     }
 
@@ -266,6 +290,14 @@ final class MirrorPlaneSearch {
     /** A slot's plane's smoothed, weighted share of the screen (0 without one). */
     static float share(int slot) {
         return slotShares[slot];
+    }
+
+    /**
+     * The larger of a slot's plane's share and its steady share: for choices that may rise quickly but should fall only
+     * when the plane really covers less (the share of a small surface jumps from sweep to sweep).
+     */
+    static float heldShare(int slot) {
+        return Math.max(slotShares[slot], slotSteadyShares[slot]);
     }
 
     /** The next best plane and its share, for the status line ("" when there is none). */
@@ -410,10 +442,13 @@ final class MirrorPlaneSearch {
             int sweep = rayCursor / CELLS;
             int cell = (rayCursor % CELLS) * CELL_STRIDE % CELLS;
             rayCursor = (rayCursor + 1) % (CELLS * 1024);
-            // A different spot inside the cell on each sweep
-            int hash = (cell * 73856093) ^ (sweep * 19349663);
-            float jx = ((hash >>> 4) & 255) / 256.0F;
-            float jy = ((hash >>> 12) & 255) / 256.0F;
+            // A different spot inside the cell on each sweep: the R2 sequence, which spreads consecutive sweeps' spots
+            // evenly over the cell, shifted by a hash of the cell. (The spots were (cell * a) ^ (sweep * b) before:
+            // their bits climbed slowly from sweep to sweep, every cell's in step, so a small surface's share rose and
+            // fell over several seconds and the plane chosen with the camera still changed every ten seconds or so.)
+            int hash = mix(cell + 1);
+            float jx = fraction((hash & 0xFFFF) / 65536.0F + sweep * 0.75487766F);
+            float jy = fraction((hash >>> 16) / 65536.0F + sweep * 0.56984029F);
             float x = (((cell % GRID_X) + jx) / GRID_X * 2.0F - 1.0F) * REACH;
             float y = (((cell / GRID_X) + jy) / GRID_Y * 2.0F - 1.0F) * REACH;
             direction.set(x * tanX, y * tanY, -1.0F, 0.0F).mul(toWorld);
@@ -433,6 +468,19 @@ final class MirrorPlaneSearch {
                 cellHeldNanos[cell] = now;
             }
         }
+    }
+
+    /** MurmurHash3's finaliser: every bit of the input affects every bit of the result. */
+    private static int mix(int h) {
+        h ^= h >>> 16;
+        h *= 0x85EBCA6B;
+        h ^= h >>> 13;
+        h *= 0xC2B2AE35;
+        return h ^ (h >>> 16);
+    }
+
+    private static float fraction(float value) {
+        return value - (float) Math.floor(value);
     }
 
     /** How far rays are followed to far water: the chunk terrain's range, at most FAR_WATER_DISTANCE. */
@@ -603,6 +651,12 @@ final class MirrorPlaneSearch {
             }
         }
         scores.values().removeIf(value -> value < 1.0E-4F);
+        float steadying = Smoothing.follow(seconds, STEADY_SECONDS);
+        steadyScores.replaceAll((key, value) -> value + (scores.getOrDefault(key, 0.0F) - value) * steadying);
+        for (Map.Entry<Long, Float> entry : scores.entrySet()) {
+            steadyScores.putIfAbsent(entry.getKey(), entry.getValue() * steadying);
+        }
+        steadyScores.values().removeIf(value -> value < 1.0E-4F);
         // Slots past the ones in use (the pack asks for fewer planes now) are let go
         for (int slot = slots; slot < slotPlanes.length; slot++) {
             slotPlanes[slot] = NO_PLANE;
@@ -639,31 +693,44 @@ final class MirrorPlaneSearch {
                 best = bestUnchosen(cameraPos);
             }
         }
-        // With every slot taken, the best plane left takes the weakest one's slot once it has covered clearly more for
-        // a while (with one slot: the current plane's)
-        if (best == NO_PLANE) {
-            challenger = NO_PLANE;
-        } else {
-            int weakest = 0;
+        // With every slot taken, another plane takes the weakest one's slot (with one slot: the current plane's) once it
+        // has covered clearly more for a while on the steady shares, or at once when it covers much more of the screen
+        // now (a large surface the camera turns to)
+        long contender = NO_PLANE;
+        long delay = 0L;
+        int weakest = 0;
+        if (best != NO_PLANE) {
             for (int slot = 1; slot < slots; slot++) {
-                if (scores.getOrDefault(slotPlanes[slot], 0.0F) < scores.getOrDefault(slotPlanes[weakest], 0.0F)) {
+                if (steadyScores.getOrDefault(slotPlanes[slot], 0.0F) < steadyScores.getOrDefault(slotPlanes[weakest], 0.0F)) {
                     weakest = slot;
                 }
             }
-            float weakestScore = scores.getOrDefault(slotPlanes[weakest], 0.0F);
-            float bestScore = scores.get(best);
-            if (bestScore > weakestScore * SWITCH_RATIO) {
-                if (challenger != best) {
-                    challenger = best;
-                    challengerSince = now;
-                } else if (now - challengerSince >= (bestScore > weakestScore * FAST_SWITCH_RATIO ? FAST_SWITCH_DELAY_NANOS : SWITCH_DELAY_NANOS)) {
-                    choose(weakest, best, now);
-                    challenger = NO_PLANE;
-                    switches++;
-                }
+            float weakestScore = steadyScores.getOrDefault(slotPlanes[weakest], 0.0F);
+            // Against the weakest one's share now where that is lower: a plane the camera has turned away from yields
+            // at once instead of when its steady share has faded
+            float weakestNow = Math.min(weakestScore, scores.getOrDefault(slotPlanes[weakest], 0.0F));
+            float fastScore = scores.getOrDefault(best, 0.0F);
+            if (fastScore > weakestNow * FAST_SWITCH_RATIO && fastScore - weakestNow > FAST_SWITCH_MARGIN) {
+                contender = best;
+                delay = FAST_SWITCH_DELAY_NANOS;
             } else {
-                challenger = NO_PLANE;
+                long steadiest = steadiestUnchosen(cameraPos);
+                float steadyScore = steadyScores.getOrDefault(steadiest, 0.0F);
+                if (steadiest != NO_PLANE && steadyScore > weakestScore * SWITCH_RATIO && steadyScore - weakestScore > SWITCH_MARGIN) {
+                    contender = steadiest;
+                    delay = SWITCH_DELAY_NANOS;
+                }
             }
+        }
+        if (contender == NO_PLANE) {
+            challenger = NO_PLANE;
+        } else if (challenger != contender) {
+            challenger = contender;
+            challengerSince = now;
+        } else if (now - challengerSince >= delay) {
+            choose(weakest, contender, now);
+            challenger = NO_PLANE;
+            switches++;
         }
         rival = NO_PLANE;
         rivalShare = 0.0F;
@@ -675,6 +742,7 @@ final class MirrorPlaneSearch {
         }
         for (int slot = 0; slot < slotPlanes.length; slot++) {
             slotShares[slot] = slotPlanes[slot] == NO_PLANE ? 0.0F : scores.getOrDefault(slotPlanes[slot], 0.0F);
+            slotSteadyShares[slot] = slotPlanes[slot] == NO_PLANE ? 0.0F : steadyScores.getOrDefault(slotPlanes[slot], 0.0F);
         }
     }
 
@@ -684,6 +752,20 @@ final class MirrorPlaneSearch {
         float bestScore = MIN_SCORE;
         for (Map.Entry<Long, Float> entry : scores.entrySet()) {
             if (entry.getValue() >= bestScore && (best == NO_PLANE || entry.getValue() > bestScore) && !chosen(entry.getKey())
+                    && heightOf(entry.getKey(), cameraPos) > MIN_HEIGHT) {
+                best = entry.getKey();
+                bestScore = entry.getValue();
+            }
+        }
+        return best;
+    }
+
+    /** The plane not chosen yet with the largest steady share, among those that cover at least MIN_SCORE now; or NO_PLANE. */
+    private static long steadiestUnchosen(Vec3 cameraPos) {
+        long best = NO_PLANE;
+        float bestScore = 0.0F;
+        for (Map.Entry<Long, Float> entry : steadyScores.entrySet()) {
+            if (entry.getValue() > bestScore && scores.getOrDefault(entry.getKey(), 0.0F) >= MIN_SCORE && !chosen(entry.getKey())
                     && heightOf(entry.getKey(), cameraPos) > MIN_HEIGHT) {
                 best = entry.getKey();
                 bestScore = entry.getValue();

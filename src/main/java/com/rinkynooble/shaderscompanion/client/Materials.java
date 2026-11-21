@@ -100,9 +100,20 @@ public final class Materials {
             Map.entry("silver", "silver"), Map.entry("platinum", "silver"), Map.entry("metal", "metal"), Map.entry("metallic", "metal"),
             Map.entry("lead", "metal"), Map.entry("tin", "metal"), Map.entry("bronze", "metal"), Map.entry("brass", "metal"),
             Map.entry("plate", "metal"), Map.entry("sheet", "metal"), Map.entry("tile", "glazed"), Map.entry("tiles", "glazed"),
-            Map.entry("ceramic", "glazed"), Map.entry("porcelain", "glazed"), Map.entry("concrete", "concrete"), Map.entry("smooth", "polished"));
-    /** Name words that rule a block out (ores and raw materials look like stone; plants and items are not surfaces). */
-    private static final Set<String> EXCLUDED_WORDS = Set.of("ore", "raw", "sandstone", "nugget", "dust", "crop", "sapling", "leaves", "flower", "bush");
+            Map.entry("ceramic", "glazed"), Map.entry("porcelain", "glazed"), Map.entry("concrete", "concrete"), Map.entry("smooth", "polished"),
+            Map.entry("exposed", "exposed_copper"));
+    /**
+     * Name words that rule a block out: ores and raw materials look like stone; plants and items are not surfaces;
+     * weathered and oxidized copper are rough (the vanilla table leaves them out too).
+     */
+    private static final Set<String> EXCLUDED_WORDS = Set.of("ore", "raw", "sandstone", "nugget", "dust", "crop", "sapling", "leaves", "flower", "bush",
+            "weathered", "oxidized");
+    /**
+     * Name words for rough materials, which overrule a block's sound type: a mod that gives all its blocks one sound
+     * (Better Blockz: metal) names its stone ones stone. A strong name word or a tag still counts.
+     */
+    private static final Set<String> ROUGH_WORDS = Set.of("stone", "cobblestone", "cobble", "rock", "brick", "bricks", "plank", "planks", "wood", "log",
+            "wool", "carpet", "dirt", "sand", "gravel", "clay", "terracotta", "mud", "moss");
 
     private static boolean tableWanted;
     static String status = "no shader pack has asked for it";
@@ -215,8 +226,26 @@ public final class Materials {
                 }
             }
         }
-        status = String.format("%d blocks (%d block states) given a class: %d from the tables%s, %d inferred; %d states kept the pack's own id; %.0f ms",
-                blocksFixed + blocksInferred, states, blocksFixed, overrides > 0 ? " (" + overrides + " overrides)" : "", blocksInferred, skippedIds,
+        // The other block states the pack doesn't list get 16384 (no class, no flags) when they give no light. Sundial's
+        // modded light detection makes an unlisted block glow where a pixel has full block light, and a face pointing
+        // at a light-15 block (a lamp beside a glass pane: the pane's far face, seen through it) samples the lamp's
+        // cell and has it too. With an id these faces stay unlit by it; real modded lights stay unlisted and glow.
+        // Plants stay unlisted for the pack's plant detection.
+        int unlit = 0;
+        for (Map.Entry<net.minecraft.resources.ResourceKey<Block>, Block> entry : ForgeRegistries.BLOCKS.getEntries()) {
+            Block block = entry.getValue();
+            if (plantLike(block, entry.getKey().location())) {
+                continue;
+            }
+            for (BlockState state : block.getStateDefinition().getPossibleStates()) {
+                if (ids.getOrDefault(state, -1) < 0 && state.getLightEmission() == 0 && !hasNoCollision(state)) {
+                    ids.put(state, FLAG_RANGE);
+                    unlit++;
+                }
+            }
+        }
+        status = String.format("%d blocks (%d block states) given a class: %d from the tables%s, %d inferred; %d states kept the pack's own id; %d other unlisted states marked as giving no light; %.0f ms",
+                blocksFixed + blocksInferred, states, blocksFixed, overrides > 0 ? " (" + overrides + " overrides)" : "", blocksInferred, skippedIds, unlit,
                 (System.nanoTime() - start) / 1.0e6) + (problems.isEmpty() ? "" : "; " + problems.size() + " problems in the tables (see the log)");
         ShadersCompanion.LOGGER.info("Shaders Companion materials: {}", status);
         for (Map.Entry<String, List<String>> entry : inferred.entrySet()) {
@@ -308,6 +337,15 @@ public final class Materials {
         }
         BlockState state = block.defaultBlockState();
         int sound = soundClass(state.getSoundType());
+        // A block that gives light is a lamp, whatever it sounds like (glowstone, sea lanterns and modded light panels
+        // sound like glass); and a rough material's name overrules the sound
+        boolean rough = false;
+        for (String word : words) {
+            rough |= ROUGH_WORDS.contains(word);
+        }
+        if (rough || state.getLightEmission() > 0) {
+            sound = 0;
+        }
         int tag = tagClass(state);
         int strongName = 0;
         int weakName = 0;
@@ -395,6 +433,25 @@ public final class Materials {
 
     private static TagKey<Block> tag(String namespace, String path) {
         return TagKey.create(Registries.BLOCK, new ResourceLocation(namespace, path));
+    }
+
+    /** Plants by sound or name (some have collision, and the pack's plant detection needs them unlisted). */
+    private static boolean plantLike(Block block, ResourceLocation key) {
+        SoundType sound = block.defaultBlockState().getSoundType();
+        if (sound == SoundType.GRASS || sound == SoundType.CROP || sound == SoundType.SWEET_BERRY_BUSH || sound == SoundType.VINE
+                || sound == SoundType.CAVE_VINES || sound == SoundType.HANGING_ROOTS || sound == SoundType.ROOTS || sound == SoundType.NETHER_SPROUTS
+                || sound == SoundType.AZALEA || sound == SoundType.FLOWERING_AZALEA || sound == SoundType.SPORE_BLOSSOM || sound == SoundType.SMALL_DRIPLEAF
+                || sound == SoundType.BIG_DRIPLEAF || sound == SoundType.PINK_PETALS || sound == SoundType.BAMBOO_SAPLING || sound == SoundType.CHERRY_SAPLING
+                || sound == SoundType.WET_GRASS || sound == SoundType.LILY_PAD) {
+            return true;
+        }
+        for (String word : key.getPath().toLowerCase(Locale.ROOT).split("_")) {
+            if (word.equals("sapling") || word.equals("crop") || word.equals("crops") || word.equals("flower") || word.equals("bush") || word.equals("leaves")
+                    || word.equals("plant") || word.equals("vine") || word.equals("vines") || word.equals("grass")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean hasNoCollision(BlockState state) {
