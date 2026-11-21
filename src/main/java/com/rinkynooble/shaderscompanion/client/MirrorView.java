@@ -9,6 +9,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.material.FogType;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
+import org.lwjgl.opengl.GL11C;
 import org.lwjgl.system.MemoryUtil;
 
 /**
@@ -42,6 +43,7 @@ final class MirrorView {
     private static int slots = 1;
     private static int tileWidth;
     private static int tileHeight;
+    private static int maxTextureSize;
 
     static {
         for (int slot = 0; slot < MAX_PLANES; slot++) {
@@ -98,7 +100,11 @@ final class MirrorView {
             Vec3 cameraPos = camera.getPosition();
             MirrorPlaneSearch.find(mc, camera, cameraPos, view, projection, slots);
             var screen = mc.getMainRenderTarget();
-            tileWidth = Math.max(16, screen.width * Config.MIRROR_SCALE.get() / 100);
+            if (maxTextureSize == 0) {
+                maxTextureSize = GL11C.glGetInteger(GL11C.GL_MAX_TEXTURE_SIZE);
+            }
+            // The tiles side by side stay within the largest texture the driver allows (four at 5K would not)
+            tileWidth = Math.max(16, Math.min(screen.width * Config.MIRROR_SCALE.get() / 100, maxTextureSize / slots));
             tileHeight = Math.max(16, screen.height * Config.MIRROR_SCALE.get() / 100);
             boolean shadows = Config.MIRROR_SHADOWS.get();
             if (shadows) {
