@@ -52,10 +52,14 @@ public final class Materials {
 
     /** Classes in order (class number = index + 1): name, then LabPBR smoothness, F0 or metal id, porosity (bytes). */
     private static final Object[][] CLASSES = {
-            {"glass", 245, 10, 0},
+            // Perfectly smooth: vanilla glass stays the mirror it is without a specular map
+            {"glass", 255, 10, 0},
             {"ice", 235, 5, 0},
             {"gel", 190, 5, 0},
-            {"polished", 150, 10, 0},
+            // Below 128 a dielectric gets a sun sheen but no traced reflection in Sundial-based packs (outside "full
+            // reflection"): smooth stone and polished stone are common floors, and a whole floor tracing cost 9 ms of
+            // GPU at 1080p in the dev client
+            {"polished", 120, 10, 0},
             {"glazed", 200, 10, 0},
             {"concrete", 90, 10, 0},
             {"obsidian", 215, 10, 0},
@@ -174,6 +178,8 @@ public final class Materials {
         int blocksFixed = 0;
         int blocksInferred = 0;
         int skippedIds = 0;
+        // Inferred blocks by class, for the log: the user checks them there and overrides what is wrong
+        Map<String, List<String>> inferred = new java.util.TreeMap<>();
         for (Map.Entry<net.minecraft.resources.ResourceKey<Block>, Block> entry : ForgeRegistries.BLOCKS.getEntries()) {
             Block block = entry.getValue();
             ResourceLocation key = entry.getKey().location();
@@ -205,6 +211,7 @@ public final class Materials {
                     blocksFixed++;
                 } else {
                     blocksInferred++;
+                    inferred.computeIfAbsent((String) CLASSES[material - 1][0], k -> new ArrayList<>()).add(key.toString());
                 }
             }
         }
@@ -212,6 +219,9 @@ public final class Materials {
                 blocksFixed + blocksInferred, states, blocksFixed, overrides > 0 ? " (" + overrides + " overrides)" : "", blocksInferred, skippedIds,
                 (System.nanoTime() - start) / 1.0e6) + (problems.isEmpty() ? "" : "; " + problems.size() + " problems in the tables (see the log)");
         ShadersCompanion.LOGGER.info("Shaders Companion materials: {}", status);
+        for (Map.Entry<String, List<String>> entry : inferred.entrySet()) {
+            ShadersCompanion.LOGGER.info("Shaders Companion materials: inferred {} ({}): {}", entry.getKey(), entry.getValue().size(), String.join(", ", entry.getValue()));
+        }
         for (String problem : problems) {
             ShadersCompanion.LOGGER.warn("Shaders Companion materials: {}", problem);
         }
@@ -326,8 +336,20 @@ public final class Materials {
         if (chosen == 0) {
             return 0;
         }
-        boolean enough = sound != 0 || tag != 0 || strongName != 0;
+        // A full cube is one material: its sound type, a tag or a strong name word is enough. A shaped block (furniture,
+        // lamps, fittings) mixes materials in one model, and its sound names only one of them (Modern Furniture's desk
+        // lamps sound like glass, its bathtub and whiteboard like metal): it needs a tag, or its sound and name to agree.
+        boolean enough = isFullCube(state) ? sound != 0 || tag != 0 || strongName != 0 : tag != 0 || sound != 0 && name != 0;
         return enough ? chosen : 0;
+    }
+
+    private static boolean isFullCube(BlockState state) {
+        try {
+            return Block.isShapeFullBlock(state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO));
+        } catch (Throwable t) {
+            // A block whose shape needs a real world: not known to be a full cube
+            return false;
+        }
     }
 
     private static int family(int material) {
