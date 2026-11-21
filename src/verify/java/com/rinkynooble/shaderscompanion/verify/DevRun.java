@@ -123,6 +123,11 @@ import org.lwjgl.opengl.GL33C;
  * black glass wall, screenshotted at midnight and at noon, each with the mod drawing and turned off
  * ("shaderscompanion-bright-&lt;-PdevTag&gt;-night-on.png" and so on): for comparing the brightness of shader pack versions.
  * <p>
+ * -PdevScene=stairwall: a closed sandstone room at noon, lit by a lantern behind the camera, its far wall half oak
+ * stairs (flat backs to the room, open steps to the sunlit outside) and half sandstone; with
+ * -PdevToggle=config.lightLeakFix the floor, ceiling and side wall along the stairs stay as dark as along the sandstone
+ * in the "on" rounds.
+ * <p>
  * -PdevScene=exposure: a lit block of town (white buildings with glowstone, a lime lawn with sea lanterns) from above
  * at -PdevTime (18000, midnight), a shot every -PdevEvery ticks (200), -PdevShots of them (13), with the time of day
  * logged; -PdevCycle lets the time run, -PdevStep=500 sets the time that much later before each next shot;
@@ -144,6 +149,14 @@ public final class DevRun {
     private static final int DUMP_FRAMES = Integer.getInteger("shaderscompanion.devDump", 0);
     private static final int LIFT_BLOCKS = Integer.getInteger("shaderscompanion.devLift", 60);
     private static final String SCENE = System.getProperty("shaderscompanion.devScene", "");
+
+    static {
+        // -PdevLeakLog=N: log the first N light samples the light leak fix leaves out
+        // (with -PdevToggle=config.lightLeakFix, those of each "on" round's rebuild instead)
+        if (!System.getProperty("shaderscompanion.devToggle", "").startsWith("config.lightLeakFix")) {
+            com.rinkynooble.shaderscompanion.client.LightLeaks.logBudget.set(Integer.getInteger("shaderscompanion.devLeakLog", 0));
+        }
+    }
     private static final int PITCH = Integer.getInteger("shaderscompanion.devPitch", 50);
     private static final int WAIT_TICKS = Integer.getInteger("shaderscompanion.devWait", 160);
     /**
@@ -336,6 +349,7 @@ public final class DevRun {
         boolean glassBox = SCENE.equals("glassbox");
         boolean skyRoom = SCENE.equals("skyroom");
         boolean enclosure = SCENE.equals("enclosure");
+        boolean stairWall = SCENE.equals("stairwall");
         boolean street = SCENE.equals("street");
         boolean darkSpot = SCENE.equals("darkspot");
         boolean meadow = SCENE.equals("meadow") || darkSpot;
@@ -896,6 +910,22 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the enclosure scene");
+            } else if (stairWall) {
+                // A closed room of smooth sandstone at noon, lit only by a lantern behind the camera. Its far wall (+Z) is
+                // oak stairs on the left (+X) half, their flat backs to the room and their open steps to the sunlit
+                // outside, and sandstone on the right: smooth lighting must not light the floor, ceiling and side wall
+                // along the stairs with the daylight outside (-PdevToggle=config.lightLeakFix)
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~30 ~ " + Integer.getInteger("shaderscompanion.devYaw", 0) + " " + Integer.getInteger("shaderscompanion.devPitch", 15),
+                        "fill ~-7 ~-2 ~-6 ~7 ~7 ~10 minecraft:air",
+                        "fill ~-5 ~-1 ~-4 ~5 ~5 ~6 minecraft:smooth_sandstone", "fill ~-4 ~ ~-3 ~4 ~4 ~5 minecraft:air",
+                        "fill ~ ~ ~6 ~4 ~4 ~6 minecraft:oak_stairs[facing=north,half=bottom]",
+                        "setblock ~ ~ ~-3 minecraft:lantern"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the stairwall scene");
             } else if (skyRoom) {
                 // A white room lit by the sky through a hole in its ceiling behind the camera, a low table of light grey
                 // stained glass ahead and a wall of it at the far end, a red building across the street outside: the
@@ -1429,7 +1459,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {
@@ -1755,6 +1785,9 @@ public final class DevRun {
                 : TOGGLE_VALUES.length > 2 ? TOGGLE_VALUES[round % TOGGLE_VALUES.length] : TOGGLE_VALUES[on ? 1 : 0];
         if (TOGGLE.startsWith("config.")) {
             String name = TOGGLE.substring("config.".length());
+            if (name.equals("lightLeakFix") && Boolean.parseBoolean(text)) {
+                com.rinkynooble.shaderscompanion.client.LightLeaks.logBudget.set(Integer.getInteger("shaderscompanion.devLeakLog", 0));
+            }
             for (java.lang.reflect.Field field : Config.class.getFields()) {
                 try {
                     if (field.get(null) instanceof net.minecraftforge.common.ForgeConfigSpec.ConfigValue<?> value

@@ -1,9 +1,11 @@
 package com.rinkynooble.shaderscompanion.client;
 
+import net.minecraft.client.Minecraft;
 import net.minecraftforge.client.event.ModelEvent;
 import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.level.ChunkEvent;
 import net.minecraftforge.event.level.LevelEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -24,6 +26,13 @@ public final class ClientInit {
         MinecraftForge.EVENT_BUS.addListener(ClientInit::onLevelUnload);
         MinecraftForge.EVENT_BUS.addListener(ClientInit::onChunkLoad);
         MinecraftForge.EVENT_BUS.addListener(ClientInit::onChunkUnload);
+        MinecraftForge.EVENT_BUS.addListener(ClientInit::onClientTick);
+    }
+
+    private static void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase == TickEvent.Phase.END) {
+            LightLeaks.tick(Minecraft.getInstance());
+        }
     }
 
     private static void onLevelUnload(LevelEvent.Unload event) {

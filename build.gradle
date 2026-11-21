@@ -101,6 +101,10 @@ minecraft {
             if (project.hasProperty('devShowHand')) {
                 property 'shaderscompanion.devShowHand', 'true'
             }
+            // -PdevLeakLog=N: log the first N light samples the light leak fix leaves out (AoFaceDataMixin).
+            if (project.hasProperty('devLeakLog')) {
+                property 'shaderscompanion.devLeakLog', project.property('devLeakLog')
+            }
             // -PdevOutlineBlock=minecraft:cobweb: the hand scene places that block just ahead, before the wall (for the selection outline).
             if (project.hasProperty('devOutlineBlock')) {
                 property 'shaderscompanion.devOutlineBlock', project.property('devOutlineBlock')

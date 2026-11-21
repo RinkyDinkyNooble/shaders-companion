@@ -79,6 +79,7 @@ public final class DebugOverlay {
                 String.format("Mirror view: %s%s", MirrorView.status, MirrorView.active() && CubeView.mirrorPlayerDrawn ? ", your player in it" : ""),
                 "Rain cover: " + RainCover.status,
                 "Lattice: " + Lattice.status,
+                "Light leak fix: " + LightLeaks.status(),
                 "Bundled shader pack: " + BundledPack.status
                         + (Gl.mismatches == 0 ? "" : "; GL state out of step with Minecraft's record " + Gl.mismatches + " times (see the log)")
         };

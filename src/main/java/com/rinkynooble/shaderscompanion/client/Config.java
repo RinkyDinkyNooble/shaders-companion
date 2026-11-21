@@ -26,6 +26,7 @@ public final class Config {
     public static final ForgeConfigSpec.BooleanValue LATTICE;
     public static final ForgeConfigSpec.ConfigValue<Integer> LATTICE_SIZE;
     public static final ForgeConfigSpec.IntValue LATTICE_BUDGET;
+    public static final ForgeConfigSpec.BooleanValue LIGHT_LEAK_FIX;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -92,6 +93,9 @@ public final class Config {
         LATTICE_BUDGET = builder
                 .comment("Most processor time spent on the lattice per frame, in microseconds. It is used up only while blocks wait to be read: on joining a world, after a teleport or while flying fast.")
                 .defineInRange("latticeBudget", 1000, 100, 20000);
+        LIGHT_LEAK_FIX = builder
+                .comment("While a shader pack is on: smooth lighting takes no light from stairs, slabs and other partial blocks through their closed sides, so a wall of stairs with its flat back to a dark room doesn't light the floor, ceiling and walls along it with the daylight outside. Off is Minecraft's own smooth lighting. The world's terrain is rebuilt when this changes.")
+                .define("lightLeakFix", true);
         SPEC = builder.build();
     }
 
