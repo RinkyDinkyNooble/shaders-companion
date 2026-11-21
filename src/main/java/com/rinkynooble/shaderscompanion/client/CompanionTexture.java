@@ -28,9 +28,11 @@ final class CompanionTexture extends AbstractTexture {
     static final int LATTICE = 5;
     /** The lattice's openness field ({@link LatticeField}). */
     static final int LATTICE_FIELD = 6;
+    /** mirror_info_2 to _4, the mirror info texture under the names that ask for that many planes ({@link #mirrorPlanesGroup}). */
+    private static final int MIRROR_PLANES_2 = 7;
 
     /** Per group: how often a texture's id was asked for from outside the mod (render thread only). */
-    private static final long[] requests = new long[7];
+    private static final long[] requests = new long[MIRROR_PLANES_2 + MirrorView.MAX_PLANES - 1];
 
     private final int group;
     private final int internalFormat;
@@ -61,6 +63,11 @@ final class CompanionTexture extends AbstractTexture {
     /** Counts a request for a group's texture that isn't bound through the texture manager (the lattice's 3D textures). */
     static void countRequest(int group) {
         requests[group]++;
+    }
+
+    /** The group of the mirror info texture's name that asks for this many planes (2 or more). */
+    static int mirrorPlanesGroup(int planes) {
+        return MIRROR_PLANES_2 + planes - 2;
     }
 
     /** How often the textures of a group were asked for from outside the mod so far. */
@@ -127,10 +134,15 @@ final class CompanionTexture extends AbstractTexture {
      * texture that was bound: this mod's textures never stay bound.
      */
     void writeRow(FloatBuffer data, int texels) {
+        this.writeRows(data, texels, 1);
+    }
+
+    /** As {@link #writeRow} for the first {@code rows} rows, row after row. */
+    void writeRows(FloatBuffer data, int texels, int rows) {
         int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
         Gl.bindTexture(this.glId());
         int[] pixelBuffers = preparePixelTransfer();
-        GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, texels, 1, GL11C.GL_RGBA, GL11C.GL_FLOAT, data);
+        GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, texels, rows, GL11C.GL_RGBA, GL11C.GL_FLOAT, data);
         restorePixelBuffers(pixelBuffers);
         Gl.bindTextureIfAlive(previous);
     }
@@ -162,5 +174,33 @@ final class CompanionTexture extends AbstractTexture {
         Gl.bindTextureIfAlive(previous);
         this.width = width;
         this.height = height;
+    }
+
+    /**
+     * Another name for one of the mod's textures: binds the same GL texture and counts its own group's requests, so the
+     * mod can tell which name a pack binds. Never owns the texture.
+     */
+    static final class Alias extends AbstractTexture {
+        private final CompanionTexture target;
+        private final int group;
+
+        Alias(CompanionTexture target, int group) {
+            this.target = target;
+            this.group = group;
+        }
+
+        @Override
+        public void load(ResourceManager resourceManager) {
+        }
+
+        @Override
+        public int getId() {
+            requests[this.group]++;
+            return this.target.glId();
+        }
+
+        @Override
+        public void releaseId() {
+        }
     }
 }

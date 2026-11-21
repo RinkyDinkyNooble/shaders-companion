@@ -26,14 +26,15 @@ import org.joml.Vector3f;
 import org.joml.Vector4f;
 
 /**
- * Finds the plane {@link MirrorView} mirrors. Each frame a few rays from the camera through a grid over the screen and a
- * margin around it find the reflecting surfaces in and near view (water and blocks drawn in the translucent layer:
+ * Finds the planes {@link MirrorView} mirrors. Each frame a few rays from the camera through a grid over the screen and
+ * a margin around it find the reflecting surfaces in and near view (water and blocks drawn in the translucent layer:
  * stained and tinted glass, ice). Every Minecraft surface is axis-aligned, so a surface's plane is an axis, a side and a
- * coordinate, packed into a long (see {@link #key}). Each grid cell remembers the plane its last ray hit, and the plane
+ * coordinate, packed into a long (see {@link #key}). Each grid cell remembers the plane its last ray hit, and the planes
  * with the most area, weighted towards where the view will be a moment from now (the screen's centre, moved along the
- * camera's turn), is chosen, so a surface the camera turns towards is mirrored before it comes into view. Another plane
- * takes over after it has covered more for half a second, sooner the more it covers, or at once when the current one
- * leaves the view.
+ * camera's turn), are chosen, one per slot (as many slots as the shader pack asks for), so a surface the camera turns
+ * towards is mirrored before it comes into view. A plane keeps its slot while it is chosen. An empty slot takes the
+ * best plane left at once; with every slot taken, another plane takes the weakest one's slot after it has covered more
+ * for half a second, sooner the more it covers. A plane that leaves the view frees its slot.
  * <p>
  * The search runs in real time, not per frame: rays per second and smoothing by time (the rates were tuned at about
  * 260 frames a second). The rays per frame are capped at MAX_RAYS_PER_FRAME to bound the processor time of a slow
@@ -97,16 +98,16 @@ final class MirrorPlaneSearch {
      * share: its Distant Horizons water may go on there, or land.
      */
     private static final float PAST_TERRAIN_WEIGHT = 0.5F;
-    /** Share of the weighted screen a plane must cover to be mirrored; the current one stays down to half of it. */
+    /** Share of the weighted screen a plane must cover to be mirrored; a chosen one stays down to half of it. */
     private static final float MIN_SCORE = 0.01F;
-    /** Another plane takes over when it covers this much more than the current one... */
+    /** With every slot taken, another plane takes over when it covers this much more than the weakest chosen one... */
     private static final float SWITCH_RATIO = 1.2F;
     /** ...for this long, or for FAST_SWITCH_DELAY_NANOS when it covers FAST_SWITCH_RATIO times as much. */
     private static final long SWITCH_DELAY_NANOS = 500_000_000L;
     private static final float FAST_SWITCH_RATIO = 2.0F;
     private static final long FAST_SWITCH_DELAY_NANOS = 60_000_000L;
     /**
-     * The current plane is let go (below half of MIN_SCORE) only once no ray has hit it for this long: a small or far
+     * A chosen plane is let go (below half of MIN_SCORE) only once no ray has hit it for this long: a small or far
      * surface covers part of a cell, so some sweeps' rays miss it, and dropping it at once turned the mirror off for
      * single frames (the whole surface flickered between the mirror and the cube).
      */
@@ -122,7 +123,7 @@ final class MirrorPlaneSearch {
     private static final double MIN_HEIGHT = 0.05;
     private static final RandomSource RANDOM = RandomSource.create(42L);
 
-    /** Times the choice moved straight from one plane to another (for the status line). */
+    /** Times a slot moved straight from one plane to another (for the status line). */
     static int switches;
 
     /** The plane each grid cell's last ray hit. */
@@ -137,7 +138,7 @@ final class MirrorPlaneSearch {
     private static final long[] cellPastTerrainNanos = new long[CELLS];
     private static final double[] cellPastTerrainY = new double[CELLS];
     private static final boolean[] cellPastTerrainNow = new boolean[CELLS];
-    /** The water levels rays hit, for {@link #choosePlane} (room for the remembered ones and the sea level). */
+    /** The water levels rays hit, for {@link #choosePlanes} (room for the remembered ones and the sea level). */
     private static final long[] seenWaterLevels = new long[WATER_LEVELS + 1];
     /** Each cell's weight this frame, and the sum of the weights with the view still (the scores' unit). */
     private static final float[] cellWeights = new float[CELLS];
@@ -157,25 +158,27 @@ final class MirrorPlaneSearch {
     private static int rayCursor;
     private static long lastFindNanos;
     private static float lastStep;
-    private static long plane = NO_PLANE;
+    /** The planes chosen, one per slot of the mirror view (NO_PLANE for an empty slot); a plane keeps its slot. */
+    private static final long[] slotPlanes = new long[MirrorView.MAX_PLANES];
     /**
-     * When the current plane was chosen, when a ray last counted it as seen, and when a ray last hit it (rays past the
+     * When each slot's plane was chosen, when a ray last counted it as seen, and when a ray last hit it (rays past the
      * terrain over a water level count as seeing it for a while, see PAST_TERRAIN_HOLD_NANOS).
      */
-    private static long planeSince;
-    private static long planeSeen;
-    private static long planeHit;
-    /** A plane that covers clearly more than the current one, and since when. */
+    private static final long[] slotSince = new long[MirrorView.MAX_PLANES];
+    private static final long[] slotSeen = new long[MirrorView.MAX_PLANES];
+    private static final long[] slotHit = new long[MirrorView.MAX_PLANES];
+    /** A plane that covers clearly more than the weakest chosen one while every slot is taken, and since when. */
     private static long challenger = NO_PLANE;
     private static long challengerSince;
-    // For the status line: the chosen plane's weighted share of the screen, and the next best plane's
-    private static float share;
+    // Each slot's plane's weighted share of the screen, and for the status line the best plane not chosen
+    private static final float[] slotShares = new float[MirrorView.MAX_PLANES];
     private static long rival = NO_PLANE;
     private static float rivalShare;
 
     static {
         Arrays.fill(cellPlanes, NO_PLANE);
         Arrays.fill(cellHeldPlanes, NO_PLANE);
+        Arrays.fill(slotPlanes, NO_PLANE);
         float total = 0.0F;
         for (int cell = 0; cell < CELLS; cell++) {
             total += cellWeight(cell, 0.0F, 0.0F);
@@ -217,23 +220,28 @@ final class MirrorPlaneSearch {
         lastForwardNanos = 0L;
         lastFindNanos = 0L;
         scores.clear();
-        plane = NO_PLANE;
+        Arrays.fill(slotPlanes, NO_PLANE);
+        Arrays.fill(slotShares, 0.0F);
         challenger = NO_PLANE;
     }
 
     /**
-     * Casts this frame's rays and returns the plane to mirror, or {@link #NO_PLANE}.
+     * Casts this frame's rays and chooses up to {@code slots} planes to mirror, read with {@link #plane(int)}.
      *
      * @param view       the main view's rotation (the pose the world is drawn with)
      * @param projection the main view's projection
      */
-    static long find(Minecraft mc, Camera camera, Vec3 cameraPos, Matrix4f view, Matrix4f projection) {
+    static void find(Minecraft mc, Camera camera, Vec3 cameraPos, Matrix4f view, Matrix4f projection, int slots) {
         float seconds = step();
         followTurn(view, projection, seconds);
         int rays = Math.max(MIN_RAYS_PER_FRAME, Math.min(MAX_RAYS_PER_FRAME, Math.round(RAYS_PER_SECOND * seconds)));
         castRays(mc, camera, cameraPos, view, projection, rays);
-        choosePlane(cameraPos, seconds);
-        return plane;
+        choosePlanes(cameraPos, seconds, slots);
+    }
+
+    /** The plane a slot mirrors, or {@link #NO_PLANE}. */
+    static long plane(int slot) {
+        return slotPlanes[slot];
     }
 
     /** The time since the last search, in seconds (a 60th of a second for the first). */
@@ -250,14 +258,14 @@ final class MirrorPlaneSearch {
         return lastStep;
     }
 
-    /** How long the current plane has been the mirror, in seconds (0 without one). */
-    static float planeAge() {
-        return plane == NO_PLANE ? 0.0F : (System.nanoTime() - planeSince) / 1.0E9F;
+    /** How long a slot's plane has been mirrored, in seconds (0 without one). */
+    static float planeAge(int slot) {
+        return slotPlanes[slot] == NO_PLANE ? 0.0F : (System.nanoTime() - slotSince[slot]) / 1.0E9F;
     }
 
-    /** The chosen plane's smoothed, weighted share of the screen (0 without one). */
-    static float share() {
-        return share;
+    /** A slot's plane's smoothed, weighted share of the screen (0 without one). */
+    static float share(int slot) {
+        return slotShares[slot];
     }
 
     /** The next best plane and its share, for the status line ("" when there is none). */
@@ -571,7 +579,7 @@ final class MirrorPlaneSearch {
         return known;
     }
 
-    private static void choosePlane(Vec3 cameraPos, float seconds) {
+    private static void choosePlanes(Vec3 cameraPos, float seconds, int slots) {
         long now = System.nanoTime();
         float smoothing = Smoothing.follow(seconds, SMOOTHING_SECONDS);
         scores.replaceAll((key, value) -> value * (1.0F - smoothing));
@@ -595,63 +603,108 @@ final class MirrorPlaneSearch {
             }
         }
         scores.values().removeIf(value -> value < 1.0E-4F);
-        long best = NO_PLANE;
-        float bestScore = 0.0F;
-        for (Map.Entry<Long, Float> entry : scores.entrySet()) {
-            if (entry.getValue() > bestScore && heightOf(entry.getKey(), cameraPos) > MIN_HEIGHT) {
-                best = entry.getKey();
-                bestScore = entry.getValue();
+        // Slots past the ones in use (the pack asks for fewer planes now) are let go
+        for (int slot = slots; slot < slotPlanes.length; slot++) {
+            slotPlanes[slot] = NO_PLANE;
+        }
+        for (int slot = 0; slot < slots; slot++) {
+            long plane = slotPlanes[slot];
+            if (plane == NO_PLANE) {
+                continue;
+            }
+            // A water level is seen too where rays leave the terrain's range above it (its Distant Horizons water may
+            // go on), for PAST_TERRAIN_HOLD_NANOS after a ray last hit it
+            boolean holdsPastTerrain = now - slotHit[slot] < PAST_TERRAIN_HOLD_NANOS && isWaterLevel(plane);
+            for (int cell = 0; cell < CELLS; cell++) {
+                if (cellPlanes[cell] == plane) {
+                    slotSeen[slot] = now;
+                    slotHit[slot] = now;
+                    break;
+                }
+                if (holdsPastTerrain && pastTerrain(cell, plane, now)) {
+                    slotSeen[slot] = now;
+                }
+            }
+            float score = scores.getOrDefault(plane, 0.0F);
+            if (heightOf(plane, cameraPos) <= MIN_HEIGHT || score < MIN_SCORE * 0.5F && now - slotSeen[slot] > DROP_HOLD_NANOS) {
+                slotPlanes[slot] = NO_PLANE;
             }
         }
-        // A water level is seen too where rays leave the terrain's range above it (its Distant Horizons water may go on),
-        // for PAST_TERRAIN_HOLD_NANOS after a ray last hit it
-        boolean holdsPastTerrain = plane != NO_PLANE && now - planeHit < PAST_TERRAIN_HOLD_NANOS && isWaterLevel(plane);
-        for (int cell = 0; cell < CELLS && plane != NO_PLANE; cell++) {
-            if (cellPlanes[cell] == plane) {
-                planeSeen = now;
-                planeHit = now;
-                break;
-            }
-            if (holdsPastTerrain && pastTerrain(cell, plane, now)) {
-                planeSeen = now;
-            }
-        }
-        float currentScore = plane == NO_PLANE ? 0.0F : scores.getOrDefault(plane, 0.0F);
-        if (plane != NO_PLANE && (heightOf(plane, cameraPos) <= MIN_HEIGHT || currentScore < MIN_SCORE * 0.5F && now - planeSeen > DROP_HOLD_NANOS)) {
-            plane = NO_PLANE;
-            currentScore = 0.0F;
-        }
-        if (best == NO_PLANE || best == plane || bestScore < MIN_SCORE) {
-            challenger = NO_PLANE;
-        } else if (plane == NO_PLANE) {
-            plane = best;
-            planeSince = now;
-            planeSeen = now;
-            planeHit = now;
-            challenger = NO_PLANE;
-        } else if (bestScore > currentScore * SWITCH_RATIO) {
-            if (challenger != best) {
-                challenger = best;
-                challengerSince = now;
-            } else if (now - challengerSince >= (bestScore > currentScore * FAST_SWITCH_RATIO ? FAST_SWITCH_DELAY_NANOS : SWITCH_DELAY_NANOS)) {
-                plane = best;
-                planeSince = now;
-                planeSeen = now;
-                planeHit = now;
+        // Empty slots take the planes that cover the most at once
+        long best = bestUnchosen(cameraPos);
+        for (int slot = 0; slot < slots && best != NO_PLANE; slot++) {
+            if (slotPlanes[slot] == NO_PLANE) {
+                choose(slot, best, now);
                 challenger = NO_PLANE;
-                switches++;
+                best = bestUnchosen(cameraPos);
             }
-        } else {
-            challenger = NO_PLANE;
         }
-        share = plane == NO_PLANE ? 0.0F : scores.getOrDefault(plane, 0.0F);
+        // With every slot taken, the best plane left takes the weakest one's slot once it has covered clearly more for
+        // a while (with one slot: the current plane's)
+        if (best == NO_PLANE) {
+            challenger = NO_PLANE;
+        } else {
+            int weakest = 0;
+            for (int slot = 1; slot < slots; slot++) {
+                if (scores.getOrDefault(slotPlanes[slot], 0.0F) < scores.getOrDefault(slotPlanes[weakest], 0.0F)) {
+                    weakest = slot;
+                }
+            }
+            float weakestScore = scores.getOrDefault(slotPlanes[weakest], 0.0F);
+            float bestScore = scores.get(best);
+            if (bestScore > weakestScore * SWITCH_RATIO) {
+                if (challenger != best) {
+                    challenger = best;
+                    challengerSince = now;
+                } else if (now - challengerSince >= (bestScore > weakestScore * FAST_SWITCH_RATIO ? FAST_SWITCH_DELAY_NANOS : SWITCH_DELAY_NANOS)) {
+                    choose(weakest, best, now);
+                    challenger = NO_PLANE;
+                    switches++;
+                }
+            } else {
+                challenger = NO_PLANE;
+            }
+        }
         rival = NO_PLANE;
         rivalShare = 0.0F;
         for (Map.Entry<Long, Float> entry : scores.entrySet()) {
-            if (entry.getKey() != plane && entry.getValue() > rivalShare) {
+            if (entry.getValue() > rivalShare && !chosen(entry.getKey())) {
                 rival = entry.getKey();
                 rivalShare = entry.getValue();
             }
         }
+        for (int slot = 0; slot < slotPlanes.length; slot++) {
+            slotShares[slot] = slotPlanes[slot] == NO_PLANE ? 0.0F : scores.getOrDefault(slotPlanes[slot], 0.0F);
+        }
+    }
+
+    /** The plane not chosen yet that covers the most, at least MIN_SCORE, with the camera in front of it; or NO_PLANE. */
+    private static long bestUnchosen(Vec3 cameraPos) {
+        long best = NO_PLANE;
+        float bestScore = MIN_SCORE;
+        for (Map.Entry<Long, Float> entry : scores.entrySet()) {
+            if (entry.getValue() >= bestScore && (best == NO_PLANE || entry.getValue() > bestScore) && !chosen(entry.getKey())
+                    && heightOf(entry.getKey(), cameraPos) > MIN_HEIGHT) {
+                best = entry.getKey();
+                bestScore = entry.getValue();
+            }
+        }
+        return best;
+    }
+
+    private static boolean chosen(long key) {
+        for (long plane : slotPlanes) {
+            if (plane == key) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void choose(int slot, long plane, long now) {
+        slotPlanes[slot] = plane;
+        slotSince[slot] = now;
+        slotSeen[slot] = now;
+        slotHit[slot] = now;
     }
 }

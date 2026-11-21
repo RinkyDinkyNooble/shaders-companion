@@ -1740,9 +1740,9 @@ public final class DevRun {
             f = search.getDeclaredField("cellHeldNanos");
             f.setAccessible(true);
             heldNanos = (long[]) f.get(null);
-            f = search.getDeclaredField("plane");
+            f = search.getDeclaredField("slotPlanes");
             f.setAccessible(true);
-            plane = f.getLong(null);
+            plane = ((long[]) f.get(null))[0];
         } catch (ReflectiveOperationException e) {
             ShadersCompanion.LOGGER.error("Shaders Companion dev run: no plane search fields", e);
         }

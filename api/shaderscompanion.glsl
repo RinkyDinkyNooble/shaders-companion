@@ -1,4 +1,4 @@
-// Shaders Companion reference functions: cube protocol 2, mirror view protocol 2, rain cover protocol 1 (see API.md).
+// Shaders Companion reference functions: cube protocol 2, mirror view protocol 3, rain cover protocol 1 (see API.md).
 // 0BSD: copy, change and ship freely.
 //
 // The cube (default; define SC_NO_CUBE to leave it out). Before including, declare:
@@ -11,6 +11,8 @@
 //   uniform sampler2D scMirrorData;
 //   uniform sampler2D scMirrorDistance;
 //   uniform sampler2D scMirrorInfo;
+// and bind scMirrorInfo to shaderscompanion:mirror_info_N for up to N planes (plain mirror_info for one). The functions
+// take a plane's row, 0 to N - 1; sc_mirrorFind gives the row of the plane a point lies on.
 // The rain cover (define SC_RAIN_COVER). Before including, declare:
 //   uniform sampler2D scRainCover;
 
@@ -18,7 +20,7 @@
 #define SHADERS_COMPANION_GLSL
 
 const int SC_PROTOCOL = 2;
-const int SC_MIRROR_PROTOCOL = 2;
+const int SC_MIRROR_PROTOCOL = 3;
 
 // What a texel shows (ScSurface.kind)
 const int SC_BLOCK = 0;   // terrain from the chunk meshes; id = block.properties id, -1 when not listed
@@ -121,58 +123,78 @@ ScSurface sc_fetch(vec3 d) {
 
 #ifdef SC_MIRROR
 
-// True when the mod is installed, speaks this protocol and drew a mirror view this frame.
-bool sc_mirrorLinked() {
-    vec4 header = texelFetch(scMirrorInfo, ivec2(0, 0), 0);
+// True when the mod is installed, speaks this protocol and drew a view of this row's plane this frame.
+bool sc_mirrorLinked(int row) {
+    vec4 header = texelFetch(scMirrorInfo, ivec2(0, row), 0);
     return abs(header.x - 4242.0) < 0.5 && abs(header.y - float(SC_MIRROR_PROTOCOL)) < 0.5 && header.z > 0.0;
 }
 
-// The mirror plane: xyz its normal (towards the camera), w the camera's height above it. For a point p relative to the
-// camera, dot(xyz, p) + w is its height above the plane.
-vec4 sc_mirrorPlane() {
-    return texelFetch(scMirrorInfo, ivec2(1, 0), 0);
+// The plane: xyz its normal (towards the camera), w the camera's height above it. For a point p relative to the camera,
+// dot(xyz, p) + w is its height above the plane.
+vec4 sc_mirrorPlane(int row) {
+    return texelFetch(scMirrorInfo, ivec2(1, row), 0);
 }
 
 // The mirrored camera (the view's origin), relative to the camera.
-vec3 sc_mirrorOrigin() {
-    return texelFetch(scMirrorInfo, ivec2(2, 0), 0).xyz;
+vec3 sc_mirrorOrigin(int row) {
+    return texelFetch(scMirrorInfo, ivec2(2, row), 0).xyz;
 }
 
-// Projection of points relative to the camera into the mirror view (clip space).
-mat4 sc_mirrorMatrix() {
-    return mat4(texelFetch(scMirrorInfo, ivec2(3, 0), 0), texelFetch(scMirrorInfo, ivec2(4, 0), 0),
-                texelFetch(scMirrorInfo, ivec2(5, 0), 0), texelFetch(scMirrorInfo, ivec2(6, 0), 0));
+// Projection of points relative to the camera into the plane's view (clip space).
+mat4 sc_mirrorMatrix(int row) {
+    return mat4(texelFetch(scMirrorInfo, ivec2(3, row), 0), texelFetch(scMirrorInfo, ivec2(4, row), 0),
+                texelFetch(scMirrorInfo, ivec2(5, row), 0), texelFetch(scMirrorInfo, ivec2(6, row), 0));
 }
 
-// True when a point relative to the camera, with geometry normal n, lies on the mirror plane.
-bool sc_mirrorOnPlane(vec3 p, vec3 n) {
-    vec4 plane = sc_mirrorPlane();
+// True when a point relative to the camera, with geometry normal n, lies on a row's plane.
+bool sc_mirrorOnPlane(int row, vec3 p, vec3 n) {
+    vec4 plane = sc_mirrorPlane(row);
     return abs(dot(plane.xyz, p) + plane.w) < 0.03 + length(p) * 2e-3 && dot(n, plane.xyz) > 0.9;
 }
 
-// Texture coordinate of a point relative to the camera in the mirror view; false outside the view.
-bool sc_mirrorCoord(vec3 p, out vec2 coord) {
-    vec4 clip = sc_mirrorMatrix() * vec4(p, 1.0);
+// The row of the mirrored plane a point relative to the camera (geometry normal n) lies on, -1 for none; rows is the N
+// of the mirror_info_N the pack binds.
+int sc_mirrorFind(vec3 p, vec3 n, int rows) {
+    for (int row = 0; row < rows; row++) {
+        if (sc_mirrorLinked(row) && sc_mirrorOnPlane(row, p, n)) {
+            return row;
+        }
+    }
+    return -1;
+}
+
+// Where a point relative to the camera lies in a plane's view (0 to 1 across the view); false outside the view.
+bool sc_mirrorCoord(int row, vec3 p, out vec2 coord) {
+    vec4 clip = sc_mirrorMatrix(row) * vec4(p, 1.0);
     coord = clip.xy / clip.w * 0.5 + 0.5;
     return clip.w > 0.0 && all(greaterThanEqual(coord, vec2(0.0))) && all(lessThanEqual(coord, vec2(1.0)));
 }
 
-// True where the mirror view was drawn. The mod draws only the part of the screen the mirror covers (with a margin);
-// elsewhere a reflection should fall back as it does outside the view.
-bool sc_mirrorDrawn(vec2 coord) {
-    return texture(scMirrorDistance, coord).r > -0.5;
+// The texture coordinate of a point of a plane's view (coord, 0 to 1 across the view) in the mod's textures, where each
+// plane's view is a tile: its size is texel 0's zw, its corner texel 8's yz. Kept half a texel inside the tile.
+vec2 sc_mirrorTexcoord(int row, vec2 coord) {
+    vec2 size = texelFetch(scMirrorInfo, ivec2(0, row), 0).zw;
+    vec2 tile = texelFetch(scMirrorInfo, ivec2(8, row), 0).yz;
+    return (tile + clamp(coord * size, vec2(0.5), size - 0.5)) / vec2(textureSize(scMirrorDistance, 0));
 }
 
-// The surface the mirror view shows at a texture coordinate. For a point p on the plane, the mirror reflection is at
-// sc_mirrorCoord(p); a bent reflection ray can be traced by comparing distance(point, sc_mirrorOrigin()) with
-// s.distance at each point's coordinate.
-ScSurface sc_mirrorFetch(vec2 coord) {
+// True where a plane's view was drawn. The mod draws only the part of the screen the mirror covers (with a margin);
+// elsewhere a reflection should fall back as it does outside the view.
+bool sc_mirrorDrawn(int row, vec2 coord) {
+    return texture(scMirrorDistance, sc_mirrorTexcoord(row, coord)).r > -0.5;
+}
+
+// The surface a plane's view shows at a coordinate (0 to 1 across the view). For a point p on the plane, the mirror
+// reflection is at sc_mirrorCoord(row, p); a bent reflection ray can be traced by comparing
+// distance(point, sc_mirrorOrigin(row)) with s.distance at each point's coordinate.
+ScSurface sc_mirrorFetch(int row, vec2 coord) {
     ScSurface s;
-    s.distance = texture(scMirrorDistance, coord).r;
+    vec2 texcoord = sc_mirrorTexcoord(row, coord);
+    s.distance = texture(scMirrorDistance, texcoord).r;
     s.hit = s.distance > 0.0;
-    sc_decode(texture(scMirrorAlbedo, coord), texture(scMirrorData, coord), s);
-    vec4 view = inverse(sc_mirrorMatrix()) * vec4(coord * 2.0 - 1.0, 1.0, 1.0);
-    vec3 origin = sc_mirrorOrigin();
+    sc_decode(texture(scMirrorAlbedo, texcoord), texture(scMirrorData, texcoord), s);
+    vec4 view = inverse(sc_mirrorMatrix(row)) * vec4(coord * 2.0 - 1.0, 1.0, 1.0);
+    vec3 origin = sc_mirrorOrigin(row);
     s.position = origin + normalize(view.xyz / view.w - origin) * s.distance;
     return s;
 }

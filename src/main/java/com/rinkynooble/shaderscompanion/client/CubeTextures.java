@@ -18,8 +18,8 @@ public final class CubeTextures {
     /** Info texture width: one header texel, six face texels, one projection texel. */
     public static final int INFO_WIDTH = 8;
     /** Protocol version of the mirror view's textures, in its own info texture. */
-    public static final int MIRROR_PROTOCOL = 2;
-    /** Mirror info texture width: header, plane, view origin, four matrix columns, ranges, fade-in (added in 2.0.0). */
+    public static final int MIRROR_PROTOCOL = 3;
+    /** Mirror info texture width: header, plane, view origin, four matrix columns, ranges, fade-in and tile; one row per plane. */
     public static final int MIRROR_INFO_WIDTH = 9;
 
     public static final ResourceLocation ALBEDO_ID = id("cube_albedo");
@@ -73,6 +73,10 @@ public final class CubeTextures {
         manager.register(MIRROR_DATA_ID, MIRROR_DATA);
         manager.register(MIRROR_DISTANCE_ID, MIRROR_DISTANCE);
         manager.register(MIRROR_INFO_ID, MIRROR_INFO);
+        // mirror_info_2 to _4: the same texture; a pack that binds one of them asks for up to that many mirrored planes
+        for (int planes = 2; planes <= MirrorView.MAX_PLANES; planes++) {
+            manager.register(id("mirror_info_" + planes), new CompanionTexture.Alias(MIRROR_INFO, CompanionTexture.mirrorPlanesGroup(planes)));
+        }
         manager.register(MIRROR_BEHIND_ALBEDO_ID, MIRROR_BEHIND_ALBEDO);
         manager.register(MIRROR_BEHIND_DATA_ID, MIRROR_BEHIND_DATA);
         manager.register(MIRROR_BEHIND_DISTANCE_ID, MIRROR_BEHIND_DISTANCE);
@@ -80,7 +84,7 @@ public final class CubeTextures {
         manager.register(LATTICE_INFO_ID, LATTICE_INFO);
         LATTICE_INFO.allocate(8, 1);
         INFO.allocate(INFO_WIDTH, 1);
-        MIRROR_INFO.allocate(MIRROR_INFO_WIDTH, 1);
+        MIRROR_INFO.allocate(MIRROR_INFO_WIDTH, MirrorView.MAX_PLANES);
         // Until the mirror view is first drawn, its textures are 1 x 1, so a pack binding them never gets Minecraft's missing texture
         MIRROR_ALBEDO.allocate(1, 1);
         MIRROR_DATA.allocate(1, 1);

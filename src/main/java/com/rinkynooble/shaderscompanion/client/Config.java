@@ -70,13 +70,13 @@ public final class Config {
                 .comment("Furthest Distant Horizons terrain drawn, in blocks. 0 uses Distant Horizons' own range.")
                 .defineInRange("lodDistance", 0, 0, 65536);
         MIRROR = builder
-                .comment("Render the mirror view: the world mirrored in the largest water surface or glass wall on screen, for sharp reflections that show your own player.")
+                .comment("Render the mirror view: the world mirrored in the largest water surfaces and glass walls on screen (as many as the shader pack asks for), for sharp reflections that show your own player.")
                 .define("mirror", true);
         MIRROR_SCALE = builder
                 .comment("Resolution of the mirror view, in percent of the screen's. Lower is faster and blurrier.")
                 .defineInRange("mirrorScale", 100, 25, 100);
         MIRROR_LOD = builder
-                .comment("Draw the mirror view at a lower resolution while the mirror covers little of the screen (three quarters below about a third of the screen's centre, half below about a sixth), like Distant Horizons' detail levels.")
+                .comment("Draw a mirror's view at a lower resolution while the mirror covers little of the screen (three quarters below about a third of the screen's centre, half below about a sixth), like Distant Horizons' detail levels.")
                 .define("mirrorLod", true);
         MIRROR_SHADOWS = builder
                 .comment("Keep the shadows of what the mirror view shows. Oculus draws only the shadows that can fall into your own view, so without this, things behind you lose their shadows in reflections, and the shadows come and go as you move. Off draws fewer shadows while a mirror is on screen.")

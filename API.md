@@ -1,9 +1,9 @@
-# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 2, rain cover protocol 1, lattice protocol 1)
+# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 3, rain cover protocol 1, lattice protocol 1)
 
 Shaders Companion draws two views for the active shader pack and hands them over as textures:
 
 - the cube: a low-resolution view all around the camera, redrawn a few faces per frame;
-- the mirror view: the world mirrored in the largest reflecting surface on screen (a water level or a glass wall), at screen resolution, every frame. See [Mirror view](#mirror-view).
+- the mirror view: the world mirrored in the largest reflecting surfaces on screen (water levels and glass walls, as many as the pack asks for), at screen resolution, every frame. See [Mirror view](#mirror-view).
 
 A pack reads them by resource location; nothing else is needed on the pack's side, and a pack that uses them still works without the mod. The cube and the mirror view are independent: a pack can bind either or both.
 
@@ -92,36 +92,48 @@ customTexture.scMirrorDistance = shaderscompanion:mirror_distance
 customTexture.scMirrorInfo = shaderscompanion:mirror_info
 ```
 
+The name the info texture is bound under says how many planes the pack wants mirrored at once: `mirror_info` one, `mirror_info_2`, `mirror_info_3` or `mirror_info_4` up to that many (the same texture under each name; added in 2.0.0, mirror protocol 3). For example, from a pack option:
+
+```properties
+#if MIRROR_PLANES == 2
+customTexture.scMirrorInfo = shaderscompanion:mirror_info_2
+#else
+customTexture.scMirrorInfo = shaderscompanion:mirror_info
+#endif
+```
+
 `api/shaderscompanion.glsl` has the reference functions with `#define SC_MIRROR` (and `SC_NO_CUBE` for a pack that reads only the mirror view).
 
 ### What it is
 
-Each frame the mod casts a few rays from the camera through a grid over the screen and a margin around it, and scores the reflecting surfaces they hit: water surfaces and the faces of blocks drawn in the translucent layer (stained and tinted glass, ice and similar). Minecraft's surfaces are axis-aligned, so each one lies on a plane: an axis, a side and a coordinate. The plane with the most area, weighted towards where the centre of the screen will be a moment from now (the surface you look at, or turn to), is the mirror plane; it changes after another one has covered more for half a second, after 60 ms when it covers twice as much, or at once when it leaves the view. Plain glass is drawn in the cut-out layer and isn't picked.
+Each frame the mod casts a few rays from the camera through a grid over the screen and a margin around it, and scores the reflecting surfaces they hit: water surfaces and the faces of blocks drawn in the translucent layer (stained and tinted glass, ice and similar). Minecraft's surfaces are axis-aligned, so each one lies on a plane: an axis, a side and a coordinate. The planes with the most area, weighted towards where the centre of the screen will be a moment from now (the surface you look at, or turn to), are mirrored, up to as many as the pack asks for, each in a slot of its own that it keeps while it is mirrored. An empty slot takes the best plane left at once. With every slot taken, another plane takes the weakest one's slot after it has covered more for half a second, or after 60 ms when it covers twice as much. A plane that leaves the view frees its slot. Plain glass is drawn in the cut-out layer and isn't picked.
 
-The view is then drawn from the camera mirrored in that plane, with the main view's rotation and a field of view 10% wider, at the screen's resolution (`mirrorScale` in the config; with `mirrorLod`, 75% or 50% of it while the mirror covers little of the screen). Only the part of the view where the mirror is on screen, with a margin, is drawn (mirror protocol 2): elsewhere the distance texture holds -1. Everything on the far side of the plane, and the mirror surface itself, is cut away. Terrain, water and glass, entities and block entities (as in the cube) and Distant Horizons LODs are drawn, and so is your own player in first person, which the cube can't show. A point on the plane lands on (nearly) the same texel as on screen: the reflection of a flat mirror at a screen pixel is the mirror view's texel there. For bent rays (water waves, rough glass), trace: points along the reflected ray project into the view with the matrix below, and a point is behind a surface when it is farther from the mirrored camera than the distance stored at its texel.
+Each plane's view is then drawn from the camera mirrored in that plane, with the main view's rotation and a field of view 10% wider, at the screen's resolution (`mirrorScale` in the config; with `mirrorLod`, 75% or 50% of it while the plane covers little of the screen). Only the part of the view where the plane is on screen, with a margin, is drawn (mirror protocol 2 and later): elsewhere the distance texture holds -1. Everything on the far side of the plane, and the mirror surface itself, is cut away. Terrain, water and glass, entities and block entities (as in the cube) and Distant Horizons LODs are drawn, and so is your own player in first person, which the cube can't show. A point on the plane lands on (nearly) the same texel as on screen: the reflection of a flat mirror at a screen pixel is the mirror view's texel there. For bent rays (water waves, rough glass), trace: points along the reflected ray project into the view with the matrix below, and a point is behind a surface when it is farther from the mirrored camera than the distance stored at its texel.
 
-No mirror view is drawn while the camera is under water or when no reflecting surface covers about 1% of the screen.
+No mirror view is drawn while the camera is under water (or in lava or powder snow) or when no reflecting surface covers about 1% of the screen. Every plane costs about as much as the first while it is on screen: its own view of the world, and whatever the pack does with it.
 
 ### Shadows
 
-Oculus draws into a pack's shadow map only what can cast a shadow into the main view, unless the pack sets `shadow.culling = false`. While a mirror view is drawn, the mod (0.6.1) also keeps whatever can cast a shadow into the mirror view (`mirrorShadows` in the config), within the pack's shadow distance, so a pack can look the mirror view's surfaces up in its shadow map like the screen's. The cube has no such help: its surfaces behind the camera may be missing from the shadow map.
+Oculus draws into a pack's shadow map only what can cast a shadow into the main view, unless the pack sets `shadow.culling = false`. While mirror views are drawn, the mod (0.6.1) also keeps whatever can cast a shadow into any of them (`mirrorShadows` in the config), within the pack's shadow distance, so a pack can look the mirror view's surfaces up in its shadow map like the screen's. The cube has no such help: its surfaces behind the camera may be missing from the shadow map.
 
 ### Contents
 
-`mirror_albedo` (RGBA8), `mirror_data` (RGBA16) and `mirror_distance` (R32F) hold the same fields as the cube's textures, one texel per pixel of the view (`width` x `height` from the info texture; 1 x 1 before the first mirror view). The distance is measured from the mirrored camera (the view's origin, texel 2); 0 is open sky, and -1 marks a texel the mod didn't draw (outside the mirror's part of the screen): treat a ray that reaches one like a ray that leaves the view.
+`mirror_albedo` (RGBA8), `mirror_data` (RGBA16) and `mirror_distance` (R32F) hold the same fields as the cube's textures. They hold one tile per plane the pack asks for, side by side from the left, each the size of the screen at `mirrorScale`; a plane's view fills `width` x `height` texels from its tile's lower left corner (texel 0 and texel 8 of its info row), one texel per pixel of the view (1 x 1 before the first mirror view). A view coordinate `coord` (0 to 1 across the view) is the texture coordinate `(tile + coord * size) / textureSize(...)`; keep `coord * size` within half a texel of the view's edges so filtering doesn't reach the next tile. The distance is measured from the mirrored camera (the view's origin, texel 2); 0 is open sky, and -1 marks a texel the mod didn't draw (outside the plane's part of the screen, or a tile no plane uses this frame): treat a ray that reaches one like a ray that leaves the view.
 
 The view's rays don't always start at that origin: with view bobbing on, Oculus puts the bobbing into the view matrix, so while the player walks the view's eye sits up to about 0.1 block off the origin (as the main view's eye sits off the camera position). Projecting a point into the view with the matrix is exact either way. To turn a texel back into a position, use the texel's own ray: with `m` the matrix for points relative to the origin (the matrix below with its last column replaced by `matrix * vec4(origin, 1.0)`), the eye is `e = inverse(m) * vec4(0.0, 0.0, 1.0, 0.0)`, `e.xyz / e.w`; the ray runs from it through the texel's point on the near plane (`inverse(m) * vec4(ndc.xy, -1.0, 1.0)`), and the surface is the point on it at the stored distance from the origin. A direction taken from the origin through the near-plane point is far off while walking (the near plane is 0.05 blocks from the eye).
 
-`mirror_info` (RGBA32F, 9 x 1 from 0.9.3, 8 x 1 before), relative to this frame's camera, written every frame before the world renders:
+`mirror_info` (RGBA32F, 9 x 4: one row per slot, rows past the planes the pack asks for empty), relative to this frame's camera, written every frame before the world renders. A row:
 
 | Texel | Contents |
 |---|---|
-| 0 | `(4242, protocol, width, height)`. Width and height are 0 when there is no mirror view this frame; then ignore the rest. |
+| 0 | `(4242, protocol, width, height)`: the view's size. Width and height are 0 when the slot has no plane this frame; then ignore the rest of the row. |
 | 1 | The plane: xyz its normal (pointing to the camera's side), w the camera's height above it. For a point `p` relative to the camera, `dot(xyz, p) + w` is its height above the plane. |
 | 2 | xyz: the mirrored camera (the view's origin) relative to the camera; w: frame counter mod 4096. |
 | 3 to 6 | Columns 0 to 3 of the matrix that takes a point relative to the camera to the view's clip space: `clip = mat4(t3, t4, t5, t6) * vec4(p, 1.0)`, texture coordinate `clip.xy / clip.w * 0.5 + 0.5`. |
 | 7 | `(near plane, far plane, chunk terrain range, Distant Horizons range)` |
-| 8 | x: how far a newly mirrored plane has faded in, 0 to 1 over 0.15 seconds after the mod starts mirroring it (a new plane, or the first after none). For a pack that blends the mirror view's reflection with its own by it, so a surface doesn't jump between them in one frame. yzw: 0. Added in 0.9.3 (protocol unchanged): check `textureSize(..., 0).x > 8` first and take 1 when it isn't there. |
+| 8 | x: how far the plane has faded in, 0 to 1 over 0.15 seconds after the mod starts mirroring it. For a pack that blends the mirror view's reflection with its own by it, so a surface doesn't jump between them in one frame. yz: the corner of the view's tile in the textures, in texels (y is 0 for now). w: 0. |
+
+A pixel uses a plane's view when its position lies on the plane (`abs(dot(plane.xyz, p) + plane.w)` within a few hundredths of a block, more with distance for depth precision) and its geometry normal is the plane's. Try the rows in order; at most one plane fits a pixel. Other reflecting surfaces fall back to whatever the pack did before.
 
 ### What lies behind water and glass (0.9.0)
 
@@ -131,9 +143,7 @@ customTexture.scMirrorBehindData = shaderscompanion:mirror_behind_data
 customTexture.scMirrorBehindDistance = shaderscompanion:mirror_behind_distance
 ```
 
-The mirror view as it was after its opaque surfaces (terrain, entities, LODs) and before water, glass and other translucent surfaces were drawn over them: the same three fields, in the same layout and size as `mirror_albedo`, `mirror_data` and `mirror_distance`, valid in the drawn part of the view. Where the mirror view shows a translucent surface (`mirror_albedo` alpha below 1), these show what lies behind it, so a pack can shade water over the depth to the ground under it and let glass tint what is behind it. Copied only while the pack binds them (they cost a copy of the drawn part each frame and about 16 bytes a pixel of memory); 1 x 1 before the first copy.
-
-A pixel uses the mirror view when its position lies on the plane (`abs(dot(plane.xyz, p) + plane.w)` within a few hundredths of a block, more with distance for depth precision) and its geometry normal is the plane's. Other reflecting surfaces fall back to whatever the pack did before.
+The mirror views as they were after their opaque surfaces (terrain, entities, LODs) and before water, glass and other translucent surfaces were drawn over them: the same three fields, in the same layout, tiles and size as `mirror_albedo`, `mirror_data` and `mirror_distance`, valid in the drawn part of each view. Where the mirror view shows a translucent surface (`mirror_albedo` alpha below 1), these show what lies behind it, so a pack can shade water over the depth to the ground under it and let glass tint what is behind it. Copied only while the pack binds them (they cost a copy of the drawn part each frame and about 16 bytes a pixel of memory); 1 x 1 before the first copy.
 
 ## Rain cover (0.9.1)
 
@@ -225,7 +235,7 @@ Each block's shape as it is drawn, at full resolution, for contact shading finer
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
-- 2.0.0 (development): `lattice_*` (protocol 1): the lattice; from 2.0.0-dev12 its detail (`lattice_detail*`, `lattice_info` texel 4).
+- 2.0.0 (development): `lattice_*` (protocol 1): the lattice; from 2.0.0-dev12 its detail (`lattice_detail*`, `lattice_info` texel 4). From 2.0.0-dev16, mirror view protocol 3: up to four planes mirrored at once, as many as the name the pack binds `mirror_info` under asks for (`mirror_info_N`); the mirror textures hold one tile per plane, `mirror_info` one row per plane (9 x 4) with the tile's corner in texel 8.
 - 1.0.0: the same protocols and textures. The plane search traces collision shapes (plants no longer stop its rays) and counts water past the chunk terrain's range; chunk terrain is drawn over Distant Horizons LODs in the views by a stencil, so far terrain no longer shows through near terrain; the entity capture frees its kept memory when mods create render types without end. Comes with ABZA Shader 1.1.0.
 - 0.9.3: the same protocols. `mirror_info` texel 8: how far a newly mirrored plane has faded in. A small or far plane is held through frames its rays miss. Comes with ABZA Shader 1.0.30.
 - 0.9.2: the same protocols and textures; comes with ABZA Shader 1.0.29.

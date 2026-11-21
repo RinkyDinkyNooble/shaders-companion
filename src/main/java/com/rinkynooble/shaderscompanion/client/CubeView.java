@@ -198,12 +198,14 @@ public final class CubeView {
             cubeDemand.reset();
             mirrorDemand.reset();
             behindDemand.reset();
+            MirrorView.resetPlaneDemand();
             return 0;
         }
         // A pack that doesn't read the cube (or the mirror view) never asks for its textures: it isn't drawn then
         boolean wantCube = cubeDemand.update();
         boolean mirrorRead = mirrorDemand.update();
         behindDemand.update();
+        int mirrorPlanes = MirrorView.updatePlaneDemand();
         boolean wantMirror = mirrorRead && Config.MIRROR.get();
         MirrorView.status = !Config.MIRROR.get() ? "turned off in the config"
                 : !mirrorRead ? "the shader pack doesn't read the mirror view" : MirrorView.status;
@@ -244,7 +246,8 @@ public final class CubeView {
             float far = Math.max(maxDistance, lodDistance) * 1.75F + 512.0F;
             lastFar = far;
             lastMaxDistance = maxDistance;
-            boolean mirror = wantMirror && MirrorView.update(mc, camera, view, new Matrix4f(RenderSystem.getProjectionMatrix()), NEAR, far, maxDistance);
+            boolean mirror = wantMirror && MirrorView.update(mc, camera, view, new Matrix4f(RenderSystem.getProjectionMatrix()), NEAR, far, maxDistance,
+                    mirrorPlanes);
             long entityStart = System.nanoTime();
             collectLocalPlayer(mc, camera, partialTick, mirror ? MirrorView.seen() : BoxTest.NONE);
             // The mobs and block entities collected after the last frame, when that was the frame before this one
