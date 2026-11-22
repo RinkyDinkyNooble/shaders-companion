@@ -1,0 +1,12 @@
+{
+  "_comment": "Material classes for entity types (class name -> entity ids, ids with * wildcards or #entity type tags, the classes of vanilla.json). Vehicles (an entity class named ...Vehicle...) are inferred as paint when first drawn; armour, held and dropped items carry their item's class. Entities of mods that aren't installed are skipped; the user's rules win.",
+  "iron": [
+    "minecraft:minecart",
+    "minecraft:chest_minecart",
+    "minecraft:furnace_minecart",
+    "minecraft:hopper_minecart",
+    "minecraft:tnt_minecart",
+    "minecraft:spawner_minecart",
+    "minecraft:command_block_minecart"
+  ]
+}

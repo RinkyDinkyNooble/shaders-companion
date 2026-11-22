@@ -9,12 +9,17 @@
     "AoFaceDataMixin",
     "ClientChunkCacheMixin",
     "ClientLevelMixin",
+    "EntityRenderDispatcherMixin",
     "GameRendererMixin",
-    "ItemMaterialMixin",
     "LatticeTextureMixin",
+    "LightDataAccessMixin",
+    "LightEngineMixin",
+    "MaterialIdsMixin",
     "MaterialMappingMixin",
     "RenderBuffersMixin",
-    "ShadowCullingMixin"
+    "ShadowCullingMixin",
+    "TaczArmMixin",
+    "TaczFirstPersonMixin"
   ],
   "injectors": {
     "defaultRequire": 0

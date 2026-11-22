@@ -25,6 +25,10 @@ public final class MixinPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        // Mixins into other mods' classes apply only when that mod is installed
+        if (mixinClassName.endsWith(".TaczFirstPersonMixin") || mixinClassName.endsWith(".TaczArmMixin")) {
+            return net.minecraftforge.fml.loading.LoadingModList.get().getModFileById("tacz") != null;
+        }
         return true;
     }
 

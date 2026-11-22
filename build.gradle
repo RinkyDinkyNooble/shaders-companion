@@ -117,6 +117,25 @@ minecraft {
             if (project.hasProperty('devHold')) {
                 property 'shaderscompanion.devHold', project.property('devHold')
             }
+            // -PdevTaczGun=tacz:glock_17: the gun the hand scene holds with -PdevTacz (tacz:ak47 by default)
+            if (project.hasProperty('devTaczGun')) {
+                property 'shaderscompanion.devTaczGun', project.property('devTaczGun')
+            }
+            // -PdevTaczSight=tacz:sight_rmr_dot: that sight on the gun; -PdevTaczAim: aiming down it
+            if (project.hasProperty('devTaczSight')) {
+                property 'shaderscompanion.devTaczSight', project.property('devTaczSight')
+            }
+            // -PdevEntityMaterials: the mobs scene with armour, a minecart, a dropped block and a vehicle in front
+            if (project.hasProperty('devEntityMaterials')) {
+                property 'shaderscompanion.devEntityMaterials', 'true'
+            }
+            // -PdevDoorsOpen: the doorwall scene's doors and trapdoor open
+            if (project.hasProperty('devDoorsOpen')) {
+                property 'shaderscompanion.devDoorsOpen', 'true'
+            }
+            if (project.hasProperty('devTaczAim')) {
+                property 'shaderscompanion.devTaczAim', 'true'
+            }
             if (project.hasProperty('devHold2')) {
                 property 'shaderscompanion.devHold2', project.property('devHold2')
             }
@@ -267,6 +286,9 @@ dependencies {
     // Distant Horizons is optional: compiled against for its LOD buffers (only its own classes are used), loaded in
     // dev runs only with -PdevDh.
     compileOnly files("libs/distanthorizons-${distanthorizons_version}.jar")
+    // TaCZ is optional too: compiled against so the mixin processor finds its first-person gun renderer
+    // (TaczFirstPersonMixin, applied only when TaCZ is installed); loaded in dev runs only with -PdevTacz.
+    compileOnly fg.deobf("local:tacz:1.1.8")
     if (project.hasProperty('devDh')) {
         runtimeOnly fg.deobf("local:distanthorizons:${distanthorizons_version}")
     }
@@ -321,6 +343,12 @@ dependencies {
             runtimeOnly fg.deobf("local:simplebedrockmodel:2.5.1")
         }
         minecraftLibrary files('libs/luaj-core-3.0.8.jar', 'libs/luaj-jse-3.0.8.jar', 'libs/commons-math3-3.6.1.jar', 'libs/bcel-6.6.1.jar')
+        // -PdevTaczAccel: the user's TaCZ:Accel addon (libs/taczaccel-1.3.2.jar) and the Quantified API it needs
+        // (libs/quantified-2.2.4.jar), both as the instance has them
+        if (project.hasProperty('devTaczAccel')) {
+            runtimeOnly fg.deobf("local:taczaccel:1.3.2")
+            runtimeOnly fg.deobf("local:quantified:2.2.4")
+        }
     }
 }
 

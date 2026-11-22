@@ -32,6 +32,7 @@ public final class ClientInit {
     private static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
             LightLeaks.tick(Minecraft.getInstance());
+            DoorLight.tick(Minecraft.getInstance());
         }
     }
 

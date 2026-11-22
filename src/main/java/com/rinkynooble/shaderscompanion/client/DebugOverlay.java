@@ -81,6 +81,7 @@ public final class DebugOverlay {
                 "Lattice: " + Lattice.status,
                 "Materials: " + Materials.status,
                 "Light leak fix: " + LightLeaks.status(),
+                "Closed doors: " + DoorLight.status(),
                 "Bundled shader pack: " + BundledPack.status
                         + (Gl.mismatches == 0 ? "" : "; GL state out of step with Minecraft's record " + Gl.mismatches + " times (see the log)")
         };

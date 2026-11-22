@@ -1,19 +1,10 @@
 package com.rinkynooble.shaderscompanion.client;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -34,8 +25,6 @@ import net.minecraft.world.item.Tier;
 import net.minecraft.world.item.TieredItem;
 import net.minecraft.world.item.Tiers;
 import net.minecraft.world.item.crafting.Ingredient;
-import net.minecraftforge.fml.ModList;
-import net.minecraftforge.fml.loading.FMLPaths;
 import net.minecraftforge.registries.ForgeRegistries;
 
 /**
@@ -43,7 +32,7 @@ import net.minecraftforge.registries.ForgeRegistries;
  * draws the id the shader pack's item.properties lists for it ({@code currentRenderedItemId}); a block item takes its
  * block's default state id from the block map instead, so held blocks already carry their block's class. Every other
  * item with a class gets {@code 16384 | class} here (or the pack's flag-range id with the class in its low bits), from
- * the user's overrides (the "items" object of {@code config/shaderscompanion-materials.json}), the jar's item table
+ * the user's overrides ({@link MaterialRules}), the jar's item table
  * (vanilla items and tech mods'), then inference: a tool's tier or an armour piece's material (iron, gold, diamond,
  * netherite; a modded one by its repair ingredient's ingot or gem tag), metal ingots, nuggets, plates, gears and rods by
  * their forge tags, and guns (an item class named ...GunItem: Superb Warfare, TaCZ). Names are not read, so golden apples
@@ -51,7 +40,6 @@ import net.minecraftforge.registries.ForgeRegistries;
  */
 public final class ItemMaterials {
     private static final String TABLE = "/assets/shaderscompanion/materials/items.json";
-    private static final String OVERRIDES = "shaderscompanion-materials.json";
     /** Forge item tag folders whose metal (forge:ingots/iron ...) names the item's class. */
     private static final String[] METAL_TAG_FOLDERS = {"ingots", "nuggets", "plates", "gears", "rods"};
     private static final String[] GEM_TAGS = {"diamond", "emerald", "amethyst"};
@@ -105,12 +93,13 @@ public final class ItemMaterials {
     }
 
     /** Works out every item's class (called from the block merge, which runs first in the same pipeline). */
-    static void build(List<String> problems) {
+    static void build(List<String> problems, List<MaterialRules.Rule> user) {
         long start = System.nanoTime();
         Reference2IntOpenHashMap<Item> tagged = taggedItems();
         Reference2IntOpenHashMap<Item> fixed = new Reference2IntOpenHashMap<>();
-        int fromTable = readTable(fixed, TABLE, null, problems);
-        int overrides = readTable(fixed, null, FMLPaths.CONFIGDIR.get().resolve(OVERRIDES), problems);
+        int fromTable = MaterialRules.apply(MaterialRules.resource(TABLE, MaterialRules.Kind.ITEM, "the item table", problems), MaterialRules.Kind.ITEM,
+                BuiltInRegistries.ITEM, fixed, true, problems);
+        int overrides = MaterialRules.apply(user, MaterialRules.Kind.ITEM, BuiltInRegistries.ITEM, fixed, false, problems);
         Object2IntOpenHashMap<NamespacedId> built = new Object2IntOpenHashMap<>();
         built.defaultReturnValue(0);
         int itemsFixed = 0;
@@ -253,79 +242,5 @@ public final class ItemMaterials {
 
     private static TagKey<Item> tag(String path) {
         return TagKey.create(Registries.ITEM, new ResourceLocation("forge", path));
-    }
-
-    /**
-     * Reads a table of class name to item ids and #tags, from the jar (resource) or the user's file (its "items" object;
-     * skipped when missing), into fixed; later tables win. Returns the number of items it set.
-     */
-    private static int readTable(Reference2IntOpenHashMap<Item> fixed, String resource, Path path, List<String> problems) {
-        String source = resource == null ? path.getFileName().toString() + " (items)" : "the item table";
-        JsonObject root;
-        try {
-            if (resource != null) {
-                try (InputStream in = ItemMaterials.class.getResourceAsStream(resource)) {
-                    if (in == null) {
-                        problems.add(source + " is missing from the jar");
-                        return 0;
-                    }
-                    root = JsonParser.parseReader(new InputStreamReader(in, StandardCharsets.UTF_8)).getAsJsonObject();
-                }
-            } else {
-                if (!Files.isRegularFile(path)) {
-                    return 0;
-                }
-                try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
-                    JsonObject file = JsonParser.parseReader(reader).getAsJsonObject();
-                    if (!file.has("items")) {
-                        return 0;
-                    }
-                    root = file.getAsJsonObject("items");
-                }
-            }
-        } catch (Exception e) {
-            problems.add(source + " can't be read: " + e.getMessage());
-            return 0;
-        }
-        int set = 0;
-        for (Map.Entry<String, JsonElement> entry : root.entrySet()) {
-            if (entry.getKey().startsWith("_")) {
-                continue;
-            }
-            int material;
-            if (entry.getKey().equals("none")) {
-                material = -1;
-            } else {
-                try {
-                    material = Materials.classNumber(entry.getKey());
-                } catch (IllegalArgumentException e) {
-                    problems.add(source + ": no class named " + entry.getKey());
-                    continue;
-                }
-            }
-            for (JsonElement element : entry.getValue().getAsJsonArray()) {
-                String name = element.getAsString();
-                if (name.startsWith("#")) {
-                    TagKey<Item> tag = TagKey.create(Registries.ITEM, new ResourceLocation(name.substring(1)));
-                    for (Holder<Item> holder : BuiltInRegistries.ITEM.getTagOrEmpty(tag)) {
-                        fixed.put(holder.value(), material);
-                        set++;
-                    }
-                } else {
-                    ResourceLocation id = new ResourceLocation(name);
-                    Item item = ForgeRegistries.ITEMS.getValue(id);
-                    if (item == null || !id.equals(ForgeRegistries.ITEMS.getKey(item))) {
-                        // Mods that aren't installed are fine in the user's file and for other mods' entries
-                        if (resource != null && ModList.get().isLoaded(id.getNamespace())) {
-                            problems.add(source + ": no item " + name);
-                        }
-                        continue;
-                    }
-                    fixed.put(item, material);
-                    set++;
-                }
-            }
-        }
-        return set;
     }
 }

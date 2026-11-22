@@ -1,24 +1,16 @@
 package com.rinkynooble.shaderscompanion.client;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.TagKey;
@@ -27,8 +19,6 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraftforge.fml.ModList;
-import net.minecraftforge.fml.loading.FMLPaths;
 import net.minecraftforge.registries.ForgeRegistries;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.system.MemoryUtil;
@@ -49,7 +39,6 @@ public final class Materials {
     /** Sundial's flag range starts here (bit 14); bits 9-13 are its feature flags, bits 0-8 are free for the class. */
     static final int FLAG_RANGE = 1 << 14;
     static final int CLASS_MASK = 0x1FF;
-    private static final String OVERRIDES = "shaderscompanion-materials.json";
     private static final String VANILLA = "/assets/shaderscompanion/materials/vanilla.json";
     /**
      * Blocks of tech mods inference can't read: Mekanism's machines sound like stone and have shaped models, Superb
@@ -88,6 +77,9 @@ public final class Materials {
             {"sound_metal", 140, 255, 0},
             {"sound_copper", 165, 234, 0},
             {"sound_dark_metal", 150, 255, 0},
+            // A glossy coat over its colour (painted vehicles): a dielectric, so the paint keeps its colour and gains a
+            // sheen of the world
+            {"paint", 170, 10, 0},
     };
 
     // Inference: names of the classes each source can give
@@ -199,6 +191,7 @@ public final class Materials {
         boolean wanted = tableWanted;
         tableWanted = false;
         ItemMaterials.clear();
+        EntityMaterials.clear();
         if (!wanted) {
             status = "the shader pack doesn't read it";
             return;
@@ -219,9 +212,12 @@ public final class Materials {
         long start = System.nanoTime();
         Reference2IntOpenHashMap<Block> fixed = new Reference2IntOpenHashMap<>();
         List<String> problems = new ArrayList<>();
-        readTable(fixed, VANILLA, null, problems);
-        int fromMods = readTable(fixed, MODS, null, problems);
-        int overrides = readTable(fixed, null, FMLPaths.CONFIGDIR.get().resolve(OVERRIDES), problems);
+        List<MaterialRules.Rule> user = MaterialRules.user(problems);
+        MaterialRules.apply(MaterialRules.resource(VANILLA, MaterialRules.Kind.BLOCK, "the vanilla table", problems), MaterialRules.Kind.BLOCK,
+                BuiltInRegistries.BLOCK, fixed, true, problems);
+        int fromMods = MaterialRules.apply(MaterialRules.resource(MODS, MaterialRules.Kind.BLOCK, "the mod table", problems), MaterialRules.Kind.BLOCK,
+                BuiltInRegistries.BLOCK, fixed, true, problems);
+        int overrides = MaterialRules.apply(user, MaterialRules.Kind.BLOCK, BuiltInRegistries.BLOCK, fixed, false, problems);
         int states = 0;
         int blocksFixed = 0;
         int blocksInferred = 0;
@@ -292,91 +288,25 @@ public final class Materials {
         for (Map.Entry<String, List<String>> entry : inferred.entrySet()) {
             ShadersCompanion.LOGGER.info("Shaders Companion materials: inferred {} ({}): {}", entry.getKey(), entry.getValue().size(), String.join(", ", entry.getValue()));
         }
-        // Items next (Oculus sets the item id map right after this one): ItemMaterials.wrap gives them their classes
+        // Entities and items next (Oculus sets their id maps right after this one): EntityMaterials.wrap and
+        // ItemMaterials.wrap give them their classes
         try {
-            ItemMaterials.build(problems);
+            ItemMaterials.build(problems, user);
             status += "; " + ItemMaterials.status;
         } catch (Throwable t) {
             status += "; items stopped after an error: " + t;
             ShadersCompanion.LOGGER.error("Shaders Companion couldn't give items their material classes", t);
         }
+        try {
+            EntityMaterials.build(problems, user);
+            status += "; " + EntityMaterials.status;
+        } catch (Throwable t) {
+            status += "; entities stopped after an error: " + t;
+            ShadersCompanion.LOGGER.error("Shaders Companion couldn't give entities their material classes", t);
+        }
         for (String problem : problems) {
             ShadersCompanion.LOGGER.warn("Shaders Companion materials: {}", problem);
         }
-    }
-
-    /**
-     * Reads a table of class name to block ids and #tags, from the jar (resource) or a file (path, skipped when
-     * missing), into fixed; later tables win. Returns the number of blocks it set.
-     */
-    private static int readTable(Reference2IntOpenHashMap<Block> fixed, String resource, Path path, List<String> problems) {
-        String source = resource == null ? path.getFileName().toString() : resource.equals(VANILLA) ? "the vanilla table" : "the mod table";
-        JsonObject root;
-        try {
-            if (resource != null) {
-                try (InputStream in = Materials.class.getResourceAsStream(resource)) {
-                    if (in == null) {
-                        problems.add(source + " is missing from the jar");
-                        return 0;
-                    }
-                    root = JsonParser.parseReader(new InputStreamReader(in, StandardCharsets.UTF_8)).getAsJsonObject();
-                }
-            } else {
-                if (!Files.isRegularFile(path)) {
-                    return 0;
-                }
-                try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
-                    root = JsonParser.parseReader(reader).getAsJsonObject();
-                }
-            }
-        } catch (Exception e) {
-            problems.add(source + " can't be read: " + e.getMessage());
-            return 0;
-        }
-        int set = 0;
-        for (Map.Entry<String, JsonElement> entry : root.entrySet()) {
-            // Items are read by ItemMaterials
-            if (entry.getKey().startsWith("_") || entry.getKey().equals("items")) {
-                continue;
-            }
-            int material;
-            if (entry.getKey().equals("none")) {
-                material = -1;
-            } else {
-                try {
-                    material = classNumber(entry.getKey());
-                } catch (IllegalArgumentException e) {
-                    problems.add(source + ": no class named " + entry.getKey());
-                    continue;
-                }
-            }
-            for (JsonElement element : entry.getValue().getAsJsonArray()) {
-                String name = element.getAsString();
-                if (name.startsWith("#")) {
-                    TagKey<Block> tag = TagKey.create(Registries.BLOCK, new ResourceLocation(name.substring(1)));
-                    for (Block block : ForgeRegistries.BLOCKS) {
-                        if (block.defaultBlockState().is(tag)) {
-                            fixed.put(block, material);
-                            set++;
-                        }
-                    }
-                } else {
-                    ResourceLocation id = new ResourceLocation(name);
-                    Block block = ForgeRegistries.BLOCKS.getValue(id);
-                    if (block == null || ForgeRegistries.BLOCKS.getKey(block) == null || !ForgeRegistries.BLOCKS.getKey(block).equals(id)) {
-                        // Mods that aren't installed are fine in the user's file and the mod table; the jar's tables
-                        // should match the mods that are
-                        if (resource != null && (resource.equals(VANILLA) || ModList.get().isLoaded(id.getNamespace()))) {
-                            problems.add(source + ": no block " + name);
-                        }
-                        continue;
-                    }
-                    fixed.put(block, material);
-                    set++;
-                }
-            }
-        }
-        return set;
     }
 
     /** A modded block's class from its sound type, tags and name, or 0 when they say too little or disagree. */

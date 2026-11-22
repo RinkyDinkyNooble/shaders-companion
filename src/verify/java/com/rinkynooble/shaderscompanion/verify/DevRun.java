@@ -145,6 +145,10 @@ import org.lwjgl.opengl.GL33C;
  * -PdevToggle=config.lightLeakFix the floor, ceiling and side wall along the stairs stay as dark as along the sandstone
  * in the "on" rounds.
  * <p>
+ * -PdevScene=doorwall: the stairwall room with closed doors (an oak door with windows and a spruce door) in its far wall
+ * and a closed trapdoor in its ceiling, sunlit outside and a lantern beside the doors outside (-PdevTime=18000 for night);
+ * with -PdevToggle=config.lightLeakFix the room stays as dark as with a solid wall in the "on" rounds.
+ * <p>
  * -PdevScene=exposure: a lit block of town (white buildings with glowstone, a lime lawn with sea lanterns) from above
  * at -PdevTime (18000, midnight), a shot every -PdevEvery ticks (200), -PdevShots of them (13), with the time of day
  * logged; -PdevCycle lets the time run, -PdevStep=500 sets the time that much later before each next shot;
@@ -337,6 +341,14 @@ public final class DevRun {
         if (SHOW_HAND && phase >= 1) {
             mc.options.hideGui = false;
         }
+        if (Boolean.getBoolean("shaderscompanion.devTaczAim") && phase >= 1) {
+            // -PdevTaczAim: TaCZ's aim key held from the scene on (aiming down the sights)
+            for (net.minecraft.client.KeyMapping key : mc.options.keyMappings) {
+                if (key.getName().equals("key.tacz.aim.desc")) {
+                    key.setDown(true);
+                }
+            }
+        }
         if (!shadersOn) {
             // -PdevShadersLate: shaders come on once the world has run that long without them
             if (mc.player != null && ++lateTicks >= SHADERS_LATE) {
@@ -374,6 +386,7 @@ public final class DevRun {
         boolean skyRoom = SCENE.equals("skyroom");
         boolean enclosure = SCENE.equals("enclosure");
         boolean stairWall = SCENE.equals("stairwall");
+        boolean doorWall = SCENE.equals("doorwall");
         boolean store = SCENE.equals("store");
         boolean lampGlass = SCENE.equals("lampglass");
         boolean corridor = SCENE.equals("corridor");
@@ -534,7 +547,9 @@ public final class DevRun {
                         "setblock ~ ~1 ~1 " + (System.getProperty("shaderscompanion.devOutlineBlock", "").contains("|")
                                 ? System.getProperty("shaderscompanion.devOutlineBlock").split("[|]")[1] : "minecraft:air"),
                         Boolean.getBoolean("shaderscompanion.devTacz")
-                                ? "item replace entity @s weapon.mainhand with tacz:modern_kinetic_gun{GunId:\"tacz:ak47\"}"
+                                ? "item replace entity @s weapon.mainhand with tacz:modern_kinetic_gun{GunId:\"" + System.getProperty("shaderscompanion.devTaczGun", "tacz:ak47") + "\""
+                                        + (System.getProperty("shaderscompanion.devTaczSight", "").isEmpty() ? ""
+                                        : ",AttachmentSCOPE:{id:\"tacz:attachment\",Count:1b,tag:{AttachmentId:\"" + System.getProperty("shaderscompanion.devTaczSight") + "\"}}") + "}"
                                 : "item replace entity @s weapon.mainhand with " + System.getProperty("shaderscompanion.devHold", "minecraft:iron_sword"),
                         "item replace entity @s weapon.offhand with " + System.getProperty("shaderscompanion.devHold2", "minecraft:air")}) {
                     mc.player.connection.sendCommand(command);
@@ -657,6 +672,20 @@ public final class DevRun {
                         "setblock ~4 ~ ~2 minecraft:chest[facing=west]", "setblock ~-3 ~ ~-3 minecraft:oak_sign"}) {
                     mc.player.connection.sendCommand(command);
                 }
+                if (Boolean.getBoolean("shaderscompanion.devEntityMaterials")) {
+                    // -PdevEntityMaterials: the husk in iron and gold armour with an iron sword, a minecart, a dropped gold
+                    // block and (with -PdevSbw) a Superb Warfare speedboat in front, for the pack's Entity materials
+                    mc.options.hideGui = true;
+                    for (String command : new String[]{
+                            "item replace entity @e[type=minecraft:husk,limit=1,sort=nearest] armor.head with minecraft:iron_helmet",
+                            "item replace entity @e[type=minecraft:husk,limit=1,sort=nearest] armor.chest with minecraft:iron_chestplate",
+                            "item replace entity @e[type=minecraft:husk,limit=1,sort=nearest] armor.legs with minecraft:golden_leggings",
+                            "item replace entity @e[type=minecraft:husk,limit=1,sort=nearest] weapon.mainhand with minecraft:iron_sword",
+                            "summon minecraft:minecart ~2 ~ ~4", "summon minecraft:item ~-1.5 ~ ~3 {Item:{id:\"minecraft:gold_block\",Count:1b},PickupDelay:32767,Age:-32768}",
+                            net.minecraftforge.fml.ModList.get().isLoaded("superbwarfare") ? "summon superbwarfare:tiny_speedboat ~-3 ~ ~6" : "say no Superb Warfare"}) {
+                        mc.player.connection.sendCommand(command);
+                    }
+                }
                 if (mirror) {
                     mc.options.hideGui = true;
                     mc.player.connection.sendCommand("fill ~-7 ~ ~3 ~7 ~4 ~3 minecraft:black_stained_glass");
@@ -670,7 +699,7 @@ public final class DevRun {
                             mc.player.connection.sendCommand(command);
                         }
                     }
-                } else {
+                } else if (!Boolean.getBoolean("shaderscompanion.devEntityMaterials")) {
                     DebugOverlay.setVisible(true);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: summoned the mobs");
@@ -1104,6 +1133,28 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the stairwall scene");
+            } else if (doorWall) {
+                // The stairwall room with closed doors: its far wall (+Z) has a closed oak door (windows) and a closed
+                // spruce door on the left (+X) half, the outside behind them lit by the sun and by a lantern beside the
+                // doors (-PdevTime=18000 for night), and a closed spruce trapdoor in the ceiling on the right: the room
+                // must stay as dark as with a solid wall (-PdevToggle=config.lightLeakFix). -PdevDoorsOpen opens them.
+                mc.options.hideGui = true;
+                String open = Boolean.getBoolean("shaderscompanion.devDoorsOpen") ? "true" : "false";
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s ~ ~30 ~ " + Integer.getInteger("shaderscompanion.devYaw", 0) + " " + Integer.getInteger("shaderscompanion.devPitch", 15),
+                        "fill ~-7 ~-2 ~-6 ~7 ~7 ~10 minecraft:air",
+                        "fill ~-5 ~-1 ~-4 ~5 ~5 ~6 minecraft:smooth_sandstone", "fill ~-4 ~ ~-3 ~4 ~4 ~5 minecraft:air",
+                        "setblock ~1 ~1 ~6 minecraft:oak_door[facing=north,half=upper,open=" + open + "]",
+                        "setblock ~1 ~ ~6 minecraft:oak_door[facing=north,half=lower,open=" + open + "]",
+                        "setblock ~3 ~1 ~6 minecraft:spruce_door[facing=north,half=upper,open=" + open + "]",
+                        "setblock ~3 ~ ~6 minecraft:spruce_door[facing=north,half=lower,open=" + open + "]",
+                        "setblock ~-2 ~5 ~3 minecraft:spruce_trapdoor[half=top,open=" + open + "]",
+                        "setblock ~2 ~ ~8 minecraft:lantern",
+                        "setblock ~ ~ ~-3 minecraft:lantern"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the doorwall scene");
             } else if (skyRoom) {
                 // A white room lit by the sky through a hole in its ceiling behind the camera, a low table of light grey
                 // stained glass ahead and a wall of it at the far end, a red building across the street outside: the
@@ -1637,7 +1688,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall || store || lampGlass || corridor ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall || doorWall || store || lampGlass || corridor ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {
