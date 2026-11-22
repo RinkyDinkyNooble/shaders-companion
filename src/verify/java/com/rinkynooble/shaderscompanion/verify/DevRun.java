@@ -149,6 +149,14 @@ import org.lwjgl.opengl.GL33C;
  * and a closed trapdoor in its ceiling, sunlit outside and a lantern beside the doors outside (-PdevTime=18000 for night);
  * with -PdevToggle=COMPANION_DOOR_LIGHT (the pack's option, off by default; config.lightLeakFix must be on too) the room
  * stays as dark as with a solid wall in the "on" rounds.
+ * -PdevScene=bedroom: a white concrete room at night lit by a floor lantern, a black stained glass wall on the right
+ * reflecting a quartz wardrobe, a wool dresser and a chest on screen and oak and wool furniture behind the camera (the
+ * user's bedroom of 2026-11-22: where reflections of what is on screen meet those of what isn't). With devpack.py
+ * litcheck, the mirror's lit colour of surfaces also on screen against the screen's.
+ * <p>
+ * -PdevToggle=profile:LOW:MEDIUM:HIGH:ULTRA:MAX applies the pack's presets by name in turn (two rounds each), for a
+ * preset's cost in one run.
+ * <p>
  * -PdevDoorwallBlock=minecraft:iron_block for metal walls, floor and ceiling, -PdevDoorwallDark for no lantern inside,
  * -PdevDoorwallSolid for the wall block in place of the doors and the trapdoor (the reference).
  * <p>
@@ -392,12 +400,13 @@ public final class DevRun {
         boolean doorWall = SCENE.equals("doorwall");
         boolean store = SCENE.equals("store");
         boolean lampGlass = SCENE.equals("lampglass");
+        boolean bedroom = SCENE.equals("bedroom");
         boolean corridor = SCENE.equals("corridor");
         boolean street = SCENE.equals("street");
         boolean darkSpot = SCENE.equals("darkspot");
         boolean meadow = SCENE.equals("meadow") || darkSpot;
         boolean lodMirror = SCENE.equals("lodmirror");
-        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || skyRoom || enclosure || lodMirror || street || store || lampGlass || corridor || SCENE.equals("match") || SCENE.equals("materials");
+        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || skyRoom || enclosure || lodMirror || street || store || lampGlass || bedroom || corridor || SCENE.equals("match") || SCENE.equals("materials");
         boolean shore = SCENE.equals("shore");
         boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
@@ -1052,6 +1061,26 @@ public final class DevRun {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the store scene");
+            } else if (bedroom) {
+                // The user's dark bedroom with a black glass wall (2026-11-22, the seam between reflections of what is on
+                // screen and what isn't): a white concrete room at night lit by one lantern on the floor, a black stained
+                // glass wall on the right reflecting the quartz wardrobe, wool dresser and chest on the left and oak and
+                // red wool furniture behind the camera
+                mc.options.hideGui = true;
+                for (String command : new String[]{
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 18000), "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s " + (Math.floor(mc.player.getX()) + 0.5) + " " + (Math.floor(mc.player.getY()) + 20) + " " + (Math.floor(mc.player.getZ()) + 0.5) + " "
+                                + Integer.getInteger("shaderscompanion.devYaw", 25) + " " + Integer.getInteger("shaderscompanion.devPitch", 10),
+                        "fill ~-6 ~-2 ~-6 ~6 ~6 ~10 minecraft:air",
+                        "fill ~-5 ~-1 ~-5 ~5 ~4 ~9 minecraft:white_concrete", "fill ~-4 ~ ~-4 ~4 ~3 ~8 minecraft:air",
+                        "fill ~-4 ~-1 ~-4 ~4 ~-1 ~8 minecraft:dark_oak_planks",
+                        "fill ~-3 ~ ~1 ~-3 ~3 ~7 minecraft:black_stained_glass",
+                        "fill ~3 ~ ~4 ~4 ~2 ~5 minecraft:quartz_block", "fill ~3 ~ ~1 ~4 ~ ~2 minecraft:white_wool",
+                        "setblock ~2 ~ ~7 minecraft:chest[facing=west]", "setblock ~1 ~ ~8 minecraft:lantern",
+                        "fill ~3 ~ ~-3 ~4 ~2 ~-2 minecraft:oak_planks", "fill ~-1 ~ ~-4 ~1 ~1 ~-4 minecraft:red_wool"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the bedroom scene");
             } else if (lampGlass) {
                 // A closed white wool room at night lit by one lantern on the floor 4 blocks ahead, with light grey
                 // stained glass to its right, behind it and above it and wool to its left: faces pointing at the lantern
@@ -1698,7 +1727,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall || doorWall || store || lampGlass || corridor ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall || doorWall || store || lampGlass || bedroom || corridor ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {
@@ -2106,7 +2135,22 @@ public final class DevRun {
             return;
         }
         try {
-            Iris.getShaderPackOptionQueue().put(TOGGLE, text);
+            if (TOGGLE.equals("profile")) {
+                // -PdevToggle=profile:LOW:MEDIUM:HIGH: the pack's preset of that name, all its options at once
+                net.irisshaders.iris.shaderpack.option.Profile[] found = new net.irisshaders.iris.shaderpack.option.Profile[1];
+                Iris.getCurrentPack().ifPresent(pack -> pack.getMenuContainer().getProfiles().forEach((name, profile) -> {
+                    if (name.equals(text)) {
+                        found[0] = profile;
+                    }
+                }));
+                if (found[0] == null) {
+                    ShadersCompanion.LOGGER.error("Shaders Companion dev run: no preset {}", text);
+                    return;
+                }
+                Iris.queueShaderPackOptionsFromProfile(found[0]);
+            } else {
+                Iris.getShaderPackOptionQueue().put(TOGGLE, text);
+            }
             Iris.reload();
         } catch (Exception e) {
             ShadersCompanion.LOGGER.error("Shaders Companion dev run: setting {} failed", TOGGLE, e);
