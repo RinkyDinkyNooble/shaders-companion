@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.0 (2026-11-22)
+
+For Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31 (exactly this version now). Distant Horizons 3.3.2 is optional. Client only.
+
+- Up to four mirrors at once: a lake and a window beside it, or two walls of a glass building, each get their own sharp reflection. ABZA Shader's "Mirror planes" sets how many (one in Ultra, four in Max).
+- Mirrors no longer switch between surfaces while you stand still, in stores full of glass and metal too.
+- Steady ambient occlusion (with ABZA Shader, every preset): the mod keeps a copy of the blocks around you, so shading in corners and under overhangs no longer changes as you turn or flickers as things move past. Reflections of what is off screen use the same copy, so shiny surfaces indoors show the room around them instead of the sky through the walls, lamps' glow included.
+- Auto-PBR Material Engine (with ABZA Shader, Max preset or the Shaders Companion screen): blocks without a resource pack's PBR maps get a material, so glass, ice, polished stone, metals and gems reflect and shine as they should. Vanilla blocks and Mekanism's, Superb Warfare's and Ad Astra's machines come from the mod's tables, other modded blocks from their sound, tags and name. Rules of your own go in `config/shaderscompanion/*.rules` (an example file is written there).
+- Held items can reflect the world (ABZA Shader's "Held items reflect the world", off by default), TaCZ guns included; "Entity materials" (off by default, experimental) does the same for armour, vehicles and dropped items.
+- Light no longer leaks through the closed sides of stairs and slabs into dark rooms (`lightLeakFix`, on). With ABZA Shader's "Closed doors keep light out" on (off by default), closed doors and trapdoors keep the light out too.
+- Glass beside a lamp no longer glows by itself.
+- Comes with ABZA Shader 2.0.0: new presets (Low, Medium, High, Ultra, Max and ABZA), a new menu, reflections shaded like the screen, steadier rough reflections and TAA. Your shader settings carry over; pick a preset to get the new ones.
+- For shader pack authors: the lattice, material classes and up to four mirror planes. See `API.md`.
+
 ## 1.0.0 (2026-11-19)
 
 For Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31. Distant Horizons 3.3.2 is optional. Client only.
