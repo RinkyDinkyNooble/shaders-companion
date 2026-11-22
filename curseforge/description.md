@@ -61,12 +61,12 @@ It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack
 <td align="center"><strong>Many Features Combined</strong><br>You, the town and the sky in one glass wall</td>
 </tr>
 <tr>
-<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/interior-furniture.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/interior-furniture.jpg" alt="A lit hallway with furniture and potted plants, with ABZA Shader" width="400"></a></td>
-<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/rain-night-house.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/rain-night-house.jpg" alt="A lit house in the rain at night, with ABZA Shader" width="400"></a></td>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/diner.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/diner.jpg" alt="A diner with ceiling lights and a glowing EAT sign, with ABZA Shader" width="400"></a></td>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/neon-rooftop-rain.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/neon-rooftop-rain.jpg" alt="A cyan neon sign over a wet rooftop in the rain, with ABZA Shader" width="400"></a></td>
 </tr>
 <tr>
-<td align="center"><strong>Indoors</strong><br>A hallway with furniture and plants</td>
-<td align="center"><strong>Rain At Night</strong><br>A lit house in the rain</td>
+<td align="center"><strong>Indoors</strong><br>A diner with ceiling lights and a glowing sign</td>
+<td align="center"><strong>Rain At Night</strong><br>A neon sign over a wet rooftop</td>
 </tr>
 </table>
 
