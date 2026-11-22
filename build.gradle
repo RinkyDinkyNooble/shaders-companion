@@ -223,6 +223,11 @@ minecraft {
             if (project.hasProperty('devJfr')) {
                 jvmArg "-XX:StartFlightRecording=filename=${project.file(project.property('devJfr'))},settings=profile"
             }
+            // -PdevProfile: per-pass GPU and CPU times next to every timing line (dev-only mixins in src/verify, never shipped).
+            if (project.hasProperty('devProfile')) {
+                property 'shaderscompanion.devProfile', 'true'
+                args '--mixin.config', 'shaderscompanion-verify.mixins.json'
+            }
             // -PdevSize=1920x1009: the game window's size (854 x 480 by default).
             if (project.hasProperty('devSize')) {
                 var size = project.property('devSize').toString().split('x')

@@ -298,8 +298,10 @@ public final class DevRun {
             lastFrameStart = now;
             GL33C.glQueryCounter(frameQueries[slot * 2], GL33C.GL_TIMESTAMP);
             frameStarted = true;
+            PassProfiler.beginFrame();
         } else if (frameStarted) {
             // Only a frame whose start was timed (the first event can be a frame's end)
+            PassProfiler.endFrame();
             GL33C.glQueryCounter(frameQueries[slot * 2 + 1], GL33C.GL_TIMESTAMP);
             frameStarted = false;
             frameSlot++;
@@ -317,6 +319,7 @@ public final class DevRun {
     }
 
     private static String frameTiming() {
+        PassProfiler.log(TOGGLE.isEmpty() ? SCENE : TOGGLE + " round " + timingRound);
         return String.format("frame %.2f ms, GPU %.2f ms, the mod's GPU %.2f ms, entities' CPU %.3f ms (medians of the last %d frames)", median(frameMillis),
                 median(gpuMillis), median(modGpuMillis), median(entityMillis), Math.min(framesTimed, TIMED_FRAMES));
     }

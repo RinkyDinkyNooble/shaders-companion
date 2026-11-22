@@ -1,0 +1,21 @@
+{
+  "required": false,
+  "minVersion": "0.8.5",
+  "package": "com.rinkynooble.shaderscompanion.verify.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "client": [
+    "ProfileComputeUseMixin",
+    "ProfileGameRendererMixin",
+    "ProfileLatticeMixin",
+    "ProfileLevelMixin",
+    "ProfileModMixin",
+    "ProfilePipelineMixin",
+    "ProfileProgramMixin",
+    "ProfileProgramUseMixin",
+    "ProfileRainMixin",
+    "ProfileShadowMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
