@@ -642,6 +642,8 @@ public final class Lattice {
                 }
             }
         }
+        // Closed doors keep light out (DoorLight): the light engine's data still holds what came through them
+        boolean doors = DoorLight.hasSection(SectionPos.asLong(sectionX, sectionY, sectionZ));
         boolean onlyAir = section.hasOnlyAir();
         BlockState lastState = null;
         int lastId = -1;
@@ -662,7 +664,14 @@ public final class Lattice {
                         bits = stateBits[lastId];
                         detail = stateDetail[lastId];
                     }
-                    int light = (blockLight == null ? 0 : blockLight.get(x, y, z)) | (skyLight == null ? columnSky[x + 16 * z] : skyLight.get(x, y, z)) << 4;
+                    int block = blockLight == null ? 0 : blockLight.get(x, y, z);
+                    int sky = skyLight == null ? columnSky[x + 16 * z] : skyLight.get(x, y, z);
+                    if (doors) {
+                        long at = BlockPos.asLong(sectionX * 16 + x, sectionY * 16 + y, sectionZ * 16 + z);
+                        block = DoorLight.light(LightLayer.BLOCK, at, block);
+                        sky = DoorLight.light(LightLayer.SKY, at, sky);
+                    }
+                    int light = block | sky << 4;
                     cellsUpload.put(i, tag | light | bits);
                     shapeUpload.put(2 * i, (int) shape);
                     shapeUpload.put(2 * i + 1, (int) (shape >>> 32));
@@ -820,7 +829,8 @@ public final class Lattice {
         } else if (fluid.is(FluidTags.LAVA)) {
             bits |= LAVA;
         }
-        if (shape != 0 && !state.canOcclude()) {
+        // Doors and trapdoors hide nothing by Minecraft's rules, but one can't see through them (glass ones aside)
+        if (shape != 0 && !state.canOcclude() && !DoorLight.isDoor(state)) {
             bits |= SEE_THROUGH;
         }
         if (shape != 0 && !collides) {

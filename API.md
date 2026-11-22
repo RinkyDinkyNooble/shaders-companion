@@ -183,9 +183,9 @@ A copy of the blocks around the camera, built from the client's world rather tha
 
 **`lattice_cells`** (`R32UI`), per block:
 
-- bits 0-3: block light, 4-7: sky light (the light engine's, 0 to 15; solid blocks hold 0, so light a face by the block in front of it)
+- bits 0-3: block light, 4-7: sky light (the light engine's, 0 to 15; solid blocks hold 0, so light a face by the block in front of it; with the light leak fix on, the light near closed doors is the corrected light chunk meshes take)
 - bits 8-11: the block's own light emission
-- bit 12: water (waterlogged blocks too), 13: lava, 14: see-through (glass, leaves, plants: the block doesn't hide its neighbours), 15: no collision (plants, flowers, cobwebs, torches)
+- bit 12: water (waterlogged blocks too), 13: lava, 14: see-through (glass, leaves, plants: the block doesn't hide its neighbours; doors and trapdoors are never see-through, glass ones aside), 15: no collision (plants, flowers, cobwebs, torches)
 - bits 16-27: material class ("Material classes" below: the class the block's id carries in the pipeline's block state to id map, 0 for none or while the pack doesn't read the material table); it follows the pack's options, as the ids do
 - bits 28-30: the window tile's parity per axis, `((x >> log2 W) & 1) | ((y >> 7) & 1) << 1 | ((z >> log2 W) & 1) << 2`; when it isn't the parity of the block you asked for, the texel holds a block a window away: unknown
 - bit 31: known. 0 where the chunk isn't loaded, below the world, or not read yet

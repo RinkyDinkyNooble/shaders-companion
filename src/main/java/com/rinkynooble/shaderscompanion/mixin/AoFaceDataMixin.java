@@ -1,6 +1,7 @@
 package com.rinkynooble.shaderscompanion.mixin;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
+import com.rinkynooble.shaderscompanion.client.DoorLight;
 import com.rinkynooble.shaderscompanion.client.LightLeaks;
 import me.jellysquid.mods.sodium.client.model.light.data.LightDataAccess;
 import net.minecraft.core.BlockPos;
@@ -27,6 +28,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * left out like a solid block's: Embeddium's corner blend then takes the lowest of the others in its place. Everywhere
  * else the light is exactly Embeddium's (the shape test keeps out the light engine's own small gaps, measured beside
  * lava at chunk borders).
+ * <p>
+ * A closed door's cell is the face's cell for the faces around the doorway (the wall's sides, the floor under the door,
+ * the lintel): {@link DoorLight} gives it the light of the door's open side, and the cells beyond the door, outside, are
+ * brighter than any light that crossed it. Those are left out too, or Embeddium's corner blend (which counts a dark cell
+ * as an opaque one and takes the others' light in its place) lights the doorway with the outside's full light.
  * <p>
  * Embeddium counts mods with mixins into it as tainting it unless they depend on exactly one Embeddium version, so
  * mods.toml pins the version this is written against.
@@ -119,7 +125,8 @@ public abstract class AoFaceDataMixin {
             shaderscompanion$extraLoss = Math.max(0, world.getBlockState(shaderscompanion$cell).getLightBlock(world, shaderscompanion$cell) - 1);
         }
         int reach = steps + shaderscompanion$extraLoss;
-        if (block <= reach && sky <= reach || !shaderscompanion$shapeNear(world)) {
+        if (block <= reach && sky <= reach
+                || !(DoorLight.closedDoorAt(shaderscompanion$cell.asLong()) || shaderscompanion$shapeNear(world))) {
             return lightmap;
         }
         LightLeaks.closedSamples.increment();

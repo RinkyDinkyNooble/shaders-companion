@@ -148,6 +148,8 @@ import org.lwjgl.opengl.GL33C;
  * -PdevScene=doorwall: the stairwall room with closed doors (an oak door with windows and a spruce door) in its far wall
  * and a closed trapdoor in its ceiling, sunlit outside and a lantern beside the doors outside (-PdevTime=18000 for night);
  * with -PdevToggle=config.lightLeakFix the room stays as dark as with a solid wall in the "on" rounds.
+ * -PdevDoorwallBlock=minecraft:iron_block for metal walls, floor and ceiling, -PdevDoorwallDark for no lantern inside,
+ * -PdevDoorwallSolid for the wall block in place of the doors and the trapdoor (the reference).
  * <p>
  * -PdevScene=exposure: a lit block of town (white buildings with glowstone, a lime lawn with sea lanterns) from above
  * at -PdevTime (18000, midnight), a shot every -PdevEvery ticks (200), -PdevShots of them (13), with the time of day
@@ -1140,18 +1142,23 @@ public final class DevRun {
                 // must stay as dark as with a solid wall (-PdevToggle=config.lightLeakFix). -PdevDoorsOpen opens them.
                 mc.options.hideGui = true;
                 String open = Boolean.getBoolean("shaderscompanion.devDoorsOpen") ? "true" : "false";
+                // -PdevDoorwallBlock=minecraft:iron_block: metal walls, floor and ceiling (reflections of the room near the doors)
+                String walls = System.getProperty("shaderscompanion.devDoorwallBlock", "minecraft:smooth_sandstone");
+                // -PdevDoorwallSolid: the wall block where the doors and the trapdoor would be (what the fix should match)
+                boolean solid = Boolean.getBoolean("shaderscompanion.devDoorwallSolid");
                 for (String command : new String[]{
                         "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
                         "tp @s ~ ~30 ~ " + Integer.getInteger("shaderscompanion.devYaw", 0) + " " + Integer.getInteger("shaderscompanion.devPitch", 15),
                         "fill ~-7 ~-2 ~-6 ~7 ~7 ~10 minecraft:air",
-                        "fill ~-5 ~-1 ~-4 ~5 ~5 ~6 minecraft:smooth_sandstone", "fill ~-4 ~ ~-3 ~4 ~4 ~5 minecraft:air",
-                        "setblock ~1 ~1 ~6 minecraft:oak_door[facing=north,half=upper,open=" + open + "]",
-                        "setblock ~1 ~ ~6 minecraft:oak_door[facing=north,half=lower,open=" + open + "]",
-                        "setblock ~3 ~1 ~6 minecraft:spruce_door[facing=north,half=upper,open=" + open + "]",
-                        "setblock ~3 ~ ~6 minecraft:spruce_door[facing=north,half=lower,open=" + open + "]",
-                        "setblock ~-2 ~5 ~3 minecraft:spruce_trapdoor[half=top,open=" + open + "]",
+                        "fill ~-5 ~-1 ~-4 ~5 ~5 ~6 " + walls, "fill ~-4 ~ ~-3 ~4 ~4 ~5 minecraft:air",
+                        solid ? "say solid wall" : "setblock ~1 ~1 ~6 minecraft:oak_door[facing=north,half=upper,open=" + open + "]",
+                        solid ? "say solid wall" : "setblock ~1 ~ ~6 minecraft:oak_door[facing=north,half=lower,open=" + open + "]",
+                        solid ? "say solid wall" : "setblock ~3 ~1 ~6 minecraft:spruce_door[facing=north,half=upper,open=" + open + "]",
+                        solid ? "say solid wall" : "setblock ~3 ~ ~6 minecraft:spruce_door[facing=north,half=lower,open=" + open + "]",
+                        solid ? "say solid wall" : "setblock ~-2 ~5 ~3 minecraft:spruce_trapdoor[half=top,open=" + open + "]",
                         "setblock ~2 ~ ~8 minecraft:lantern",
-                        "setblock ~ ~ ~-3 minecraft:lantern"}) {
+                        // -PdevDoorwallDark: no lantern inside, so at night whatever lights the room comes through the doors
+                        Boolean.getBoolean("shaderscompanion.devDoorwallDark") ? "setblock ~ ~ ~-3 minecraft:air" : "setblock ~ ~ ~-3 minecraft:lantern"}) {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the doorwall scene");

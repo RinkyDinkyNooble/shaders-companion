@@ -55,6 +55,8 @@ public final class DoorLight {
     private static volatile Long2ByteOpenHashMap cells = NONE;
     /** Sections holding corrected cells (packed section positions), published with {@link #cells}. */
     private static volatile LongOpenHashSet cellSections = new LongOpenHashSet();
+    /** The closed doors worked out (packed block positions), published with {@link #cells}. Read anywhere. */
+    private static volatile LongOpenHashSet closedDoors = new LongOpenHashSet();
 
     /** While the groups are worked out, light lookups give the engine's own light. Main thread only. */
     public static boolean raw;
@@ -143,6 +145,11 @@ public final class DoorLight {
         return cellSections.contains(section);
     }
 
+    /** Whether a closed door worked out stands at the position (packed): chunk mesh builds, any thread. */
+    public static boolean closedDoorAt(long pos) {
+        return closedDoors.contains(pos);
+    }
+
     /** The light of a cell on a layer, given the light engine's. */
     public static int light(LightLayer layer, long pos, int value) {
         byte packed = cells.get(pos);
@@ -206,7 +213,7 @@ public final class DoorLight {
             toScan.clear();
             changed.clear();
             groups = List.of();
-            publish(NONE, new LongOpenHashSet());
+            publish(NONE, new LongOpenHashSet(), new LongOpenHashSet());
             firstChange = lastChange = -1;
             blockEngine = skyEngine = null;
             status = "no closed doors";
@@ -284,7 +291,7 @@ public final class DoorLight {
     }
 
     /** A door or trapdoor (open or closed): vanilla's and modded ones built on them or named so, glass doors left out. */
-    private static boolean isDoor(BlockState state) {
+    static boolean isDoor(BlockState state) {
         return doorBlocks.computeIfAbsent(state.getBlock(), DoorLight::isDoorBlock);
     }
 
@@ -362,7 +369,19 @@ public final class DoorLight {
                 markAround(rebuild, entry.getLongKey());
             }
         }
-        publish(merged, sections);
+        // The faces around a doorway take their light by whether the door is closed (AoFaceDataMixin)
+        LongOpenHashSet oldDoors = closedDoors;
+        for (long door : allDoors) {
+            if (!oldDoors.contains(door)) {
+                markAround(rebuild, door);
+            }
+        }
+        for (long door : oldDoors) {
+            if (!allDoors.contains(door)) {
+                markAround(rebuild, door);
+            }
+        }
+        publish(merged, sections, allDoors);
         for (long section : rebuild) {
             mc.levelRenderer.setSectionDirty(SectionPos.x(section), SectionPos.y(section), SectionPos.z(section));
         }
@@ -372,8 +391,16 @@ public final class DoorLight {
                 allDoors.size(), next.size(), merged.size(), worked, (System.nanoTime() - start) / 1e6, rebuild.size());
     }
 
-    private static void publish(Long2ByteOpenHashMap map, LongOpenHashSet sections) {
+    private static void publish(Long2ByteOpenHashMap map, LongOpenHashSet sections, LongOpenHashSet doors) {
+        // The lattice holds the light too: its sections with corrected cells before or after are read again
+        for (long section : cellSections) {
+            Lattice.markSection(SectionPos.x(section), SectionPos.y(section), SectionPos.z(section));
+        }
+        for (long section : sections) {
+            Lattice.markSection(SectionPos.x(section), SectionPos.y(section), SectionPos.z(section));
+        }
         cellSections = sections;
+        closedDoors = doors;
         cells = map;
     }
 
@@ -522,7 +549,10 @@ public final class DoorLight {
                 if (nextValue == 0) {
                     continue;
                 }
-                if (nextValue >= value) {
+                // Full sky light falls straight down without losing any (under a closed trapdoor too): the cell below
+                // a full cell taken out had its light from it
+                boolean skyFall = layer == LightLayer.SKY && direction == Direction.DOWN && value == 15 && nextValue == 15;
+                if (nextValue >= value && !skyFall) {
                     brighter.enqueue(next);
                     continue;
                 }
@@ -551,7 +581,10 @@ public final class DoorLight {
                     continue;
                 }
                 BlockState state = level.getBlockState(to.set(next));
-                int nextValue = value - Math.max(1, state.getLightBlock(level, to));
+                int lightBlock = state.getLightBlock(level, to);
+                // As the light engine does: full sky light falls straight down through blocks that don't dim it
+                int nextValue = layer == LightLayer.SKY && direction == Direction.DOWN && value == 15 && lightBlock == 0
+                        ? 15 : value - Math.max(1, lightBlock);
                 if (nextValue <= 0 || nextValue <= get(light, layer, next) || !passes(pos, next, direction)) {
                     continue;
                 }

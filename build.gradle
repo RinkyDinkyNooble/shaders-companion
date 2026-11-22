@@ -133,6 +133,14 @@ minecraft {
             if (project.hasProperty('devDoorsOpen')) {
                 property 'shaderscompanion.devDoorsOpen', 'true'
             }
+            // -PdevDoorwallDark: no lantern inside the doorwall scene's room
+            if (project.hasProperty('devDoorwallDark')) {
+                property 'shaderscompanion.devDoorwallDark', 'true'
+            }
+            // -PdevDoorwallSolid: wall blocks in place of the doorwall scene's doors and trapdoor (the reference)
+            if (project.hasProperty('devDoorwallSolid')) {
+                property 'shaderscompanion.devDoorwallSolid', 'true'
+            }
             if (project.hasProperty('devTaczAim')) {
                 property 'shaderscompanion.devTaczAim', 'true'
             }
@@ -200,11 +208,12 @@ minecraft {
             // from a scan of the user's world) at -PdevImportAt (x,y,z from the street's base, "-8,0,-30" by default);
             // the ocean scene places them on the ocean with their own heights (see DevRun).
             // -PdevCorridorFloor, -PdevCorridorLamp, -PdevCorridorSmall=true, -PdevCorridorEnd: the corridor scene's blocks.
+            // -PdevDoorwallBlock=<block>: the doorwall scene's walls, floor and ceiling (minecraft:iron_block for metal).
             // -PdevRow=a;b;c: the materials scene places single blocks of those states instead of its vanilla row;
             // -PdevProbe=mekanism,superbwarfare: it also writes the inference's evidence for every block of those mods
             // to research/materials-probe.tsv.
             ['devCamX', 'devCamY', 'devCamZ', 'devShallow', 'devNightVision', 'devImport', 'devImportAt', 'devCorridorFloor', 'devCorridorLamp', 'devCorridorSmall', 'devCorridorEnd',
-             'devRow', 'devProbe'].each { name ->
+             'devRow', 'devProbe', 'devDoorwallBlock'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }
