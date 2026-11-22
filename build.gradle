@@ -113,6 +113,16 @@ minecraft {
             if (project.hasProperty('devOutlineBlock')) {
                 property 'shaderscompanion.devOutlineBlock', project.property('devOutlineBlock')
             }
+            // -PdevHold=minecraft:golden_sword -PdevHold2=minecraft:glass_bottle: the hand scene's main and off hand items; -PdevHandRoom: the hand scene closed in, lit by lanterns at night.
+            if (project.hasProperty('devHold')) {
+                property 'shaderscompanion.devHold', project.property('devHold')
+            }
+            if (project.hasProperty('devHold2')) {
+                property 'shaderscompanion.devHold2', project.property('devHold2')
+            }
+            if (project.hasProperty('devHandRoom')) {
+                property 'shaderscompanion.devHandRoom', 'true'
+            }
             // -PdevNamespace=mdm: the showroom scene's mod; -PdevResourceReload: resources reloaded after the second toggle round.
             if (project.hasProperty('devNamespace')) {
                 property 'shaderscompanion.devNamespace', project.property('devNamespace')

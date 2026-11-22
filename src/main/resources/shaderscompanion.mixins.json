@@ -10,6 +10,7 @@
     "ClientChunkCacheMixin",
     "ClientLevelMixin",
     "GameRendererMixin",
+    "ItemMaterialMixin",
     "LatticeTextureMixin",
     "MaterialMappingMixin",
     "RenderBuffersMixin",

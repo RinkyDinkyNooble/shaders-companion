@@ -1,0 +1,56 @@
+{
+  "_comment": "Material classes for items (class name -> item ids or #item tags, the classes of vanilla.json). Block items take their block's class and aren't listed. Tools, armour, metal ingots, nuggets, plates, gears and rods and guns are inferred (ItemMaterials); this table holds the rest. Items of mods that aren't installed are skipped; the \"items\" object of config/shaderscompanion-materials.json wins.",
+  "iron": [
+    "minecraft:bucket",
+    "minecraft:water_bucket",
+    "minecraft:lava_bucket",
+    "minecraft:milk_bucket",
+    "minecraft:powder_snow_bucket",
+    "minecraft:cod_bucket",
+    "minecraft:salmon_bucket",
+    "minecraft:pufferfish_bucket",
+    "minecraft:tropical_fish_bucket",
+    "minecraft:axolotl_bucket",
+    "minecraft:tadpole_bucket",
+    "minecraft:shears",
+    "minecraft:flint_and_steel",
+    "minecraft:compass",
+    "minecraft:minecart",
+    "minecraft:chest_minecart",
+    "minecraft:furnace_minecart",
+    "minecraft:hopper_minecart",
+    "minecraft:tnt_minecart",
+    "minecraft:command_block_minecart",
+    "minecraft:iron_horse_armor",
+    "minecraft:iron_ingot",
+    "minecraft:iron_nugget"
+  ],
+  "gold": [
+    "minecraft:clock",
+    "minecraft:golden_horse_armor",
+    "minecraft:gold_ingot",
+    "minecraft:gold_nugget"
+  ],
+  "copper": [
+    "minecraft:copper_ingot",
+    "minecraft:spyglass"
+  ],
+  "dark_metal": [
+    "minecraft:netherite_ingot"
+  ],
+  "gem": [
+    "minecraft:diamond",
+    "minecraft:emerald",
+    "minecraft:amethyst_shard",
+    "minecraft:diamond_horse_armor"
+  ],
+  "glass": [
+    "minecraft:glass_bottle",
+    "minecraft:potion",
+    "minecraft:splash_potion",
+    "minecraft:lingering_potion",
+    "minecraft:experience_bottle",
+    "minecraft:honey_bottle",
+    "minecraft:dragon_breath"
+  ]
+}

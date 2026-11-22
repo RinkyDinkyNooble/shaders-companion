@@ -38,7 +38,8 @@ import org.lwjgl.opengl.GL33C;
  * held item (a TaCZ AK-47 with -PdevTacz, else an iron sword); with -PdevShowHand the hand and HUD stay drawn, and
  * -PdevStrafe -PdevBurst=N -PdevToggle=... walks left during each burst so the item sways over the wall and floor (for
  * ambient occlusion around the hand); -PdevOutlineBlock=minecraft:cobweb places that block just ahead, before the wall
- * (for the selection outline; "a|b": a there and b on top of it).</li>
+ * (for the selection outline; "a|b": a there and b on top of it); -PdevHold=&lt;item&gt; and -PdevHold2=&lt;item&gt; put those
+ * in the main and off hand (held items' material classes); -PdevHandRoom closes the scene in at night, lit by lanterns.</li>
  * <li>-PdevScene=bathroom -PdevFurniture: the hand scene's flow in a room open behind the camera, with Modern Furniture
  * Forked's bathtub, sink cabinet and wall-hung sink along the back wall (the fine shade between parts of a block).</li>
  * <li>-PdevScene=pool: builds a water pool 30 blocks up with a red, glowstone-lit ceiling above the camera's view,
@@ -525,7 +526,7 @@ public final class DevRun {
                 mc.player.onUpdateAbilities();
                 for (String command : new String[]{
                         "time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false",
-                        "gamerule doMobSpawning false", "tp @s ~ ~30 ~ 0 " + PITCH,
+                        "gamerule doMobSpawning false", "tp @s ~ ~30 ~ " + Integer.getInteger("shaderscompanion.devYaw", 0) + " " + PITCH,
                         "fill ~-14 ~-1 ~-6 ~14 ~-1 ~6 minecraft:white_concrete", "fill ~-14 ~ ~-6 ~14 ~5 ~6 minecraft:air",
                         "fill ~-14 ~ ~2 ~14 ~4 ~2 minecraft:white_concrete",
                         "setblock ~1 ~ ~1 minecraft:quartz_block", "setblock ~-1 ~ ~1 minecraft:smooth_quartz_slab",
@@ -534,8 +535,20 @@ public final class DevRun {
                                 ? System.getProperty("shaderscompanion.devOutlineBlock").split("[|]")[1] : "minecraft:air"),
                         Boolean.getBoolean("shaderscompanion.devTacz")
                                 ? "item replace entity @s weapon.mainhand with tacz:modern_kinetic_gun{GunId:\"tacz:ak47\"}"
-                                : "item replace entity @s weapon.mainhand with minecraft:iron_sword"}) {
+                                : "item replace entity @s weapon.mainhand with " + System.getProperty("shaderscompanion.devHold", "minecraft:iron_sword"),
+                        "item replace entity @s weapon.offhand with " + System.getProperty("shaderscompanion.devHold2", "minecraft:air")}) {
                     mc.player.connection.sendCommand(command);
+                }
+                if (Boolean.getBoolean("shaderscompanion.devHandRoom")) {
+                    // -PdevHandRoom: walls and a ceiling all round, at night, lit by two hanging lanterns and a glowstone
+                    // block in the floor beside the wall
+                    for (String command : new String[]{
+                            "time set 18000", "fill ~-6 ~4 ~-6 ~6 ~4 ~6 minecraft:white_concrete", "fill ~-6 ~ ~-6 ~-6 ~3 ~6 minecraft:white_concrete",
+                            "fill ~6 ~ ~-6 ~6 ~3 ~6 minecraft:white_concrete", "fill ~-6 ~ ~-6 ~6 ~3 ~-6 minecraft:white_concrete",
+                            "setblock ~-2 ~3 ~ minecraft:lantern[hanging=true]", "setblock ~2 ~3 ~-1 minecraft:lantern[hanging=true]",
+                            "setblock ~2 ~-1 ~1 minecraft:glowstone"}) {
+                        mc.player.connection.sendCommand(command);
+                    }
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the hand scene");
             } else if (ocean) {

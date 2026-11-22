@@ -47,8 +47,8 @@ public final class Materials {
     static final int TABLE_WIDTH = 512;
     static final String TABLE = "material_table";
     /** Sundial's flag range starts here (bit 14); bits 9-13 are its feature flags, bits 0-8 are free for the class. */
-    private static final int FLAG_RANGE = 1 << 14;
-    private static final int CLASS_MASK = 0x1FF;
+    static final int FLAG_RANGE = 1 << 14;
+    static final int CLASS_MASK = 0x1FF;
     private static final String OVERRIDES = "shaderscompanion-materials.json";
     private static final String VANILLA = "/assets/shaderscompanion/materials/vanilla.json";
     /**
@@ -101,7 +101,7 @@ public final class Materials {
     private static final Map<Integer, Integer> SOUND_CLASSES = Map.of(METAL, classNumber("sound_metal"), classNumber("copper"), classNumber("sound_copper"),
             classNumber("dark_metal"), classNumber("sound_dark_metal"));
     /** Storage block tags (forge:storage_blocks/<name>) and the class they give. */
-    private static final Map<String, String> STORAGE_TAGS = Map.ofEntries(
+    static final Map<String, String> STORAGE_TAGS = Map.ofEntries(
             Map.entry("iron", "iron"), Map.entry("gold", "gold"), Map.entry("copper", "copper"), Map.entry("netherite", "dark_metal"),
             Map.entry("aluminum", "aluminum"), Map.entry("aluminium", "aluminum"), Map.entry("silver", "silver"), Map.entry("platinum", "silver"),
             Map.entry("steel", "metal"), Map.entry("lead", "metal"), Map.entry("tin", "metal"), Map.entry("bronze", "metal"), Map.entry("brass", "metal"),
@@ -152,7 +152,7 @@ public final class Materials {
         return id >= FLAG_RANGE ? id & CLASS_MASK : 0;
     }
 
-    private static int classNumber(String name) {
+    static int classNumber(String name) {
         for (int i = 0; i < CLASSES.length; i++) {
             if (CLASSES[i][0].equals(name)) {
                 return i + 1;
@@ -198,6 +198,7 @@ public final class Materials {
     public static void mergeInto(Object2IntMap<BlockState> ids) {
         boolean wanted = tableWanted;
         tableWanted = false;
+        ItemMaterials.clear();
         if (!wanted) {
             status = "the shader pack doesn't read it";
             return;
@@ -291,6 +292,14 @@ public final class Materials {
         for (Map.Entry<String, List<String>> entry : inferred.entrySet()) {
             ShadersCompanion.LOGGER.info("Shaders Companion materials: inferred {} ({}): {}", entry.getKey(), entry.getValue().size(), String.join(", ", entry.getValue()));
         }
+        // Items next (Oculus sets the item id map right after this one): ItemMaterials.wrap gives them their classes
+        try {
+            ItemMaterials.build(problems);
+            status += "; " + ItemMaterials.status;
+        } catch (Throwable t) {
+            status += "; items stopped after an error: " + t;
+            ShadersCompanion.LOGGER.error("Shaders Companion couldn't give items their material classes", t);
+        }
         for (String problem : problems) {
             ShadersCompanion.LOGGER.warn("Shaders Companion materials: {}", problem);
         }
@@ -326,7 +335,8 @@ public final class Materials {
         }
         int set = 0;
         for (Map.Entry<String, JsonElement> entry : root.entrySet()) {
-            if (entry.getKey().startsWith("_")) {
+            // Items are read by ItemMaterials
+            if (entry.getKey().startsWith("_") || entry.getKey().equals("items")) {
                 continue;
             }
             int material;
