@@ -121,6 +121,18 @@ public final class Materials {
     private Materials() {
     }
 
+    /**
+     * The class a block state carries in a pipeline's block state to id map (the block ids chunk meshes and the mod's
+     * views are drawn with), 0 for none: what the lattice stores, so a pack reads the same class everywhere.
+     */
+    static int classOf(Object2IntMap<BlockState> ids, BlockState state) {
+        if (ids == null) {
+            return 0;
+        }
+        int id = ids.getOrDefault(state, -1);
+        return id >= FLAG_RANGE ? id & CLASS_MASK : 0;
+    }
+
     private static int classNumber(String name) {
         for (int i = 0; i < CLASSES.length; i++) {
             if (CLASSES[i][0].equals(name)) {

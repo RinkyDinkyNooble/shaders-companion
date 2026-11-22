@@ -1,10 +1,12 @@
 package com.rinkynooble.shaderscompanion.client;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
+import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.nio.IntBuffer;
 import java.util.Arrays;
 import java.util.function.IntSupplier;
 import net.irisshaders.iris.api.v0.IrisApi;
+import net.irisshaders.iris.shaderpack.materialmap.WorldRenderingSettings;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -55,6 +57,8 @@ public final class Lattice {
     private static final int LAVA = 1 << 13;
     private static final int SEE_THROUGH = 1 << 14;
     private static final int NO_COLLISION = 1 << 15;
+    private static final int CLASS_SHIFT = 16;
+    private static final int CLASS_BITS = 0x0FFF0000;
     private static final int STATE_BITS = 0x0FFFFF00;
     private static final int VALID = 1 << 31;
     /** Smallest overlap of a shape box with a cell, per axis, that fills the cell (so panes and carpets keep a cell). */
@@ -85,6 +89,11 @@ public final class Lattice {
     private static boolean failed;
     /** Set when Minecraft's block models were baked again (the detail follows the models). */
     private static volatile boolean modelsChanged;
+    /**
+     * The pipeline's block state to id map the material classes were read from: Oculus builds a new one with every
+     * pipeline (a pack loaded or reloaded, an option changed), and the classes in it change with the pack's options.
+     */
+    private static Object2IntMap<BlockState> classIds;
     private static int infoX = Integer.MIN_VALUE;
     private static int infoY;
     private static int infoZ;
@@ -323,6 +332,11 @@ public final class Lattice {
                 statesKnown = 0;
                 LatticeDetail.reset();
                 Arrays.fill(slotDirty, true);
+            }
+            Object2IntMap<BlockState> ids = WorldRenderingSettings.INSTANCE.getBlockStateIds();
+            if (ids != classIds) {
+                classIds = ids;
+                reclass();
             }
 
             long budget = Config.LATTICE_BUDGET.get() * 1000L;
@@ -812,9 +826,27 @@ public final class Lattice {
         if (shape != 0 && !collides) {
             bits |= NO_COLLISION;
         }
+        bits |= Materials.classOf(classIds, state) << CLASS_SHIFT;
         stateShape[id] = shape;
         stateBits[id] = bits & STATE_BITS;
         stateDetail[id] = detail;
+    }
+
+    /** The pipeline's id map changed: every known block state takes its class from the new one, every section is read again. */
+    private static void reclass() {
+        boolean changed = false;
+        for (int id = 0; id < stateKnown.length; id++) {
+            if (!stateKnown[id]) {
+                continue;
+            }
+            BlockState state = Block.BLOCK_STATE_REGISTRY.byId(id);
+            int bits = (stateBits[id] & ~CLASS_BITS) | (state == null ? 0 : Materials.classOf(classIds, state) << CLASS_SHIFT);
+            changed |= bits != stateBits[id];
+            stateBits[id] = bits;
+        }
+        if (changed) {
+            Arrays.fill(slotDirty, true);
+        }
     }
 
     /** A shape as 4 x 4 x 4 cells: bit x + 4 z + 16 y for the cell at (x, y, z), each cell a quarter block. */

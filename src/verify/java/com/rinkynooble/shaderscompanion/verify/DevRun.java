@@ -644,14 +644,18 @@ public final class DevRun {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: summoned the mobs");
             } else if (match) {
                 mc.options.hideGui = true;
+                // -PdevMetal: metal, gem and quartz in place of the bricks, logs, wool, leaves and cobblestone, and a chest
+                boolean metal = Boolean.getBoolean("shaderscompanion.devMetal");
                 for (String command : new String[]{
                         "time set 2000", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
                         "tp @s ~ ~20 ~ -35 12",
                         "fill ~-10 ~-1 ~-10 ~12 ~-1 ~10 minecraft:smooth_stone", "fill ~-10 ~ ~-10 ~12 ~8 ~10 minecraft:air",
                         "fill ~-6 ~ ~6 ~3 ~4 ~6 minecraft:black_stained_glass",
-                        "fill ~6 ~ ~0 ~6 ~3 ~4 minecraft:bricks", "fill ~5 ~ ~-1 ~5 ~2 ~-1 minecraft:oak_log",
-                        "setblock ~4 ~ ~3 minecraft:white_wool", "setblock ~4 ~ ~1 minecraft:red_wool", "setblock ~4 ~1 ~1 minecraft:oak_leaves[persistent=true]",
-                        "fill ~3 ~3 ~0 ~6 ~3 ~4 minecraft:oak_planks", "fill ~2 ~ ~-2 ~2 ~1 ~-2 minecraft:cobblestone"}) {
+                        "fill ~6 ~ ~0 ~6 ~3 ~4 minecraft:" + (metal ? "iron_block" : "bricks"), "fill ~5 ~ ~-1 ~5 ~2 ~-1 minecraft:" + (metal ? "gold_block" : "oak_log"),
+                        "setblock ~4 ~ ~3 minecraft:" + (metal ? "copper_block" : "white_wool"), "setblock ~4 ~ ~1 minecraft:" + (metal ? "quartz_block" : "red_wool"),
+                        "setblock ~4 ~1 ~1 minecraft:" + (metal ? "diamond_block" : "oak_leaves[persistent=true]"),
+                        "fill ~3 ~3 ~0 ~6 ~3 ~4 minecraft:oak_planks", "fill ~2 ~ ~-2 ~2 ~1 ~-2 minecraft:" + (metal ? "netherite_block" : "cobblestone"),
+                        metal ? "setblock ~1 ~ ~3 minecraft:chest[facing=north]" : "time set 2000"}) {
                     mc.player.connection.sendCommand(command);
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the match scene");
@@ -1767,13 +1771,15 @@ public final class DevRun {
                 level.setBlock(at.offset(x, y - at.getY(), 90), y == 65 && Math.floorMod(x, 8) == 0 ? light : wall, 2);
             }
         }
+        // -PdevMetal: iron towers (Distant Horizons' METAL block material, beyond the chunk terrain at render distance 5)
+        var tower = Boolean.getBoolean("shaderscompanion.devMetal") ? Blocks.IRON_BLOCK.defaultBlockState() : wall;
         for (int tx = -60; tx <= 60; tx += 10) {
             int height = 10 + Math.floorMod(tx * 7, 4) * 5;
             for (int y = 63; y < 63 + height; y++) {
                 for (int x = 0; x < 3; x++) {
                     for (int z = 0; z < 3; z++) {
                         boolean window = y % 3 == 0 && x == 1 && z == 0;
-                        level.setBlock(at.offset(tx + x, y - at.getY(), 96 + z), window ? light : wall, 2);
+                        level.setBlock(at.offset(tx + x, y - at.getY(), 96 + z), window ? light : tower, 2);
                     }
                 }
             }

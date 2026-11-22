@@ -127,6 +127,11 @@ minecraft {
             if (project.hasProperty('devFacadeDist')) {
                 property 'shaderscompanion.devFacadeDist', project.property('devFacadeDist')
             }
+            // -PdevMetal: the match scene with metal, gem and quartz blocks in place of its bricks, logs, wool and
+            // leaves, and a chest (for the material classes in the glass, and block entities with an override file)
+            if (project.hasProperty('devMetal')) {
+                property 'shaderscompanion.devMetal', 'true'
+            }
             // -PdevNoFacade: the shore scene without its glass facade (the water is mirrored).
             if (project.hasProperty('devNoFacade')) {
                 property 'shaderscompanion.devNoFacade', 'true'

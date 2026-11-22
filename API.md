@@ -186,7 +186,7 @@ A copy of the blocks around the camera, built from the client's world rather tha
 - bits 0-3: block light, 4-7: sky light (the light engine's, 0 to 15; solid blocks hold 0, so light a face by the block in front of it)
 - bits 8-11: the block's own light emission
 - bit 12: water (waterlogged blocks too), 13: lava, 14: see-through (glass, leaves, plants: the block doesn't hide its neighbours), 15: no collision (plants, flowers, cobwebs, torches)
-- bits 16-27: material class (0 for now)
+- bits 16-27: material class ("Material classes" below: the class the block's id carries in the pipeline's block state to id map, 0 for none or while the pack doesn't read the material table); it follows the pack's options, as the ids do
 - bits 28-30: the window tile's parity per axis, `((x >> log2 W) & 1) | ((y >> 7) & 1) << 1 | ((z >> log2 W) & 1) << 2`; when it isn't the parity of the block you asked for, the texel holds a block a window away: unknown
 - bit 31: known. 0 where the chunk isn't loaded, below the world, or not read yet
 
@@ -244,7 +244,7 @@ A pack that binds this texture asks the mod to give blocks material classes. Whe
 - any other listed block keeps its id (no class). Unlisted blocks without collision (plants) get none.
 - every other block state the pack doesn't list gets `16384` (class 0, no flags) when it gives no light, has collision and isn't a plant by its sound or name. Packs that make unlisted blocks glow at full block light (Sundial's modded light detection) then glow only real light sources: a face pointing at a light-15 block samples that block's cell and has full light too (glass beside a lamp, its far face seen through it). Unlisted light sources and plants stay unlisted (-1).
 
-So `mc_Entity.x` (and `blockEntityId`), the cube and mirror views' ids (`cube_data.b - 1`) and the lattice all carry the class: `id >= 16384 ? id & 0x1FF : 0`.
+So `mc_Entity.x` (and `blockEntityId`, for block entities), the cube and mirror views' ids (`cube_data.b - 1`) carry the class: `id >= 16384 ? id & 0x1FF : 0`; the lattice holds the class itself (`lattice_cells` bits 16-27). Entities and block entities in the mod's views carry no class (their `cube_data.b` is in the entity range). Distant Horizons' LODs carry its 16 block materials only (`cube_data.b & 0xFF` from 49152, `dhMaterialId` on screen); its METAL (4) is sound-based, not this system's.
 
 **`material_table`** (`RGBA8`, 512 x 1, read with `texelFetch(...) * 255`): texel 0 is `(42, 42, protocol 1, 0)` (all 0 without the mod: check it); texel `c` is class `c`'s LabPBR 1.3 bytes: r smoothness, g F0 (0-229) or metal (230-237 the named metals, 255 metal by albedo), b porosity / subsurface scattering, a 255 for a class in use. Use the class where the block's own specular map is absent (Oculus's default specular is 0 in every channel).
 
