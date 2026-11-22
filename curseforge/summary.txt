@@ -1,1 +1,1 @@
-Experimental real mirrors for shader packs: see yourself, mobs and the world behind you in water and glass. Comes with ABZA Shader.
+Real mirrors, reflections of the whole world, steady ambient occlusion and materials for every block, for shader packs. Comes with ABZA Shader.

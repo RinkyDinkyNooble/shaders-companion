@@ -1,10 +1,8 @@
 # Shaders Companion
 
-Shader packs can only reflect what is on your screen. **Shaders Companion** gives them the rest of the world: water and stained or tinted glass become <span style="color:#2dc26b"><strong>real mirrors</strong></span> that show **yourself**, the mobs and buildings behind you and the terrain far away.
+Shader packs can only reflect what is on your screen. **Shaders Companion** gives them the rest of the world: water and glass become <span style="color:#2dc26b"><strong>real mirrors</strong></span> that show **yourself**, the mobs and buildings behind you and the terrain far away, and every other shiny surface reflects the room around it, lamps' glow included. It also gives shader packs **ambient occlusion that stays put**, a **material for every block** and lighting fixes no shader pack can make on its own.
 
-It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack), which uses it out of the box: install the mod and pick "ABZA Shader.zip" in the shader pack list. <span style="color:#e03e2d"><strong>Oculus and Embeddium are required.</strong></span>
-
-<span style="color:#e67e23"><strong>The mirror view is very experimental and may have issues.</strong></span> It doesn't always work perfectly yet. To turn it off, switch off "Shaders Companion mirror view" in ABZA Shader's Reflection settings, or set `mirror = false` in `config/shaderscompanion-client.toml`; the other reflections keep working.
+It comes with [ABZA Shader](https://www.curseforge.com/minecraft/shaders/apocalypse-begins-sundial-lite-fork), which uses all of it out of the box: install the mod and pick "ABZA Shader.zip" in the shader pack list. Made for the [ABZA modpack](https://www.curseforge.com/minecraft/modpacks/apocalypse-begins-zombie-apocalypse). <span style="color:#e03e2d"><strong>Oculus and Embeddium are required.</strong></span>
 
 ![A wall of dark glass reflecting the player and the city behind them](https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/reflection-distant-horizons.jpg)
 
@@ -17,9 +15,9 @@ It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack
 <tr><td><strong>Forge</strong></td><td>47</td></tr>
 <tr><td><strong>Side</strong></td><td><span style="color:#3598db"><strong>Client only</strong></span></td></tr>
 <tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/oculus">Oculus</a></strong></td><td>1.8.0</td></tr>
-<tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/embeddium">Embeddium</a></strong></td><td>0.3.31</td></tr>
+<tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/embeddium">Embeddium</a></strong></td><td>0.3.31, exactly this version</td></tr>
 <tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/distant-horizons">Distant Horizons</a></strong></td><td><span style="color:#3598db"><strong>Optional</strong></span>, 3.3.2</td></tr>
-<tr><td><strong>Shader pack</strong></td><td>Apocalypse Begins [Sundial Lite Fork], <span style="color:#2dc26b"><strong>included</strong></span></td></tr>
+<tr><td><strong><a href="https://www.curseforge.com/minecraft/shaders/apocalypse-begins-sundial-lite-fork">ABZA Shader</a></strong></td><td>2.0.0, <span style="color:#2dc26b"><strong>included</strong></span></td></tr>
 </table>
 
 ***
@@ -41,32 +39,73 @@ It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack
 
 ***
 
-## Gallery
+## Features
+
+### Real Mirrors
+
+The largest water surfaces and walls of stained or tinted glass on screen, <span style="color:#2dc26b"><strong>up to four at once</strong></span>, show a sharp reflection of the world with the shader pack's own light and shadows: you, your gun and armour, mobs, other players, chests and Distant Horizons' far terrain. A lake and a window beside it, or two walls of a glass building, each get their own. In ABZA Shader the mirror is on in the Ultra preset (one) and the Max preset (four).
 
 <table>
 <tr>
 <td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/reflection-entities.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/reflection-entities.jpg" alt="The player and two mobs reflected in dark glass" width="400"></a></td>
-<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/reflection-distant-horizons.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/shaders-companion/main/curseforge/images/reflection-distant-horizons.jpg" alt="A glass wall reflecting the player and a distant city" width="400"></a></td>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-gun-armour.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-gun-armour.jpg" alt="The player's gun and armour reflected in black glass" width="400"></a></td>
 </tr>
 <tr>
 <td align="center"><strong>Mobs And Players</strong><br>You and the mobs next to you, up close</td>
-<td align="center"><strong>Distant Horizons</strong><br>The city behind you, far terrain included</td>
-</tr>
-<tr>
-<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-gun-armour.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-gun-armour.jpg" alt="The player's gun and armour reflected in black glass" width="400"></a></td>
-<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-town.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-town.jpg" alt="A black glass wall reflecting the player, the town and a tower" width="400"></a></td>
-</tr>
-<tr>
 <td align="center"><strong>Gun And Armour</strong><br>What you hold and wear, in black glass</td>
-<td align="center"><strong>Many Features Combined</strong><br>You, the town and the sky in one glass wall</td>
 </tr>
+</table>
+
+### Reflections Of Everything Else
+
+Every other reflecting surface shows what is behind, beside and above you instead of nothing. Indoors, shiny floors and walls reflect the room around them instead of the sky through the walls, lamps' glow included, shaded like the rest of the screen. Reflected water has its colour, waves and sky, and reflected stained glass tints what lies behind it.
+
+### Ambient Occlusion That Stays Put
+
+The mod keeps a copy of the blocks around you, so the shading in corners, under overhangs and around furniture no longer changes as you turn or flickers as things move past. On in every ABZA Shader preset.
+
+### Auto-PBR Material Engine
+
+Blocks without a resource pack's PBR maps get a material, so glass, ice, polished stone, metals and gems reflect and shine as they should. Vanilla blocks and Mekanism's, Superb Warfare's and Ad Astra's machines come from the mod's tables, other modded blocks from their sound, tags and name. Rules of your own go in `config/shaderscompanion/*.rules` (an example file is written there). In ABZA Shader: the Max preset, or "Auto-PBR Material Engine" on the Shaders Companion screen.
+
+### Held Items That Reflect
+
+With "Held items reflect the world" on, what you hold reflects the world around you, TaCZ guns included. "Entity materials" (experimental) does the same for armour, vehicles and dropped items. Both are off by default.
+
+### Light Stays Where It Belongs
+
+Light no longer leaks through the closed sides of stairs and slabs into dark rooms. With "Closed doors keep light out" on (off by default), closed doors and trapdoors keep the light out too.
+
+### Dry Under Glass Roofs
+
+In rain, the ground under glass roofs stays dry, where the rain itself stops.
+
+### No Cost When Unused
+
+The mod only draws while the active shader pack uses it. `/shaderscompanion off` stops it at once, and `/shaderscompanion on` starts it again.
+
+<span style="color:#e03e2d"><strong>NOTE</strong></span>: clear glass is see-through and doesn't act as a mirror. Stained and tinted glass, ice and water do.
+
+***
+
+## Gallery
+
+<table>
 <tr>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-town.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/reflection-town.jpg" alt="A black glass wall reflecting the player, the town and a tower" width="400"></a></td>
 <td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/diner.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/diner.jpg" alt="A diner with ceiling lights and a glowing EAT sign, with ABZA Shader" width="400"></a></td>
-<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/neon-rooftop-rain.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/neon-rooftop-rain.jpg" alt="A cyan neon sign over a wet rooftop in the rain, with ABZA Shader" width="400"></a></td>
 </tr>
 <tr>
+<td align="center"><strong>Many Features Combined</strong><br>You, the town and the sky in one glass wall</td>
 <td align="center"><strong>Indoors</strong><br>A diner with ceiling lights and a glowing sign</td>
-<td align="center"><strong>Rain At Night</strong><br>A neon sign over a wet rooftop</td>
+</tr>
+<tr>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/neon-street-rain.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/neon-street-rain.jpg" alt="Glowing yellow lines on a wet street at night, with ABZA Shader" width="400"></a></td>
+<td align="center"><a href="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/ship-rain.jpg" rel="nofollow"><img src="https://raw.githubusercontent.com/RinkyDinkyNooble/abza-shader-pack/main/curseforge/images/ship-rain.jpg" alt="A lit ship over dark water in the rain, with ABZA Shader" width="400"></a></td>
+</tr>
+<tr>
+<td align="center"><strong>Wet Streets</strong><br>Neon lines in the puddles</td>
+<td align="center"><strong>Ship At Night</strong><br>Its lights on the water in the rain</td>
 </tr>
 </table>
 
@@ -74,22 +113,9 @@ It comes with [ABZA Shader](https://github.com/RinkyDinkyNooble/abza-shader-pack
 
 ***
 
-## What It Does
-
-*   **Mirrors:** the largest water surface or wall of stained or tinted glass on screen shows a sharp reflection of the world, your own player included, with the shader pack's own light and shadows.
-*   **Every other reflecting surface** shows what is behind, beside and above you, where it used to show nothing.
-*   **What you see in them:** terrain, water, glass, mobs, other players, your gun and armour, chests and other block entities, and Distant Horizons' far terrain.
-*   **Water and glass in reflections:** with ABZA Shader, reflected water has its colour, waves and sky, and reflected stained glass tints what lies behind it.
-*   **Dry under glass roofs:** with ABZA Shader, the ground under glass roofs stays dry in rain, where the rain itself stops.
-*   **No cost when unused:** the mod only draws while the active shader pack uses it. `/shaderscompanion off` stops it at once, and `/shaderscompanion on` starts it again.
-
-<span style="color:#e03e2d"><strong>NOTE</strong></span>: clear glass is see-through and doesn't act as a mirror. Stained and tinted glass, ice and water do.
-
-***
-
 ## ABZA Shader Included
 
-The mod puts ABZA Shader into your `shaderpacks` folder as "ABZA Shader.zip" when the game starts.
+The mod puts ABZA Shader into your `shaderpacks` folder as "ABZA Shader.zip" when the game starts. This copy has the mod's options on its Shaders Companion screen and an extra Max preset; the standalone download of the pack has them off.
 
 *   **Updates:** a newer version of the mod replaces its own copy of the pack and keeps your shader settings.
 *   **Turning it off:** set `installBundledPack = false` in `config/shaderscompanion-client.toml`.
@@ -111,15 +137,15 @@ The mod puts ABZA Shader into your `shaderpacks` folder as "ABZA Shader.zip" whe
 
 ## For Shader Pack Authors
 
-Any shader pack can use the mod's views and its map of where rain falls, and a pack that uses them still works without the mod. The format and reference code are in [API.md](https://github.com/RinkyDinkyNooble/shaders-companion/blob/main/API.md) on GitHub.
+Any shader pack can use the mod's views, its copy of the blocks around the camera, its material classes and its map of where rain falls, and a pack that uses them still works without the mod. The format and reference code are in [API.md](https://github.com/RinkyDinkyNooble/shaders-companion/blob/main/API.md) on GitHub.
 
 ***
 
 ## Known Limits
 
-*   **The mirror view** is <span style="color:#e67e23"><strong>very experimental</strong></span> and may have issues.
-*   **Particles** aren't reflected.
-*   **One mirror at a time:** other reflecting surfaces on screen get the less sharp reflection.
+*   **The mirror view** is <span style="color:#e67e23"><strong>experimental</strong></span>. To turn it off, switch off "Shaders Companion mirror view" (Shaders Companion screen) or set `mirror = false` in `config/shaderscompanion-client.toml`; the other reflections keep working.
+*   **Particles** aren't reflected, and a mirror doesn't show another mirror's reflection.
+*   **Four mirrors at most:** other reflecting surfaces on screen get the less sharp reflection.
 *   **Other versions** of Oculus, Embeddium and Distant Horizons than the ones above may not work.
 
 ***
