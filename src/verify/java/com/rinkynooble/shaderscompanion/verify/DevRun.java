@@ -1157,6 +1157,8 @@ public final class DevRun {
                         solid ? "say solid wall" : "setblock ~3 ~ ~6 minecraft:spruce_door[facing=north,half=lower,open=" + open + "]",
                         solid ? "say solid wall" : "setblock ~-2 ~5 ~3 minecraft:spruce_trapdoor[half=top,open=" + open + "]",
                         "setblock ~2 ~ ~8 minecraft:lantern",
+                        // -PdevDoorwallBacked: the wall block right behind the doors outside (no light beyond them)
+                        Boolean.getBoolean("shaderscompanion.devDoorwallBacked") ? "fill ~ ~ ~7 ~4 ~1 ~7 " + walls : "say open behind",
                         // -PdevDoorwallDark: no lantern inside, so at night whatever lights the room comes through the doors
                         Boolean.getBoolean("shaderscompanion.devDoorwallDark") ? "setblock ~ ~ ~-3 minecraft:air" : "setblock ~ ~ ~-3 minecraft:lantern"}) {
                     mc.player.connection.sendCommand(command);
@@ -1810,6 +1812,9 @@ public final class DevRun {
             int shot = ticks - phaseTick - TOGGLE_SETTLE_TICKS - TIMING_TICKS;
             Screenshot.grab(mc.gameDirectory, prefix + "-" + TOGGLE + "-" + label + timingRound + (BURST > 1 ? "-b" + String.format("%03d", shot) : "") + ".png",
                     mc.getMainRenderTarget(), message -> { });
+            if (SCENE.equals("doorwall") && shot == 0) {
+                logDoorwallLight(mc, label);
+            }
             if (PAN != 0.0F || STRAFE) {
                 mc.player.yRotO = panBaseYaw + PAN * Math.min(shot, PAN_TICKS);
                 mc.player.setYRot(panBaseYaw + PAN * Math.min(shot + 1, PAN_TICKS));
@@ -2003,6 +2008,27 @@ public final class DevRun {
             }
             ShadersCompanion.LOGGER.info("Shaders Companion dev run, cells row {}:{}", row, line);
         }
+    }
+
+    /**
+     * The doorwall scene: the light the client's level gives (DoorLight's correction included) and the light engine's own,
+     * sky/block, at the doors' cells, the room's cells in front of them and the cells outside them.
+     */
+    private static void logDoorwallLight(Minecraft mc, String label) {
+        net.minecraft.core.BlockPos base = mc.player.blockPosition();
+        StringBuilder line = new StringBuilder();
+        for (int[] at : new int[][]{{1, 0, 6}, {1, 1, 6}, {3, 0, 6}, {1, 0, 5}, {1, 1, 5}, {1, 0, 7}, {0, 0, 0}, {-2, 0, 3}, {-2, 4, 3}}) {
+            net.minecraft.core.BlockPos pos = base.offset(at[0], at[1], at[2]);
+            int sky = mc.level.getBrightness(net.minecraft.world.level.LightLayer.SKY, pos);
+            int block = mc.level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, pos);
+            com.rinkynooble.shaderscompanion.client.DoorLight.raw = true;
+            int rawSky = mc.level.getBrightness(net.minecraft.world.level.LightLayer.SKY, pos);
+            int rawBlock = mc.level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, pos);
+            com.rinkynooble.shaderscompanion.client.DoorLight.raw = false;
+            line.append(String.format(" | %d,%d,%d %s: %d/%d (engine %d/%d)", at[0], at[1], at[2],
+                    net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(mc.level.getBlockState(pos).getBlock()).getPath(), sky, block, rawSky, rawBlock));
+        }
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run, doorwall light {} (sky/block){}", label, line);
     }
 
     private static String mirrorStatus() {

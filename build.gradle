@@ -141,6 +141,10 @@ minecraft {
             if (project.hasProperty('devDoorwallSolid')) {
                 property 'shaderscompanion.devDoorwallSolid', 'true'
             }
+            // -PdevDoorwallBacked: the wall block right behind the doorwall scene's doors
+            if (project.hasProperty('devDoorwallBacked')) {
+                property 'shaderscompanion.devDoorwallBacked', 'true'
+            }
             if (project.hasProperty('devTaczAim')) {
                 property 'shaderscompanion.devTaczAim', 'true'
             }
