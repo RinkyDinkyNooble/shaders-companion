@@ -24,8 +24,10 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.loading.FMLPaths;
 import net.minecraftforge.registries.ForgeRegistries;
 import org.lwjgl.opengl.GL11C;
@@ -34,8 +36,8 @@ import org.lwjgl.system.MemoryUtil;
 /**
  * The material system: a LabPBR material class for every block that should look smooth or metallic (glass, ice,
  * polished stone, metals, gems ...), from the user's overrides ({@code config/shaderscompanion-materials.json}), the
- * vanilla table in the jar, or, for modded blocks, inference from the block's sound type, tags and name (sources that
- * disagree give nothing). The classes reach a shader pack that reads {@code shaderscompanion:material_table} through
+ * tables in the jar (vanilla blocks, tech mods' machines), or, for other modded blocks, inference from the block's sound
+ * type, tags and name (sources that disagree give nothing). The classes reach a shader pack that reads {@code shaderscompanion:material_table} through
  * Oculus's block ids: when Oculus builds a pipeline's block state to id map, each class goes into the free low bits
  * of Sundial's flag range (ids from 16384), so chunk meshes, the main view, the mod's views and the lattice all carry it.
  * The table holds each class's LabPBR bytes; the pack uses them where the resource pack has no PBR map of its own.
@@ -49,6 +51,13 @@ public final class Materials {
     private static final int CLASS_MASK = 0x1FF;
     private static final String OVERRIDES = "shaderscompanion-materials.json";
     private static final String VANILLA = "/assets/shaderscompanion/materials/vanilla.json";
+    /**
+     * Blocks of tech mods inference can't read: Mekanism's machines sound like stone and have shaped models, Superb
+     * Warfare's containers and radar are shaped and drawn by block entity renderers, and Ad Astra's metal blocks have
+     * nothing but their sound to tell them from decorative blocks that sound like metal.
+     * Blocks of mods that aren't installed are skipped.
+     */
+    private static final String MODS = "/assets/shaderscompanion/materials/mods.json";
 
     /** Classes in order (class number = index + 1): name, then LabPBR smoothness, F0 or metal id, porosity (bytes). */
     private static final Object[][] CLASSES = {
@@ -73,6 +82,12 @@ public final class Materials {
             {"silver", 190, 237, 0},
             {"metal", 140, 255, 0},
             {"dark_metal", 150, 255, 0},
+            // Modded blocks that are metal by their sound type alone (no tag, name word or block entity), with the values
+            // of the class that sound gives: a pack can tell them apart (Better Blockz gives nearly every block a metal
+            // sound, painted tiles and walls included) and light them as something else
+            {"sound_metal", 140, 255, 0},
+            {"sound_copper", 165, 234, 0},
+            {"sound_dark_metal", 150, 255, 0},
     };
 
     // Inference: names of the classes each source can give
@@ -82,6 +97,9 @@ public final class Materials {
     private static final int GEM = classNumber("gem");
     private static final Set<Integer> METALS = Set.of(classNumber("iron"), classNumber("gold"), classNumber("aluminum"), classNumber("chrome"),
             classNumber("copper"), classNumber("exposed_copper"), classNumber("silver"), METAL, classNumber("dark_metal"));
+    /** The class a metal sound type gives, and the class a block gets when that sound is its only evidence. */
+    private static final Map<Integer, Integer> SOUND_CLASSES = Map.of(METAL, classNumber("sound_metal"), classNumber("copper"), classNumber("sound_copper"),
+            classNumber("dark_metal"), classNumber("sound_dark_metal"));
     /** Storage block tags (forge:storage_blocks/<name>) and the class they give. */
     private static final Map<String, String> STORAGE_TAGS = Map.ofEntries(
             Map.entry("iron", "iron"), Map.entry("gold", "gold"), Map.entry("copper", "copper"), Map.entry("netherite", "dark_metal"),
@@ -89,6 +107,7 @@ public final class Materials {
             Map.entry("steel", "metal"), Map.entry("lead", "metal"), Map.entry("tin", "metal"), Map.entry("bronze", "metal"), Map.entry("brass", "metal"),
             Map.entry("nickel", "metal"), Map.entry("zinc", "metal"), Map.entry("osmium", "metal"), Map.entry("invar", "metal"),
             Map.entry("electrum", "gold"), Map.entry("constantan", "copper"), Map.entry("titanium", "metal"), Map.entry("chrome", "chrome"),
+            Map.entry("uranium", "metal"), Map.entry("tungsten", "metal"),
             Map.entry("diamond", "gem"), Map.entry("emerald", "gem"), Map.entry("amethyst", "gem"), Map.entry("quartz", "glazed"));
     /** Name words that give a class on their own, and words that need a second source (sound type or tag) to agree. */
     private static final Map<String, String> STRONG_WORDS = Map.ofEntries(
@@ -98,7 +117,7 @@ public final class Materials {
     private static final Map<String, String> WEAK_WORDS = Map.ofEntries(
             Map.entry("iron", "iron"), Map.entry("gold", "gold"), Map.entry("golden", "gold"), Map.entry("copper", "copper"),
             Map.entry("silver", "silver"), Map.entry("platinum", "silver"), Map.entry("metal", "metal"), Map.entry("metallic", "metal"),
-            Map.entry("lead", "metal"), Map.entry("tin", "metal"), Map.entry("bronze", "metal"), Map.entry("brass", "metal"),
+            Map.entry("lead", "metal"), Map.entry("tin", "metal"), Map.entry("bronze", "metal"), Map.entry("brass", "metal"), Map.entry("tungsten", "metal"),
             Map.entry("plate", "metal"), Map.entry("sheet", "metal"), Map.entry("tile", "glazed"), Map.entry("tiles", "glazed"),
             Map.entry("ceramic", "glazed"), Map.entry("porcelain", "glazed"), Map.entry("concrete", "concrete"), Map.entry("smooth", "polished"),
             Map.entry("exposed", "exposed_copper"));
@@ -140,6 +159,10 @@ public final class Materials {
             }
         }
         throw new IllegalArgumentException("No material class " + name);
+    }
+
+    static String className(int material) {
+        return (String) CLASSES[material - 1][0];
     }
 
     /** The table's texels: texel 0 the header (42, 42, protocol, 0), texel c class c's LabPBR bytes and 255. */
@@ -196,6 +219,7 @@ public final class Materials {
         Reference2IntOpenHashMap<Block> fixed = new Reference2IntOpenHashMap<>();
         List<String> problems = new ArrayList<>();
         readTable(fixed, VANILLA, null, problems);
+        int fromMods = readTable(fixed, MODS, null, problems);
         int overrides = readTable(fixed, null, FMLPaths.CONFIGDIR.get().resolve(OVERRIDES), problems);
         int states = 0;
         int blocksFixed = 0;
@@ -234,7 +258,7 @@ public final class Materials {
                     blocksFixed++;
                 } else {
                     blocksInferred++;
-                    inferred.computeIfAbsent((String) CLASSES[material - 1][0], k -> new ArrayList<>()).add(key.toString());
+                    inferred.computeIfAbsent(className(material), k -> new ArrayList<>()).add(key.toString());
                 }
             }
         }
@@ -256,8 +280,12 @@ public final class Materials {
                 }
             }
         }
-        status = String.format("%d blocks (%d block states) given a class: %d from the tables%s, %d inferred; %d states kept the pack's own id; %d other unlisted states marked as giving no light; %.0f ms",
-                blocksFixed + blocksInferred, states, blocksFixed, overrides > 0 ? " (" + overrides + " overrides)" : "", blocksInferred, skippedIds, unlit,
+        int soundOnly = 0;
+        for (Map.Entry<String, List<String>> entry : inferred.entrySet()) {
+            soundOnly += entry.getKey().startsWith("sound_") ? entry.getValue().size() : 0;
+        }
+        status = String.format("%d blocks (%d block states) given a class: %d from the tables (%d from the mod table%s), %d inferred (%d by their sound alone); %d states kept the pack's own id; %d other unlisted states marked as giving no light; %.0f ms",
+                blocksFixed + blocksInferred, states, blocksFixed, fromMods, overrides > 0 ? ", " + overrides + " overrides" : "", blocksInferred, soundOnly, skippedIds, unlit,
                 (System.nanoTime() - start) / 1.0e6) + (problems.isEmpty() ? "" : "; " + problems.size() + " problems in the tables (see the log)");
         ShadersCompanion.LOGGER.info("Shaders Companion materials: {}", status);
         for (Map.Entry<String, List<String>> entry : inferred.entrySet()) {
@@ -273,13 +301,13 @@ public final class Materials {
      * missing), into fixed; later tables win. Returns the number of blocks it set.
      */
     private static int readTable(Reference2IntOpenHashMap<Block> fixed, String resource, Path path, List<String> problems) {
-        String source = resource != null ? "the vanilla table" : path.getFileName().toString();
+        String source = resource == null ? path.getFileName().toString() : resource.equals(VANILLA) ? "the vanilla table" : "the mod table";
         JsonObject root;
         try {
             if (resource != null) {
                 try (InputStream in = Materials.class.getResourceAsStream(resource)) {
                     if (in == null) {
-                        problems.add("the vanilla table is missing from the jar");
+                        problems.add(source + " is missing from the jar");
                         return 0;
                     }
                     root = JsonParser.parseReader(new InputStreamReader(in, StandardCharsets.UTF_8)).getAsJsonObject();
@@ -323,10 +351,12 @@ public final class Materials {
                         }
                     }
                 } else {
-                    Block block = ForgeRegistries.BLOCKS.getValue(new ResourceLocation(name));
-                    if (block == null || ForgeRegistries.BLOCKS.getKey(block) == null || !ForgeRegistries.BLOCKS.getKey(block).toString().equals(new ResourceLocation(name).toString())) {
-                        // Mods that aren't installed are fine in the user's file; the vanilla table should match
-                        if (resource != null) {
+                    ResourceLocation id = new ResourceLocation(name);
+                    Block block = ForgeRegistries.BLOCKS.getValue(id);
+                    if (block == null || ForgeRegistries.BLOCKS.getKey(block) == null || !ForgeRegistries.BLOCKS.getKey(block).equals(id)) {
+                        // Mods that aren't installed are fine in the user's file and the mod table; the jar's tables
+                        // should match the mods that are
+                        if (resource != null && (resource.equals(VANILLA) || ModList.get().isLoaded(id.getNamespace()))) {
                             problems.add(source + ": no block " + name);
                         }
                         continue;
@@ -390,7 +420,15 @@ public final class Materials {
         // lamps, fittings) mixes materials in one model, and its sound names only one of them (Modern Furniture's desk
         // lamps sound like glass, its bathtub and whiteboard like metal): it needs a tag, or its sound and name to agree.
         boolean enough = isFullCube(state) ? sound != 0 || tag != 0 || strongName != 0 : tag != 0 || sound != 0 && name != 0;
-        return enough ? chosen : 0;
+        if (!enough) {
+            return 0;
+        }
+        // Metal by its sound alone gets that sound's own class, which a pack may light as something else; a block with a
+        // block entity (a machine, a charging station) keeps the metal class
+        if (tag == 0 && name == 0 && family(sound) == METAL && !(block instanceof EntityBlock)) {
+            return SOUND_CLASSES.getOrDefault(sound, chosen);
+        }
+        return chosen;
     }
 
     private static boolean isFullCube(BlockState state) {

@@ -171,7 +171,11 @@ minecraft {
             // from a scan of the user's world) at -PdevImportAt (x,y,z from the street's base, "-8,0,-30" by default);
             // the ocean scene places them on the ocean with their own heights (see DevRun).
             // -PdevCorridorFloor, -PdevCorridorLamp, -PdevCorridorSmall=true, -PdevCorridorEnd: the corridor scene's blocks.
-            ['devCamX', 'devCamY', 'devCamZ', 'devShallow', 'devNightVision', 'devImport', 'devImportAt', 'devCorridorFloor', 'devCorridorLamp', 'devCorridorSmall', 'devCorridorEnd'].each { name ->
+            // -PdevRow=a;b;c: the materials scene places single blocks of those states instead of its vanilla row;
+            // -PdevProbe=mekanism,superbwarfare: it also writes the inference's evidence for every block of those mods
+            // to research/materials-probe.tsv.
+            ['devCamX', 'devCamY', 'devCamZ', 'devShallow', 'devNightVision', 'devImport', 'devImportAt', 'devCorridorFloor', 'devCorridorLamp', 'devCorridorSmall', 'devCorridorEnd',
+             'devRow', 'devProbe'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }
@@ -262,6 +266,13 @@ dependencies {
     if (project.hasProperty('devBlockz')) {
         runtimeOnly fg.deobf("local:betterblockz:0.2.10")
         runtimeOnly fg.deobf("local:lathe:0.3.0")
+    }
+    // -PdevMek: Mekanism and Mekanism Generators (libs/mekanism-10.4.16.80.jar and libs/mekanismgenerators-10.4.16.80.jar,
+    // the instance's Mekanism-1.20.1-10.4.16.80.jar and MekanismGenerators-1.20.1-10.4.16.80.jar renamed): machines
+    // drawn partly by block entity renderers, for the material system's inference (the machines scene).
+    if (project.hasProperty('devMek')) {
+        runtimeOnly fg.deobf("local:mekanism:10.4.16.80")
+        runtimeOnly fg.deobf("local:mekanismgenerators:10.4.16.80")
     }
     // Superb Warfare is loaded in dev runs only with -PdevSbw (the boat scene): its jar without the nested ones, and
     // the mods it needs (SimpleBedrockModel, GeckoLib, Curios, Cloth Config, Ponder, Flywheel) remapped, its script

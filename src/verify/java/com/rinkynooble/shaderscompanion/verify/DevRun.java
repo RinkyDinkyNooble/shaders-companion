@@ -130,6 +130,11 @@ import org.lwjgl.opengl.GL33C;
  * blocks right of its middle (at a block's centre, the same in every run), so -PdevStrafe has room. -PdevCorridorEnd=&lt;block&gt; sets two strips of that block 2
  * wide and 4 high in the far wall (glowstone for the bright end of the user's store aisle, staticish.png).
  * <p>
+ * -PdevScene=materials: a row of vanilla blocks the material system gives classes on a smooth stone floor in the
+ * morning sun. -PdevRow=a;b;c places single blocks of those states instead (modded machines: six to a row, each row a
+ * step higher, on stone, seen from just behind the first); -PdevProbe=mekanism,superbwarfare writes the inference's
+ * evidence for every block of those mods to research/materials-probe.tsv (MaterialsProbe).
+ * <p>
  * -PdevScene=bright: a platform of white concrete, grass and stone bricks with a white wall, a quartz pillar and a
  * black glass wall, screenshotted at midnight and at noon, each with the mod drawing and turned off
  * ("shaderscompanion-bright-&lt;-PdevTag&gt;-night-on.png" and so on): for comparing the brightness of shader pack versions.
@@ -678,15 +683,36 @@ public final class DevRun {
                         "minecraft:netherite_block", "minecraft:diamond_block", "minecraft:glass", "minecraft:ice", "minecraft:slime_block",
                         "minecraft:polished_andesite", "minecraft:quartz_block", "minecraft:white_glazed_terracotta", "minecraft:white_concrete",
                         "minecraft:obsidian", "minecraft:stone"};
+                // -PdevRow=a;b;c: single blocks of those states instead (modded machines), six to a row two blocks apart
+                // on a stone floor, each row a step higher than the one in front, seen from just behind the first
+                String customRow = System.getProperty("shaderscompanion.devRow", "");
                 java.util.List<String> commands = new java.util.ArrayList<>(java.util.List.of(
                         "time set 1000", "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
-                        "tp @s ~ ~20 ~ -60 25",
-                        "fill ~-4 ~-1 ~-4 ~16 ~-1 ~20 minecraft:smooth_stone", "fill ~-4 ~ ~-4 ~16 ~6 ~20 minecraft:air"));
-                for (int i = 0; i < row.length; i++) {
-                    commands.add("fill ~" + (2 + (i % 5) * 3) + " ~ ~" + (4 + (i / 5) * 4) + " ~" + (3 + (i % 5) * 3) + " ~1 ~" + (5 + (i / 5) * 4) + " " + row[i]);
+                        customRow.isEmpty() ? "tp @s ~ ~20 ~ " + Integer.getInteger("shaderscompanion.devYaw", -60) + " " + Integer.getInteger("shaderscompanion.devPitch", 25)
+                                : "tp @s ~ ~20 ~ " + Integer.getInteger("shaderscompanion.devYaw", 0) + " " + Integer.getInteger("shaderscompanion.devPitch", 25),
+                        "fill ~-4 ~-1 ~-4 ~16 ~-1 ~20 minecraft:" + (customRow.isEmpty() ? "smooth_stone" : "stone"),
+                        "fill ~-8 ~ ~-4 ~16 ~6 ~20 minecraft:air"));
+                if (!customRow.isEmpty()) {
+                    commands.add("fill ~-8 ~-1 ~-4 ~-5 ~-1 ~20 minecraft:stone");
+                    String[] blocks = customRow.split(";");
+                    for (int i = 0; i < blocks.length; i++) {
+                        int line = i / 6;
+                        if (line > 0 && i % 6 == 0) {
+                            commands.add("fill ~-6 ~ ~" + (5 + line * 3) + " ~6 ~" + (line - 1) + " ~" + (7 + line * 3) + " minecraft:stone");
+                        }
+                        commands.add("setblock ~" + (-5 + (i % 6) * 2) + " ~" + line + " ~" + (5 + line * 3) + " " + blocks[i]);
+                    }
+                } else {
+                    for (int i = 0; i < row.length; i++) {
+                        commands.add("fill ~" + (2 + (i % 5) * 3) + " ~ ~" + (4 + (i / 5) * 4) + " ~" + (3 + (i % 5) * 3) + " ~1 ~" + (5 + (i / 5) * 4) + " " + row[i]);
+                    }
                 }
                 for (String command : commands) {
                     mc.player.connection.sendCommand(command);
+                }
+                String probe = System.getProperty("shaderscompanion.devProbe", "");
+                if (!probe.isEmpty()) {
+                    com.rinkynooble.shaderscompanion.client.MaterialsProbe.write(probe, java.nio.file.Path.of("..", "research", "materials-probe.tsv"));
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the materials scene");
             } else if (city) {

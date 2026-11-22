@@ -98,7 +98,7 @@ public final class Config {
                 .comment("While a shader pack is on: smooth lighting takes no light from stairs, slabs and other partial blocks through their closed sides, so a wall of stairs with its flat back to a dark room doesn't light the floor, ceiling and walls along it with the daylight outside. Off is Minecraft's own smooth lighting. The world's terrain is rebuilt when this changes.")
                 .define("lightLeakFix", true);
         MATERIALS = builder
-                .comment("Give blocks without their own PBR maps material values (how smooth, how reflective, whether metal) for a shader pack that reads them: vanilla blocks from the mod's own table, modded blocks from their sound, tags and name, and any block from config/shaderscompanion-materials.json. A resource pack's own PBR maps win. Takes effect when the shader pack is next loaded.")
+                .comment("Give blocks without their own PBR maps material values (how smooth, how reflective, whether metal) for a shader pack that reads them: vanilla blocks and some tech mods' machines from the mod's own tables, other modded blocks from their sound, tags and name, and any block from config/shaderscompanion-materials.json. A resource pack's own PBR maps win. Takes effect when the shader pack is next loaded.")
                 .define("materials", true);
         SPEC = builder.build();
     }
