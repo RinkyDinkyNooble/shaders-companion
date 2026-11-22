@@ -147,7 +147,8 @@ import org.lwjgl.opengl.GL33C;
  * <p>
  * -PdevScene=doorwall: the stairwall room with closed doors (an oak door with windows and a spruce door) in its far wall
  * and a closed trapdoor in its ceiling, sunlit outside and a lantern beside the doors outside (-PdevTime=18000 for night);
- * with -PdevToggle=config.lightLeakFix the room stays as dark as with a solid wall in the "on" rounds.
+ * with -PdevToggle=COMPANION_DOOR_LIGHT (the pack's option, off by default; config.lightLeakFix must be on too) the room
+ * stays as dark as with a solid wall in the "on" rounds.
  * -PdevDoorwallBlock=minecraft:iron_block for metal walls, floor and ceiling, -PdevDoorwallDark for no lantern inside,
  * -PdevDoorwallSolid for the wall block in place of the doors and the trapdoor (the reference).
  * <p>

@@ -35,7 +35,8 @@ import net.minecraft.world.phys.shapes.Shapes;
 /**
  * Closed doors and trapdoors keep the light out of the rooms they close. Minecraft's light engine lets light through them,
  * as through every block that isn't a full one (vanilla looks the same), so a closed room with a door is lit from outside:
- * by the sky in the day, by a lamp outside the door at night. While the light leak fix is on ({@link LightLeaks}), the
+ * by the sky in the day, by a lamp outside the door at night. While the light leak fix is on ({@link LightLeaks}) and the
+ * shader pack's {@link #OPTION} is on (off by default: the room's light changes at once when a door opens or closes), the
  * client works out near each closed door the light as it would be with the door solid, and chunk meshes
  * ({@code WorldSliceLightMixin}), entities, block entities and the shader pack's eye brightness ({@code LightEngineMixin})
  * take that light. The server's light, and so mob spawning, is untouched.
@@ -58,6 +59,9 @@ public final class DoorLight {
     /** The closed doors worked out (packed block positions), published with {@link #cells}. Read anywhere. */
     private static volatile LongOpenHashSet closedDoors = new LongOpenHashSet();
 
+    /** The shader pack's on/off option that turns this on (off by default: rooms darken at once when a door closes). */
+    static final String OPTION = "COMPANION_DOOR_LIGHT";
+
     /** While the groups are worked out, light lookups give the engine's own light. Main thread only. */
     public static boolean raw;
 
@@ -72,6 +76,7 @@ public final class DoorLight {
     /** Sections whose light or blocks changed since the last pass. */
     private static final LongOpenHashSet changed = new LongOpenHashSet();
     private static long ticks;
+    private static boolean leakFixBefore;
     private static long firstChange = -1;
     private static long lastChange = -1;
     private static List<Group> groups = List.of();
@@ -205,9 +210,26 @@ public final class DoorLight {
     /** Every client tick, after {@link LightLeaks#tick}. */
     static void tick(Minecraft mc) {
         ticks++;
-        ClientLevel wanted = LightLeaks.active ? mc.level : null;
+        boolean leakFix = LightLeaks.active;
+        ClientLevel wanted = leakFix && PackOptions.on(OPTION) ? mc.level : null;
+        boolean leakFixChanged = leakFix != leakFixBefore;
+        leakFixBefore = leakFix;
         if (wanted != level) {
-            // A new world, or the fix turned on or off (which rebuilds every chunk mesh by itself)
+            // A new world, the light leak fix turned on or off (which rebuilds every chunk mesh by itself), or the
+            // pack's option. Turned on, the passes rebuild the meshes they change; turned off, the meshes that hold
+            // corrected light are built again here
+            if (wanted == null && level != null && level == mc.level && !leakFixChanged) {
+                LongOpenHashSet rebuild = new LongOpenHashSet();
+                for (long cell : cells.keySet()) {
+                    markAround(rebuild, cell);
+                }
+                for (long door : closedDoors) {
+                    markAround(rebuild, door);
+                }
+                for (long section : rebuild) {
+                    mc.levelRenderer.setSectionDirty(SectionPos.x(section), SectionPos.y(section), SectionPos.z(section));
+                }
+            }
             level = wanted;
             doorsBySection.clear();
             toScan.clear();
@@ -619,6 +641,6 @@ public final class DoorLight {
     }
 
     static String status() {
-        return LightLeaks.active ? status : "off";
+        return level != null ? status : !LightLeaks.active ? "off (light leak fix off)" : "off (the shader pack's " + OPTION + " is off)";
     }
 }
