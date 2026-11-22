@@ -170,7 +170,8 @@ minecraft {
             // -PdevImport=<file>: the street scene also places the blocks listed in the file ("dx dy dz state" per line,
             // from a scan of the user's world) at -PdevImportAt (x,y,z from the street's base, "-8,0,-30" by default);
             // the ocean scene places them on the ocean with their own heights (see DevRun).
-            ['devCamX', 'devCamY', 'devCamZ', 'devShallow', 'devNightVision', 'devImport', 'devImportAt'].each { name ->
+            // -PdevCorridorFloor, -PdevCorridorLamp, -PdevCorridorSmall=true, -PdevCorridorEnd: the corridor scene's blocks.
+            ['devCamX', 'devCamY', 'devCamZ', 'devShallow', 'devNightVision', 'devImport', 'devImportAt', 'devCorridorFloor', 'devCorridorLamp', 'devCorridorSmall', 'devCorridorEnd'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }

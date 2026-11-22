@@ -120,6 +120,16 @@ import org.lwjgl.opengl.GL33C;
  * -PdevShadersLate=N: the world loads with Oculus's shaders off and they come on N ticks in (Distant Horizons first,
  * then shaders); the scene follows as usual.
  * <p>
+ * -PdevScene=corridor: a closed corridor at night like the user's (2026-11-21, V1 to v5): a light grey tile floor, grey
+ * walls with brick partitions on both sides, a dark ceiling with light panels every 5 blocks, looking along it
+ * (-PdevPitch, 10 by default; 60 looks down at the floor with the panels off screen). With -PdevBlockz the user's Better
+ * Blockz blocks (floor cray_blockz_0, walls mint_blockz_8, ceiling vect_blockz_4, panels cyberlight_blockz_0: all
+ * but the panels the mod's metal class); without it vanilla stand-ins (smooth stone, grey concrete, black concrete,
+ * sea lanterns). -PdevCorridorFloor and -PdevCorridorLamp override the floor and panel blocks; -PdevCorridorSmall
+ * puts single-block lamps every 3 blocks instead of the panels. The corridor is 5 blocks wide and the camera stands 1.5
+ * blocks right of its middle (at a block's centre, the same in every run), so -PdevStrafe has room. -PdevCorridorEnd=&lt;block&gt; sets two strips of that block 2
+ * wide and 4 high in the far wall (glowstone for the bright end of the user's store aisle, staticish.png).
+ * <p>
  * -PdevScene=bright: a platform of white concrete, grass and stone bricks with a white wall, a quartz pillar and a
  * black glass wall, screenshotted at midnight and at noon, each with the mod drawing and turned off
  * ("shaderscompanion-bright-&lt;-PdevTag&gt;-night-on.png" and so on): for comparing the brightness of shader pack versions.
@@ -357,11 +367,12 @@ public final class DevRun {
         boolean stairWall = SCENE.equals("stairwall");
         boolean store = SCENE.equals("store");
         boolean lampGlass = SCENE.equals("lampglass");
+        boolean corridor = SCENE.equals("corridor");
         boolean street = SCENE.equals("street");
         boolean darkSpot = SCENE.equals("darkspot");
         boolean meadow = SCENE.equals("meadow") || darkSpot;
         boolean lodMirror = SCENE.equals("lodmirror");
-        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || skyRoom || enclosure || lodMirror || street || store || lampGlass || SCENE.equals("match") || SCENE.equals("materials");
+        boolean glass = mirror || corner || grass || shadows || aquarium || overlay || city || reflectPool || facade || glassBox || skyRoom || enclosure || lodMirror || street || store || lampGlass || corridor || SCENE.equals("match") || SCENE.equals("materials");
         boolean shore = SCENE.equals("shore");
         boolean ocean = SCENE.equals("ocean") || shore;
         boolean match = SCENE.equals("match");
@@ -996,6 +1007,45 @@ public final class DevRun {
                     }
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the lampglass scene");
+            } else if (corridor) {
+                // The user's corridor (2026-11-21): light panels in a dark ceiling over a light grey tile floor, grey walls
+                // and brick partitions, closed in at night; the camera looks along it (+Z)
+                mc.options.hideGui = true;
+                boolean blockz = Boolean.getBoolean("shaderscompanion.devBlockz");
+                String floor = System.getProperty("shaderscompanion.devCorridorFloor", blockz ? "betterblockz:cray_blockz_0" : "minecraft:smooth_stone");
+                String wall = blockz ? "betterblockz:mint_blockz_8" : "minecraft:gray_concrete";
+                String ceiling = blockz ? "betterblockz:vect_blockz_4" : "minecraft:black_concrete";
+                String lamp = System.getProperty("shaderscompanion.devCorridorLamp", blockz ? "betterblockz:cyberlight_blockz_0" : "minecraft:sea_lantern");
+                java.util.List<String> commands = new java.util.ArrayList<>(java.util.List.of(
+                        "time set " + Integer.getInteger("shaderscompanion.devTime", 18000), "weather clear", "gamerule doDaylightCycle false", "gamerule doMobSpawning false",
+                        "tp @s " + (Math.floor(mc.player.getX()) + 0.5) + " " + (Math.floor(mc.player.getY()) + 20) + " " + (Math.floor(mc.player.getZ()) + 0.5) + " "
+                                + Integer.getInteger("shaderscompanion.devYaw", 0) + " " + Integer.getInteger("shaderscompanion.devPitch", 10),
+                        "fill ~-7 ~-2 ~-6 ~7 ~6 ~40 minecraft:air",
+                        "fill ~-5 ~-1 ~-4 ~5 ~4 ~38 " + wall, "fill ~-4 ~ ~-3 ~4 ~3 ~37 minecraft:air",
+                        "fill ~-4 ~-1 ~-3 ~4 ~-1 ~37 " + floor, "fill ~-4 ~4 ~-3 ~4 ~4 ~37 " + ceiling,
+                        "fill ~-4 ~ ~2 ~-3 ~2 ~30 minecraft:bricks", "fill ~3 ~ ~2 ~4 ~2 ~30 minecraft:bricks",
+                        "fill ~-4 ~ ~11 ~-3 ~2 ~12 minecraft:air", "fill ~3 ~ ~19 ~4 ~2 ~20 minecraft:air"));
+                if (Boolean.getBoolean("shaderscompanion.devCorridorSmall")) {
+                    // Small lamps: one block in the middle every 3 blocks, as in a store aisle
+                    for (int z = 1; z <= 37; z += 3) {
+                        commands.add("setblock ~ ~4 ~" + z + " " + lamp);
+                    }
+                } else {
+                    for (int z = 1; z <= 31; z += 5) {
+                        commands.add("fill ~-1 ~4 ~" + z + " ~1 ~4 ~" + (z + 1) + " " + lamp);
+                    }
+                }
+                String end = System.getProperty("shaderscompanion.devCorridorEnd", "");
+                if (!end.isEmpty()) {
+                    // Two bright strips in the far wall, as at the end of the user's store aisle (staticish.png)
+                    commands.add("fill ~-2 ~ ~38 ~-1 ~3 ~38 " + end);
+                    commands.add("fill ~1 ~ ~38 ~2 ~3 ~38 " + end);
+                }
+                commands.add("tp @s ~-1.5 ~ ~");
+                for (String command : commands) {
+                    mc.player.connection.sendCommand(command);
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the corridor scene");
             } else if (stairWall) {
                 // A closed room of smooth sandstone at noon, lit only by a lantern behind the camera. Its far wall (+Z) is
                 // oak stairs on the left (+X) half, their flat backs to the room and their open steps to the sunlit
@@ -1545,7 +1595,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall || store || lampGlass ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall || store || lampGlass || corridor ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {
