@@ -34,6 +34,15 @@ import net.minecraft.world.level.chunk.DataLayer;
  */
 final class FarNodes {
     static final long REBUILD_DELAY = 5_000_000_000L;
+    /**
+     * A stored section hash that no copy can match ({@link #hash} never returns it): the section is stored again in full
+     * the next time it is copied or imported ({@link HiddenVoxels}: a voxel next to it opened).
+     */
+    static final long STALE = 1;
+    /** Dev checks: false stores sections as captured, without replacing hidden voxels (FarStore.hideVoxelsForChecks). */
+    static volatile boolean hideVoxels = true;
+    /** Dev checks: false never marks sections stale (the tunnel check's negative control; FarStore.markStaleForChecks). */
+    static volatile boolean markStale = true;
     /** Changed nodes not waiting for a rebuild are written this often. */
     static final long WRITE_INTERVAL = 10_000_000_000L;
 
@@ -49,6 +58,9 @@ final class FarNodes {
     final FarDisk disk;
     final String diskError;
     private final CoarseLevels coarse = new CoarseLevels(this);
+    private final HiddenVoxels hidden = new HiddenVoxels(this);
+    /** Sections marked stale for the main thread to copy again (SectionPos.asLong); the main thread takes them. */
+    final java.util.concurrent.ConcurrentLinkedQueue<Long> recaptures = new java.util.concurrent.ConcurrentLinkedQueue<>();
     /**
      * Every level's nodes in order of use (least recent first). A parent is used after each change of a child (its
      * mark), so a changed child leaves before its parent; a parent that leaves first rebuilds itself from the children
@@ -81,6 +93,11 @@ final class FarNodes {
     static final byte THIN = 4;
     /** Solid but see-through with a collision shape (leaves, glass, fences, walls, panes): thin parts of a canopy or a build. */
     static final byte SHEER = 8;
+    /**
+     * A full cube that hides what is behind it ({@code isSolidRender}: occluding, a full occlusion shape): a voxel with
+     * six of these around it can't be seen ({@link HiddenVoxels}).
+     */
+    static final byte OPAQUE = 16;
     private byte[] flags = new byte[256];
     private int flagsKnown = 2;
 
@@ -102,6 +119,14 @@ final class FarNodes {
     /** Dev checks: log what differs in the first changed sections (FarStore.logChangesForChecks). */
     static volatile int logChanges;
     long sectionsIngested;
+    /** Hidden voxels ({@link HiddenVoxels}): sections whose voxels were looked at, voxels replaced, the time it took. */
+    long hiddenSections;
+    long hiddenReplaced;
+    long hiddenNanos;
+    /** Voxels of stored neighbours replaced when a section next to them arrived; sections marked stale; stale ones stored again. */
+    long hiddenLate;
+    long staleMarked;
+    long staleRestored;
     long rebuilds;
     long folds;
     long ingestNanos;
@@ -230,6 +255,34 @@ final class FarNodes {
             node = new Node(level, x, y, z);
             creates++;
         }
+        keep(node);
+        return node;
+    }
+
+    /** A stored level-0 node, in memory or read from disk into it; null when none is stored. */
+    Node levelZeroIfStored(int x, int y, int z) {
+        long key = Node.key(0, x, y, z);
+        Node node = cache.getAndMoveToLast(key);
+        if (node != null || disk == null) {
+            return node;
+        }
+        try {
+            node = disk.load(key);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        if (node != null) {
+            loads++;
+            keep(node);
+        }
+        return node;
+    }
+
+    private void keep(Node node) {
+        int level = node.level;
+        long key = node.key;
+        // It may change from now on: masks kept from disk would go stale
+        faceMasks.remove(key);
         cache.putAndMoveToLast(key, node);
         cached++;
         nodes[level]++;
@@ -237,7 +290,21 @@ final class FarNodes {
         if (node.compact()) {
             compact++;
         }
-        return node;
+    }
+
+    /** A section next to a voxel that opened: stored again in full next time, and the main thread asked to copy it ({@link HiddenVoxels}). */
+    void markStale(Node node, int slot, int sectionX, int sectionY, int sectionZ) {
+        node.sectionHash[slot] = STALE;
+        node.dirty = true;
+        changedSinceWrite = true;
+        staleMarked++;
+        recaptures.add(net.minecraft.core.SectionPos.asLong(sectionX, sectionY, sectionZ));
+    }
+
+    /** A node's voxels changed outside an ingest (hidden voxels next to a new section): written with the next batch. */
+    void changedWithoutIngest(Node node) {
+        node.dirty = true;
+        changedSinceWrite = true;
     }
 
     /** Gives a node in the cache its arrays before they are written to. */
@@ -264,8 +331,17 @@ final class FarNodes {
         }
     }
 
-    /** CoarseLevels' flags of a state id ({@link #OPEN}, {@link #WATER}, {@link #THIN}, {@link #SHEER}). */
+    /**
+     * The flags of a state id ({@link #OPEN}, {@link #WATER}, {@link #THIN}, {@link #SHEER}, {@link #OPAQUE}). Small so
+     * that it is inlined: it runs for every voxel of a fold (M1c's JFR: 16% of the worker while flying, as one method).
+     */
     byte flags(int id) {
+        byte[] f = flags;
+        return id < flagsKnown && id >= 0 ? f[id] : flagsOfNew(id);
+    }
+
+    /** {@link #flags} for ids assigned since it was last asked: worked out once per state. */
+    private byte flagsOfNew(int id) {
         if (id >= flagsKnown) {
             int size = states.size();
             if (flags.length < size) {
@@ -296,6 +372,16 @@ final class FarNodes {
                         } else if (collides) {
                             f |= SHEER;
                         }
+                    }
+                    boolean opaque;
+                    try {
+                        opaque = state.isSolidRender(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+                    } catch (RuntimeException e) {
+                        // A modded block that wants a real world: never counted as hiding anything
+                        opaque = false;
+                    }
+                    if (opaque) {
+                        f |= OPAQUE;
                     }
                 }
                 flags[i] = f;
@@ -366,12 +452,29 @@ final class FarNodes {
             if (node == null) {
                 node = getOrCreate(0, nx, ny, nz);
             }
-            if (node.sectionHash[slot] == 0) {
+            long old = node.sectionHash[slot];
+            boolean hide = hideVoxels;
+            if (hide) {
+                // Hidden voxels (the hash above is of the copy as captured): what opened next to the stored sections
+                // around, then this section's own
+                long hiddenStart = System.nanoTime();
+                hidden.prepare(section.x, section.y, section.z, ids);
+                if (old != 0 && markStale) {
+                    hidden.invalidateOpened(section.x, section.y, section.z, node, ids);
+                }
+                hiddenReplaced += hidden.normalize(ids, sectionLight);
+                hiddenSections++;
+                hiddenNanos += System.nanoTime() - hiddenStart;
+            }
+            if (old == 0) {
                 node.known += 4096;
                 sectionsStored++;
                 sessionNew++;
                 explored.add(ChunkPos.asLong(section.x, section.z));
             } else {
+                if (old == STALE) {
+                    staleRestored++;
+                }
                 sessionChanged++;
                 countChange(node, section);
             }
@@ -395,6 +498,12 @@ final class FarNodes {
                         node.biome[Node.biomeIndex(ox / 4 + x, oy / 4 + y, oz / 4 + z)] = sectionBiomes[i++];
                     }
                 }
+            }
+            if (hide) {
+                // The faces of the stored sections around that face this one
+                long hiddenStart = System.nanoTime();
+                hiddenLate += hidden.late(section.x, section.y, section.z);
+                hiddenNanos += System.nanoTime() - hiddenStart;
             }
             if (node.known == Node.VOXELS && sectionUniform()) {
                 // Complete, and the section was one state: perhaps the whole node is (open sky, solid rock)
@@ -509,7 +618,7 @@ final class FarNodes {
         }
     }
 
-    /** A 64-bit hash of the converted section (ids, light, biomes); never 0, which means "none stored". */
+    /** A 64-bit hash of the converted section (ids, light, biomes); never 0, which means "none stored", nor {@link #STALE}. */
     private long hash() {
         long h = 0x9E3779B97F4A7C15L;
         for (int i = 0; i < 4096; i++) {
@@ -528,7 +637,7 @@ final class FarNodes {
             h = (h ^ sectionBiomes[i]) * 0xFF51AFD7ED558CCDL;
             h ^= h >>> 32;
         }
-        return h == 0 ? 1 : h;
+        return h == 0 || h == STALE ? 2 : h;
     }
 
     /** A node changed: its octant of the parent is marked, the parent's rebuild due 5 seconds from now. */
@@ -640,6 +749,11 @@ final class FarNodes {
                 }
             }
             cache.remove(node.key);
+            if (diskBorders && node.level < Node.LEVELS - 1 && node.known > 0) {
+                // Its faces for the exposure test of the nodes next to it, so that test needn't read it back from disk
+                keepMasks(node.key, masksOf(node));
+                faceMasksKept++;
+            }
             cached--;
             nodes[node.level]--;
             bytes -= node.bytes();
@@ -730,6 +844,79 @@ final class FarNodes {
     /** The node next to the given one at its level, if it is in memory (for CoarseLevels' exposure test at node borders). */
     Node neighbour(Node node, int dx, int dy, int dz) {
         return peek(node.level, node.x + dx, node.y + dy, node.z + dz);
+    }
+
+    /** Face masks kept for nodes on disk ({@link #faceMasks}); M1c measured the hit rate during an import. */
+    static final int FACE_MASKS = 8192;
+    /** Dev checks: false keeps M1a's exposure test at node borders, which sees only neighbours in memory (FarStore.diskBordersForChecks). */
+    static volatile boolean diskBorders = true;
+    private static final long[] NO_NODE = new long[0];
+    /**
+     * For nodes not in memory: per face (west, east, down, up, north, south: the layer x 0, x 31, y 0, y 31, z 0, z 31),
+     * which voxels are open or decorations (CoarseLevels' "exposed"), 1,024 bits each, so the exposure test at node
+     * borders sees the node next door when it has left memory (768 bytes a node, at most {@link #FACE_MASKS} of them,
+     * least recently used first out). Kept when a node leaves memory, read from disk only for nodes not seen this
+     * session (the first version read them all from disk: the import took 29% longer). A node entering memory drops
+     * its masks.
+     */
+    private final Long2ObjectLinkedOpenHashMap<long[]> faceMasks = new Long2ObjectLinkedOpenHashMap<>();
+    long faceMaskHits;
+    long faceMaskReads;
+    long faceMasksKept;
+
+    /** The face masks of a node not in memory (null when none is stored), read from disk the first time. */
+    long[] faceMasks(int level, int x, int y, int z) {
+        if (!diskBorders) {
+            return null;
+        }
+        long key = Node.key(level, x, y, z);
+        long[] masks = faceMasks.getAndMoveToLast(key);
+        if (masks != null) {
+            faceMaskHits++;
+            return masks == NO_NODE ? null : masks;
+        }
+        Node node = null;
+        if (disk != null) {
+            try {
+                node = disk.load(key);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        faceMaskReads++;
+        masks = node == null ? NO_NODE : masksOf(node);
+        keepMasks(key, masks);
+        return masks == NO_NODE ? null : masks;
+    }
+
+    private void keepMasks(long key, long[] masks) {
+        faceMasks.putAndMoveToLast(key, masks);
+        if (faceMasks.size() > FACE_MASKS) {
+            faceMasks.removeFirst();
+        }
+    }
+
+    private long[] masksOf(Node node) {
+        long[] masks = new long[6 * 16];
+        for (int a = 0; a < Node.SIZE; a++) {
+            for (int b = 0; b < Node.SIZE; b++) {
+                int bit = a * 32 + b;
+                setOpen(masks, 0, bit, node, Node.index(0, a, b));
+                setOpen(masks, 1, bit, node, Node.index(31, a, b));
+                setOpen(masks, 2, bit, node, Node.index(a, 0, b));
+                setOpen(masks, 3, bit, node, Node.index(a, 31, b));
+                setOpen(masks, 4, bit, node, Node.index(a, b, 0));
+                setOpen(masks, 5, bit, node, Node.index(a, b, 31));
+            }
+        }
+        return masks;
+    }
+
+    private void setOpen(long[] masks, int face, int bit, Node node, int i) {
+        if ((flags(node.state(i)) & (OPEN | THIN)) != 0) {
+            int at = face * 1024 + bit;
+            masks[at >> 6] |= 1L << (at & 63);
+        }
     }
 
     long bytesInMemory() {

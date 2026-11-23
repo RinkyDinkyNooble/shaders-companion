@@ -2,8 +2,9 @@ package com.rinkynooble.shaderscompanion.client.far;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.PriorityQueue;
 import java.util.function.Consumer;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.ChunkPos;
@@ -13,13 +14,17 @@ import net.minecraft.world.level.chunk.LevelChunk;
  * The main thread's half of the far store: which sections wait to be copied, and the copying itself within a budget
  * of microseconds per frame. Sections are kept per chunk column with a due time: a chunk that loads is due 1 second
  * later (its light arrives after its blocks), a block or light change 1 second after the last change, at most 5 seconds
- * after the first (so a section that never stops changing is still copied). Each frame, due columns go into rings by
+ * after the first (so a section that never stops changing is still copied), and a chunk that loaded is copied at most
+ * 2 seconds after it loaded even while its light still changes (DESIGN's target: a loaded chunk in the far terrain
+ * within 2 seconds; the light that arrives later copies it again). Each frame, due columns go into rings by
  * distance from the camera's chunk, and their sections are copied nearest first (nearest ring, then nearest section
  * height) until the budget is spent; a copy goes to the worker at once. Main thread only.
  */
 final class FarCapture {
     private static final long DELAY = 1_000_000_000L;
     private static final long MAX_DELAY = 5_000_000_000L;
+    /** A chunk that loaded is copied at most this long after it loaded (M1c: with only MAX_DELAY, 38% took longer than 2 s in flight). */
+    private static final long LOAD_MAX_DELAY = 2_000_000_000L;
     /**
      * Main-thread time per frame for copying the dirty sections of chunks that unload (their last copy) before the rest
      * are let go: with the frame's own budget it stays under the 1 ms a frame the design allows (a teleport right after
@@ -27,6 +32,7 @@ final class FarCapture {
      */
     private static final long UNLOAD_ALLOWANCE = 800_000L;
     private static final int RINGS = 96;
+    private static final java.lang.management.ThreadMXBean THREADS = java.lang.management.ManagementFactory.getThreadMXBean();
 
     /** A chunk column with sections waiting to be copied. */
     private static final class Column {
@@ -35,6 +41,8 @@ final class FarCapture {
         final long[] dirty;
         int dirtyCount;
         long firstMark;
+        /** When its chunk loaded, until its first copy after that (at most LOAD_MAX_DELAY later; dev checks record the delay). */
+        long loadedAt;
         long due;
         /** The due time it was queued with (the waiting queue's order); due may have moved later since. */
         long queuedDue;
@@ -55,7 +63,11 @@ final class FarCapture {
     private final int minSection;
     private final int sections;
     private final Long2ObjectOpenHashMap<Column> columns = new Long2ObjectOpenHashMap<>();
-    private final ArrayDeque<Column> waiting = new ArrayDeque<>();
+    /**
+     * Columns waiting for their due time, earliest first (M1c: a plain queue in the order of marking held a column capped
+     * at 2 seconds after its load behind one due later, by up to a second).
+     */
+    private final PriorityQueue<Column> waiting = new PriorityQueue<>(Comparator.comparingLong(c -> c.queuedDue));
     @SuppressWarnings("unchecked")
     private final ArrayList<Column>[] rings = new ArrayList[RINGS];
     private int ringX = Integer.MIN_VALUE;
@@ -80,6 +92,15 @@ final class FarCapture {
     double frameMicrosAverage;
     double frameMicrosMax;
     double sectionMicros;
+
+    /** Dev checks: every frame's main-thread nanoseconds while recording (null when not). */
+    long[] recorded;
+    int recordedFrames;
+    long recordedFrom;
+    long recordedLostFrom;
+    /** Dev checks: while recording, the time from each chunk's load to its first copy, in nanoseconds. */
+    long[] recordedLoads;
+    int recordedLoadCount;
 
     // The join: from the start until the backlog first empties
     private long joinStart;
@@ -118,6 +139,9 @@ final class FarCapture {
     /** A chunk loaded: all its sections. */
     void markChunk(int x, int z) {
         Column column = column(x, z);
+        if (column.loadedAt == 0) {
+            column.loadedAt = System.nanoTime();
+        }
         for (int i = 0; i < sections; i++) {
             mark(column, i);
         }
@@ -146,10 +170,13 @@ final class FarCapture {
 
     private void schedule(Column column, long now) {
         column.due = Math.min(now + DELAY, column.firstMark + MAX_DELAY);
+        if (column.loadedAt != 0) {
+            column.due = Math.min(column.due, column.loadedAt + LOAD_MAX_DELAY);
+        }
         if (!column.waiting && !column.ready) {
             column.waiting = true;
             column.queuedDue = column.due;
-            waiting.addLast(column);
+            waiting.add(column);
         }
     }
 
@@ -179,14 +206,18 @@ final class FarCapture {
 
     /** Copies due sections nearest the camera first until the budget is spent (called once a frame). */
     void frame(int cameraSectionX, int cameraSectionY, int cameraSectionZ, long budgetNanos) {
+        // Dev checks: the thread's processor time too, outside the timed part (a pause for the garbage collector or the
+        // system adds wall time, not processor time)
+        long cpuStart = recorded != null ? THREADS.getCurrentThreadCpuTime() : 0;
         long start = System.nanoTime();
         unloadNanosThisFrame = 0;
         int capturedBefore = (int) sectionsCaptured;
         if (cameraSectionX != ringX || cameraSectionZ != ringZ) {
             rebucket(cameraSectionX, cameraSectionZ);
         }
-        while (!waiting.isEmpty() && waiting.peekFirst().queuedDue <= start) {
-            Column column = waiting.pollFirst();
+        long rebucketed = System.nanoTime();
+        while (!waiting.isEmpty() && waiting.peek().queuedDue <= start) {
+            Column column = waiting.poll();
             column.waiting = false;
             if (column.removed) {
                 continue;
@@ -195,14 +226,24 @@ final class FarCapture {
                 // Marked again since it was queued: back in line with its new due time
                 column.waiting = true;
                 column.queuedDue = column.due;
-                waiting.addLast(column);
+                waiting.add(column);
                 continue;
             }
             addReady(column);
         }
         // Copies at unload since the last frame came out of this frame's budget
+        long queued = System.nanoTime();
         serve(cameraSectionY, start, budgetNanos - outsideNanos);
-        long nanos = System.nanoTime() - start + outsideNanos;
+        long end = System.nanoTime();
+        long nanos = end - start + outsideNanos;
+        if (recorded != null && nanos > 1_000_000L) {
+            // Dev checks: what a frame over 1 ms spent its time on
+            long cpu = THREADS.getCurrentThreadCpuTime() - cpuStart;
+            ShadersCompanion.LOGGER.info("Shaders Companion far store: a frame took {} us ({} us of processor time, measured around it): {} us copying at unload "
+                            + "before it, {} us sorting rings, {} us due columns, {} us copying ({} sections; {} columns waiting, {} ready)", nanos / 1000, cpu / 1000,
+                    outsideNanos / 1000, (rebucketed - start) / 1000, (queued - rebucketed) / 1000, (end - queued) / 1000, (int) sectionsCaptured - capturedBefore,
+                    waiting.size(), readyColumns);
+        }
         outsideNanos = 0;
         account(nanos, (int) sectionsCaptured - capturedBefore, start);
     }
@@ -227,7 +268,7 @@ final class FarCapture {
                         // Marked again after it became due: wait for its light to settle
                         column.waiting = true;
                         column.queuedDue = column.due;
-                        waiting.addLast(column);
+                        waiting.add(column);
                     }
                     continue;
                 }
@@ -239,6 +280,12 @@ final class FarCapture {
                 }
                 // A later change waits its delay from now, not from the first mark of this round
                 column.firstMark = start;
+                if (column.loadedAt != 0) {
+                    if (recordedLoads != null && recordedLoadCount < recordedLoads.length) {
+                        recordedLoads[recordedLoadCount++] = start - column.loadedAt;
+                    }
+                    column.loadedAt = 0;
+                }
                 // Sections nearest the camera's height first
                 for (int step = 0; step < 2 * sections && column.dirtyCount > 0; step++) {
                     int i = cameraIndex + ((step & 1) == 0 ? step >> 1 : -(step + 1 >> 1));
@@ -305,6 +352,12 @@ final class FarCapture {
     }
 
     private void account(long nanos, int captured, long now) {
+        if (recorded != null) {
+            if (recordedFrames == recorded.length) {
+                recorded = java.util.Arrays.copyOf(recorded, recorded.length * 2);
+            }
+            recorded[recordedFrames++] = nanos;
+        }
         windowNanos += nanos;
         windowMax = Math.max(windowMax, nanos);
         windowFrames++;

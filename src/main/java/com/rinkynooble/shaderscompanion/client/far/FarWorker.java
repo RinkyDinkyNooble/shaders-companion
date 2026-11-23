@@ -21,6 +21,7 @@ final class FarWorker {
     private static final long REBUILD_PASS_NANOS = 100_000_000L;
 
     private final LinkedBlockingQueue<Object> tasks = new LinkedBlockingQueue<>();
+    final Thread thread;
     private FarNodes store;
     private FarImport importer;
     private long lastRebuildPass;
@@ -43,11 +44,13 @@ final class FarWorker {
     volatile int regionFiles;
     volatile String diskError;
     volatile FarImport.Progress importProgress;
+    /** The store's sections to copy again (FarNodes.recaptures), for the main thread; null without a store. */
+    volatile java.util.Queue<Long> recaptures;
     /** Lines for the chat (an import's start and end), taken by the main thread. */
     final LinkedBlockingQueue<String> messages = new LinkedBlockingQueue<>();
 
     FarWorker() {
-        Thread thread = new Thread(this::run, "Shaders Companion far store");
+        thread = new Thread(this::run, "Shaders Companion far store");
         thread.setDaemon(true);
         thread.setPriority(Thread.MIN_PRIORITY);
         thread.start();
@@ -223,6 +226,7 @@ final class FarWorker {
         }
         lastPublish = now;
         FarNodes s = store;
+        recaptures = s == null ? null : s.recaptures;
         if (s == null) {
             sectionsStored = 0;
             sessionNew = 0;

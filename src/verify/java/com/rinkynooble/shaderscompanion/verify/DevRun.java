@@ -269,6 +269,16 @@ public final class DevRun {
     private static final boolean FAR_REJOIN = Boolean.getBoolean("shaderscompanion.devFarRejoin");
     /** -PdevFarImport=R: the far store check imports the saved chunks within R chunks (M1b). */
     private static final int FAR_IMPORT = Integer.getInteger("shaderscompanion.devFarImport", 0);
+    /**
+     * -PdevFarTunnel: the import check digs a tunnel across section and node borders deep under the vantage once the
+     * store has settled, with granite hidden around it beforehand, compares the store with the world before, after and
+     * once the tunnel is filled again (M1c, hidden voxels).
+     */
+    private static final boolean FAR_TUNNEL = Boolean.getBoolean("shaderscompanion.devFarTunnel");
+    /** -PdevFarRawStore=path: the import check compares its store with a store written without hidden voxels (M1c). */
+    private static final String FAR_RAW_STORE = System.getProperty("shaderscompanion.devFarRawStore", "");
+    /** -PdevFarFlight: the far store check joins, teleports away at once, then flies across Chunky's square (M1c). */
+    private static final boolean FAR_FLIGHT = Boolean.getBoolean("shaderscompanion.devFarFlight");
     /** -PdevFarStoreCache=N: the far store's cache for the run in MB (0, the default: the config's). */
     private static final int FAR_STORE_CACHE = Integer.getInteger("shaderscompanion.devFarStoreCache", 0);
     /** -PdevFarRender=N: the render distance for the run (restored at the end). */
@@ -338,6 +348,12 @@ public final class DevRun {
             FarStore.forceForChecks(true, FAR_STORE_CACHE);
             // -PdevFarDiff=N: what differs in the first N sections that change
             FarStore.logChangesForChecks(Integer.getInteger("shaderscompanion.devFarDiff", 0));
+            // -PdevFarRaw: sections stored as captured, hidden voxels kept (M1c)
+            FarStore.hideVoxelsForChecks(!Boolean.getBoolean("shaderscompanion.devFarRaw"));
+            // -PdevFarMemoryBorders: the coarser levels' exposure test at node borders sees only nodes in memory (M1a, M1b)
+            FarStore.diskBordersForChecks(!Boolean.getBoolean("shaderscompanion.devFarMemoryBorders"));
+            // -PdevFarNoStale: sections next to an opened voxel are not marked stale (the tunnel check's negative control)
+            FarStore.markStaleForChecks(!Boolean.getBoolean("shaderscompanion.devFarNoStale"));
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: far store on for the run, heap {} MB", Runtime.getRuntime().maxMemory() >> 20);
         }
         if (FAR_RENDER > 0) {
@@ -394,6 +410,10 @@ public final class DevRun {
                 long end = GL33C.glGetQueryObjecti64(frameQueries[slot * 2 + 1], GL15C.GL_QUERY_RESULT);
                 gpuMillis[framesTimed % TIMED_FRAMES] = (end - start) / 1.0E6;
                 frameMillis[framesTimed % TIMED_FRAMES] = (now - lastFrameStart) / 1.0E6;
+                if (flightFrames != null) {
+                    flightFrames.add((now - lastFrameStart) / 1.0E6);
+                    flightGpu.add((end - start) / 1.0E6);
+                }
                 modGpuMillis[framesTimed % TIMED_FRAMES] = Math.max(0L, CubeView.gpuNanosForChecks()) / 1.0E6;
                 entityMillis[framesTimed % TIMED_FRAMES] = CubeView.entityNanosForChecks() / 1.0E6;
                 framesTimed++;
@@ -710,6 +730,9 @@ public final class DevRun {
                         farGlass(level, false);
                         if (FAR_STORE && Boolean.getBoolean("shaderscompanion.devFarShapes")) {
                             farShapes(level, true);
+                        }
+                        if (FAR_STORE && FAR_TUNNEL) {
+                            farTunnel(level, 0);
                         }
                         int chunkyRadius = Integer.getInteger("shaderscompanion.devFarChunky", 0);
                         if (chunkyRadius > 0) {
@@ -2738,9 +2761,13 @@ public final class DevRun {
         int t = ticks - phaseTick;
         double[] frame = FarStore.frameMicrosForChecks();
         if (phase == 1) {
-            phase = FAR_IMPORT > 0 ? 40 : 10;
+            phase = FAR_IMPORT > 0 ? 40 : FAR_FLIGHT ? 50 : 10;
             phaseTick = ticks;
             storeSettledTicks = 0;
+            return;
+        }
+        if (phase >= 50) {
+            farStoreFlight(mc, t);
             return;
         }
         if (phase >= 30) {
@@ -2951,14 +2978,29 @@ public final class DevRun {
             if (t % 200 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store after the import {} s: {}", t / 20, FarStore.status());
             }
+            if ((storeSettledTicks >= 100 || t >= 12000) && FAR_TUNNEL && tunnelStep == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store tunnel: settled after the import, comparing with the world | {}", FarStore.status());
+                logWhenDone(tunnelCheck());
+                tunnelStep = 1;
+                phase = 47;
+                phaseTick = ticks;
+                return;
+            }
             if (storeSettledTicks >= 100 || t >= 12000) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store {} {} s after the import: {}", t >= 12000 ? "not settled" : "settled", t / 20,
                         FarStore.status());
-                storeMapsLeft = 6;
-                logWhenDone(FarStore.map(0, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, STORE_MAP_SIZE, "shaderscompanion-lod-import-L0.png")
-                        .thenApply(line -> new String[]{line}));
-                logWhenDone(FarStore.map(3, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, STORE_MAP_SIZE, "shaderscompanion-lod-import-L3.png")
-                        .thenApply(line -> new String[]{line}));
+                storeMapsLeft = 9;
+                if (!FAR_RAW_STORE.isEmpty()) {
+                    storeMapsLeft++;
+                    // The chunks the client showed (render distance 5 around the vantage, and one more) are left out
+                    int cx = FAR_X >> 4;
+                    int cz = FAR_Z >> 4;
+                    logWhenDone(FarStore.compareWithRawStoreForChecks(java.nio.file.Path.of(FAR_RAW_STORE), new int[]{cx - 7, cz - 7, cx + 7, cz + 7}));
+                }
+                for (int level = 0; level <= 4; level++) {
+                    logWhenDone(FarStore.map(level, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, STORE_MAP_SIZE, "shaderscompanion-lod-import-L" + level + ".png")
+                            .thenApply(line -> new String[]{line}));
+                }
                 int all = FAR_IMPORT * 16;
                 int x0 = Math.floorDiv((FAR_X >> 4) * 16 - all, 64) * 64;
                 int z0 = Math.floorDiv((FAR_Z >> 4) * 16 - all, 64) * 64;
@@ -2968,6 +3010,27 @@ public final class DevRun {
                 logWhenDone(FarStore.compressionForChecks());
                 phase = 43;
                 phaseTick = ticks;
+            }
+        } else if (phase == 47 || phase == 48) {
+            // The tunnel (-PdevFarTunnel): dug, compared once settled, filled again, compared once settled
+            MinecraftServer server = mc.getSingleplayerServer();
+            if (phase == 47 && t == 40) {
+                server.execute(() -> farTunnel(server.overworld(), 1));
+            }
+            storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+            if (t >= 240 && storeSettledTicks >= 100 || t >= 1200) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store tunnel {} ({} s): comparing with the world | {}", phase == 47 ? "dug" : "filled again",
+                        t / 20, FarStore.status());
+                logWhenDone(tunnelCheck());
+                if (phase == 47) {
+                    server.execute(() -> farTunnel(server.overworld(), 2));
+                    phase = 48;
+                } else {
+                    tunnelStep = 2;
+                    phase = 42;
+                }
+                phaseTick = ticks;
+                storeSettledTicks = 0;
             }
         } else if (phase == 43) {
             if (storeMapsLeft <= 0 || t >= 6000) {
@@ -2981,6 +3044,281 @@ public final class DevRun {
                 finish(mc);
             }
         }
+    }
+
+    // The far store's flight (-PdevFarFlight, M1c): research/lod/M1.md, "M1c"
+
+    /**
+     * The flight: a diagonal across Chunky's square (blocks x -1568 to 495, z -1344 to 719) from A to B, at least 20
+     * chunks inside its edges so that render distance 16 never asks the server for a chunk it hasn't generated; 1,980
+     * blocks at 30 blocks a second, 66 seconds.
+     */
+    private static final double FLIGHT_AX = -1240.5;
+    private static final double FLIGHT_AZ = -1020.5;
+    private static final double FLIGHT_BX = 159.5;
+    private static final double FLIGHT_BZ = 379.5;
+    private static java.util.List<Double> flightFrames;
+    private static java.util.List<Double> flightGpu;
+    private static long[] flightCounters;
+    private static long flightWorkerCpu;
+    private static long flightRenderCpu;
+    private static long flightServerCpu;
+    private static long flightWall;
+    private static long serverThreadId = -1;
+
+    /**
+     * -PdevFarFlight (with -PdevFarStore and -PdevFarRender=N): 50 waits a second after joining and teleports to the
+     * flight's start, 1,000 blocks away, while the join's sections are still being copied (M1a's open case: every
+     * loaded chunk unloads); 51 records every frame's main-thread time for 20 seconds; 52 waits until the store has
+     * settled; 53 flies A to B at 30 blocks a second with the store on, recording the main thread's time per frame, the
+     * frame and GPU times, the worker's processor time (ThreadMXBean) and its counters; 54 turns the store off; 55 flies
+     * back with the store off (frame and GPU times only); 56 goes back to the vantage and quits.
+     */
+    private static void farStoreFlight(Minecraft mc, int t) {
+        double flightLength = Math.hypot(FLIGHT_BX - FLIGHT_AX, FLIGHT_BZ - FLIGHT_AZ);
+        int flightTicks = (int) Math.ceil(flightLength / FILL_SPEED);
+        double[] frame = FarStore.frameMicrosForChecks();
+        if (phase == 50) {
+            if (t == 20) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store flight: joined, teleporting to the start | {}", FarStore.status());
+                FarStore.recordFramesForChecks(true);
+                mc.player.connection.sendCommand("tp @s " + FLIGHT_AX + " " + STORE_FLY_Y + " " + FLIGHT_AZ + " " + FAR_YAW + " " + FAR_PITCH);
+                phase = 51;
+                phaseTick = ticks;
+            }
+        } else if (phase == 51) {
+            if (t > 2) {
+                holdAt(mc, FLIGHT_AX, FLIGHT_AZ);
+            }
+            if (t % 20 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store after the teleport {} s: main thread {} us a frame (max {}), {} sections waiting | {}", t / 20,
+                        String.format("%.0f", frame[0]), String.format("%.0f", frame[1]), (int) frame[2], FarStore.status());
+            }
+            if (t >= 400) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store teleport after joining, the 20 s from the teleport: {}",
+                        framesSummary(FarStore.recordFramesForChecks(false)));
+                phase = 52;
+                phaseTick = ticks;
+                storeSettledTicks = 0;
+            }
+        } else if (phase == 52) {
+            holdAt(mc, FLIGHT_AX, FLIGHT_AZ);
+            storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+            if (storeSettledTicks >= 100 || t >= 2400) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store before the flight ({} after {} s) | {}", storeSettledTicks >= 100 ? "settled" : "not settled",
+                        t / 20, FarStore.status());
+                logWhenDone(FarStore.stats());
+                startFlightWindow(true);
+                phase = 53;
+                phaseTick = ticks;
+                storeFlyMax = 0;
+                storeFlySum = 0;
+                storeFlySeconds = 0;
+            }
+        } else if (phase == 53 || phase == 55) {
+            boolean out = phase == 53;
+            double f = Math.min(1.0, (double) t / flightTicks);
+            double x = out ? FLIGHT_AX + (FLIGHT_BX - FLIGHT_AX) * f : FLIGHT_BX + (FLIGHT_AX - FLIGHT_BX) * f;
+            double z = out ? FLIGHT_AZ + (FLIGHT_BZ - FLIGHT_AZ) * f : FLIGHT_BZ + (FLIGHT_AZ - FLIGHT_BZ) * f;
+            holdAt(mc, x, z);
+            if (t % 20 == 19) {
+                if (out) {
+                    storeFlyMax = Math.max(storeFlyMax, frame[1]);
+                    storeFlySum += frame[0];
+                    storeFlySeconds++;
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store flying {} {} s at x {} z {}: main thread {} us a frame (max {}), {} sections waiting, frame {} ms, "
+                                + "GPU {} ms | {}", out ? "out (store on)" : "back (store off)", t / 20, String.format("%.0f", x), String.format("%.0f", z),
+                        String.format("%.0f", frame[0]), String.format("%.0f", frame[1]), (int) frame[2], String.format("%.2f", median(frameMillis)),
+                        String.format("%.2f", median(gpuMillis)), FarStore.status());
+            }
+            if (t >= flightTicks) {
+                if (out) {
+                    long[] frames = FarStore.recordFramesForChecks(false);
+                    String loads = loadsSummary(FarStore.recordedLoadsForChecks());
+                    long[] before = flightCounters;
+                    long wall = System.nanoTime() - flightWall;
+                    long worker = FarStore.workerCpuNanosForChecks() - flightWorkerCpu;
+                    long render = renderCpu() - flightRenderCpu;
+                    long server = serverCpu() - flightServerCpu;
+                    String frameTimes = frameTimesSummary();
+                    int distance = mc.options.getEffectiveRenderDistance();
+                    FarStore.countersForChecks().whenComplete((after, error) -> mc.execute(() -> ShadersCompanion.LOGGER.info(
+                            "Shaders Companion dev run, far store flight with the store on ({} s, render distance {}): main thread {}; {}; {}; "
+                                    + "processor: the far store's worker {}% of a core, the render thread {}%, the server thread {}%; worker: {}",
+                            String.format("%.1f", wall / 1.0e9), distance, framesSummary(frames), loads, frameTimes, String.format("%.1f", 100.0 * worker / wall),
+                            String.format("%.1f", 100.0 * render / wall), String.format("%.1f", 100.0 * server / wall), FarStore.countersSummary(before, after))));
+                    logWhenDone(FarStore.stats());
+                    phase = 54;
+                } else {
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store flight with the store off ({} s, render distance {}): {}",
+                            String.format("%.1f", (System.nanoTime() - flightWall) / 1.0e9), mc.options.getEffectiveRenderDistance(), frameTimesSummary());
+                    flightFrames = null;
+                    flightGpu = null;
+                    phase = 56;
+                }
+                phaseTick = ticks;
+            }
+        } else if (phase == 54) {
+            holdAt(mc, FLIGHT_BX, FLIGHT_BZ);
+            if (t == 100) {
+                flightFrames = null;
+                flightGpu = null;
+                FarStore.forceForChecks(false, FAR_STORE_CACHE);
+            } else if (t == 200) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store off for the flight back: {}", FarStore.status());
+                startFlightWindow(false);
+                phase = 55;
+                phaseTick = ticks;
+            }
+        } else if (phase == 56) {
+            if (t == 1) {
+                mc.player.connection.sendCommand("tp @s " + FAR_X + ".5 " + farY + " " + FAR_Z + ".5 " + FAR_YAW + " " + FAR_PITCH);
+            } else if (t >= 100) {
+                finish(mc);
+            }
+        }
+    }
+
+    /** Keeps the player at a spot in the air at the flight's height (client side, as the other flights do). */
+    private static void holdAt(Minecraft mc, double x, double z) {
+        mc.player.setDeltaMovement(0.0, 0.0, 0.0);
+        mc.player.setPos(x, STORE_FLY_Y, z);
+        mc.player.setYRot(FAR_YAW);
+        mc.player.yRotO = FAR_YAW;
+        mc.player.setXRot(FAR_PITCH);
+        mc.player.xRotO = FAR_PITCH;
+    }
+
+    private static void startFlightWindow(boolean store) {
+        flightFrames = new java.util.ArrayList<>();
+        flightGpu = new java.util.ArrayList<>();
+        flightWall = System.nanoTime();
+        if (store) {
+            FarStore.recordFramesForChecks(true);
+            flightWorkerCpu = FarStore.workerCpuNanosForChecks();
+            flightRenderCpu = renderCpu();
+            flightServerCpu = serverCpu();
+            flightCounters = null;
+            FarStore.countersForChecks().whenComplete((counters, error) -> flightCounters = counters);
+        }
+    }
+
+    private static long renderCpu() {
+        return java.lang.management.ManagementFactory.getThreadMXBean().getCurrentThreadCpuTime();
+    }
+
+    private static long serverCpu() {
+        var bean = java.lang.management.ManagementFactory.getThreadMXBean();
+        if (serverThreadId < 0) {
+            for (var info : bean.getThreadInfo(bean.getAllThreadIds())) {
+                if (info != null && info.getThreadName().equals("Server thread")) {
+                    serverThreadId = info.getThreadId();
+                }
+            }
+        }
+        return serverThreadId < 0 ? 0 : bean.getThreadCpuTime(serverThreadId);
+    }
+
+    /** The main thread's time per frame from FarStore.recordFramesForChecks: average, 99th percentile, max, per section. */
+    private static String framesSummary(long[] recorded) {
+        if (recorded == null || recorded.length < 2) {
+            return "no frames";
+        }
+        int n = recorded.length - 2;
+        long sections = recorded[n];
+        long lost = recorded[n + 1];
+        long[] frames = java.util.Arrays.copyOf(recorded, n);
+        java.util.Arrays.sort(frames);
+        long sum = 0;
+        int over1ms = 0;
+        for (long f : frames) {
+            sum += f;
+            if (f > 1_000_000L) {
+                over1ms++;
+            }
+        }
+        return String.format("%d frames, %.1f us a frame on average, 99th percentile %.0f us, max %.0f us, %d frames over 1 ms; %d sections copied (%.2f us each), "
+                        + "%d not copied at unload", n, n == 0 ? 0.0 : sum / 1.0e3 / n, n == 0 ? 0.0 : frames[Math.min(n - 1, (int) (n * 0.99))] / 1.0e3,
+                n == 0 ? 0.0 : frames[n - 1] / 1.0e3, over1ms, sections, sections == 0 ? 0.0 : sum / 1.0e3 / sections, lost);
+    }
+
+    /** Chunk load to first copy (FarStore.recordedLoadsForChecks): median, 90th percentile, max, and the share within 2 seconds. */
+    private static String loadsSummary(long[] loads) {
+        if (loads.length == 0) {
+            return "no chunk loads";
+        }
+        java.util.Arrays.sort(loads);
+        int within = 0;
+        for (long l : loads) {
+            if (l <= 2_000_000_000L) {
+                within++;
+            }
+        }
+        return String.format("%d chunks loaded, first copy after %.2f s (median), %.2f s (90th percentile), %.2f s at most, %.0f%% within 2 s", loads.length,
+                loads[loads.length / 2] / 1.0e9, loads[Math.min(loads.length - 1, (int) (loads.length * 0.9))] / 1.0e9, loads[loads.length - 1] / 1.0e9,
+                100.0 * within / loads.length);
+    }
+
+    private static String frameTimesSummary() {
+        if (flightFrames == null || flightFrames.isEmpty()) {
+            return "no frame times";
+        }
+        double[] f = flightFrames.stream().mapToDouble(Double::doubleValue).sorted().toArray();
+        double[] g = flightGpu.stream().mapToDouble(Double::doubleValue).sorted().toArray();
+        return String.format("frames %d: frame time median %.2f ms, 99th percentile %.2f, max %.2f; GPU median %.2f ms, 99th percentile %.2f", f.length, f[f.length / 2],
+                f[Math.min(f.length - 1, (int) (f.length * 0.99))], f[f.length - 1], g[g.length / 2], g[Math.min(g.length - 1, (int) (g.length * 0.99))]);
+    }
+
+    private static int tunnelStep;
+    private static final java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> tunnelSaved = new java.util.LinkedHashMap<>();
+
+    /** The world check around the tunnel: chunks -37 to -33 by -22 to -18, sections 2 to 6 (y 32 to 111). */
+    private static java.util.concurrent.CompletableFuture<String[]> tunnelCheck() {
+        return FarStore.compareWithWorldForChecks(-35, -20, 2, 2, 6);
+    }
+
+    /**
+     * -PdevFarTunnel: step 0 fills a box around the tunnel with stone and puts granite where its walls will be, hidden
+     * until the tunnel opens it: the layer below (y 63, the next section and node down), the row to the north (z -321,
+     * the next chunk and node), the row to the south and the layer above (the same section) and the two end blocks (the
+     * next chunk's sections in the same node). Step 1 digs the tunnel: y 64, z -320, x -560 to -529, along a node corner
+     * and across the chunk and node border at x -544. Step 2 puts every block of the box back as it was.
+     */
+    private static void farTunnel(net.minecraft.server.level.ServerLevel level, int step) {
+        int changed = 0;
+        if (step == 0) {
+            // A solid stone box around the tunnel (x -562 to -527, y 61 to 67, z -323 to -317: the far world has a cave
+            // there), granite around the tunnel's line and the line itself stone, every block kept to put back
+            tunnelSaved.clear();
+            for (int x = -562; x <= -527; x++) {
+                for (int y = 61; y <= 67; y++) {
+                    for (int z = -323; z <= -317; z++) {
+                        BlockPos pos = new BlockPos(x, y, z);
+                        tunnelSaved.put(pos, level.getBlockState(pos));
+                        boolean line = y == 64 && z == -320 && x >= -560 && x <= -529;
+                        boolean ring = x >= -560 && x <= -529 && (z == -320 && (y == 63 || y == 65) || y == 64 && (z == -321 || z == -319))
+                                || y == 64 && z == -320 && (x == -561 || x == -528);
+                        var wanted = ring && !line ? Blocks.GRANITE.defaultBlockState() : Blocks.STONE.defaultBlockState();
+                        if (level.getBlockState(pos) != wanted) {
+                            level.setBlock(pos, wanted, 2);
+                            changed++;
+                        }
+                    }
+                }
+            }
+        } else {
+            for (var entry : tunnelSaved.entrySet()) {
+                BlockPos pos = entry.getKey();
+                boolean tunnel = pos.getY() == 64 && pos.getZ() == -320 && pos.getX() >= -560 && pos.getX() <= -529;
+                var wanted = step == 2 ? entry.getValue() : tunnel ? Blocks.AIR.defaultBlockState() : null;
+                if (wanted != null && level.getBlockState(pos) != wanted) {
+                    level.setBlock(pos, wanted, 2);
+                    changed++;
+                }
+            }
+        }
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run: far store tunnel step {} ({} blocks changed)", step, changed);
     }
 
     /**

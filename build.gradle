@@ -298,8 +298,19 @@ minecraft {
             if (project.hasProperty('devFarRejoin')) {
                 property 'shaderscompanion.devFarRejoin', 'true'
             }
+            // M1c (research/lod/M1.md): -PdevFarFlight (join, teleport away, fly across Chunky's square with the store on,
+            // back with it off), -PdevFarTunnel (the import check digs a tunnel past hidden granite and compares the store
+            // with the world), -PdevFarRaw (sections stored without replacing hidden voxels), -PdevFarRawStore=path (the
+            // import check compares its store with one written by -PdevFarRaw), -PdevFarMemoryBorders (the coarser levels'
+            // exposure test at node borders sees only nodes in memory, as before M1c), -PdevFarNoStale (sections next to a voxel
+            // that opens are not marked stale: the tunnel check's negative control).
+            ['devFarFlight', 'devFarTunnel', 'devFarRaw', 'devFarMemoryBorders', 'devFarNoStale'].each { name ->
+                if (project.hasProperty(name)) {
+                    property "shaderscompanion.${name}", 'true'
+                }
+            }
             // -PdevFarDiff=200: the log says what differs in the first 200 stored sections that change.
-            ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache', 'devFarImport', 'devFarDiff'].each { name ->
+            ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache', 'devFarImport', 'devFarDiff', 'devFarRawStore'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }

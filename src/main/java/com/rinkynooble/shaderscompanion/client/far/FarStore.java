@@ -10,6 +10,8 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.SectionPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
@@ -74,6 +76,14 @@ public final class FarStore {
                         w.store().setCacheMb(wantedMb);
                     }
                 });
+            }
+            // Sections the worker wants copied again (a voxel next to them opened: HiddenVoxels), then the frame's copies
+            java.util.Queue<Long> again = worker.recaptures;
+            if (again != null) {
+                Long pos;
+                while ((pos = again.poll()) != null) {
+                    capture.markSection(SectionPos.x(pos), SectionPos.y(pos), SectionPos.z(pos));
+                }
             }
             capture.frame(Mth.floor(camera.getPosition().x) >> 4, Mth.floor(camera.getPosition().y) >> 4, Mth.floor(camera.getPosition().z) >> 4,
                     Config.FAR_STORE_BUDGET.get() * 1000L);
@@ -342,6 +352,96 @@ public final class FarStore {
         return progress == null ? null : progress.end() != null ? progress.end() : progress.done() + " of " + progress.total();
     }
 
+    /**
+     * Dev checks (M1c): the stored sections of the loaded chunks within {@code radius} chunks of a chunk, section
+     * heights {@code minY} to {@code maxY}, against the client's world (FarStats.compareWithWorld). The world is read
+     * here on the main thread (a hitch, for a check), the comparison runs on the worker.
+     */
+    public static CompletableFuture<String[]> compareWithWorldForChecks(int chunkX, int chunkZ, int radius, int minY, int maxY) {
+        if (!active) {
+            return CompletableFuture.completedFuture(new String[]{"The far store is off"});
+        }
+        ClientLevel level = capture.level();
+        java.util.List<long[]> positions = new java.util.ArrayList<>();
+        java.util.List<net.minecraft.world.level.block.state.BlockState[]> states = new java.util.ArrayList<>();
+        java.util.List<long[]> exposed = new java.util.ArrayList<>();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int cz = chunkZ - radius; cz <= chunkZ + radius; cz++) {
+            for (int cx = chunkX - radius; cx <= chunkX + radius; cx++) {
+                if (level.getChunkSource().getChunk(cx, cz, false) == null) {
+                    continue;
+                }
+                for (int sy = minY; sy <= maxY; sy++) {
+                    net.minecraft.world.level.block.state.BlockState[] s = new net.minecraft.world.level.block.state.BlockState[4096];
+                    long[] e = new long[64];
+                    int i = 0;
+                    for (int y = 0; y < 16; y++) {
+                        for (int z = 0; z < 16; z++) {
+                            for (int x = 0; x < 16; x++, i++) {
+                                s[i] = level.getBlockState(pos.set(cx * 16 + x, sy * 16 + y, cz * 16 + z));
+                            }
+                        }
+                    }
+                    i = 0;
+                    for (int y = 0; y < 16; y++) {
+                        for (int z = 0; z < 16; z++) {
+                            for (int x = 0; x < 16; x++, i++) {
+                                boolean open = false;
+                                for (Direction d : Direction.values()) {
+                                    int nx = x + d.getStepX();
+                                    int ny = y + d.getStepY();
+                                    int nz = z + d.getStepZ();
+                                    net.minecraft.world.level.block.state.BlockState n = nx >= 0 && nx < 16 && ny >= 0 && ny < 16 && nz >= 0 && nz < 16
+                                            ? s[nx + 16 * (nz + 16 * ny)] : level.getBlockState(pos.set(cx * 16 + nx, sy * 16 + ny, cz * 16 + nz));
+                                    if (!n.isSolidRender(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO)) {
+                                        open = true;
+                                        break;
+                                    }
+                                }
+                                if (open) {
+                                    e[i >> 6] |= 1L << (i & 63);
+                                }
+                            }
+                        }
+                    }
+                    positions.add(new long[]{cx, sy, cz});
+                    states.add(s);
+                    exposed.add(e);
+                }
+            }
+        }
+        return worker.ask(store -> store == null ? new String[]{"The far store is off"} : FarStats.compareWithWorld(store, positions, states, exposed));
+    }
+
+    /** Dev checks (M1c): every 4th stored level-0 node against a store written without hidden voxels (FarStats.compareWithRaw). */
+    public static CompletableFuture<String[]> compareWithRawStoreForChecks(Path rawFolder, int[] skipChunks) {
+        if (!active) {
+            return CompletableFuture.completedFuture(new String[]{"The far store is off"});
+        }
+        return worker.ask(store -> {
+            try {
+                return store == null ? new String[]{"The far store is off"} : FarStats.compareWithRaw(store, rawFolder, skipChunks);
+            } catch (java.io.IOException e) {
+                return new String[]{"Comparing with " + rawFolder + " failed: " + e};
+            }
+        });
+    }
+
+    /** Dev checks (M1c): false never marks a section stale when a voxel next to it opens (the tunnel check's negative control). */
+    public static void markStaleForChecks(boolean on) {
+        FarNodes.markStale = on;
+    }
+
+    /** Dev checks (M1c): false keeps the coarser levels' exposure test at node borders to neighbours in memory (M1a, M1b). */
+    public static void diskBordersForChecks(boolean on) {
+        FarNodes.diskBorders = on;
+    }
+
+    /** Dev checks (M1c): false stores sections as captured, without replacing their hidden voxels (HiddenVoxels). */
+    public static void hideVoxelsForChecks(boolean hide) {
+        FarNodes.hideVoxels = hide;
+    }
+
     /** Dev checks: log what differs in the next {@code count} changed sections. */
     public static void logChangesForChecks(int count) {
         FarNodes.logChanges = count;
@@ -366,5 +466,76 @@ public final class FarStore {
     /** Dev checks: the main thread's time a frame, average and max over the last second, in microseconds. */
     public static double[] frameMicrosForChecks() {
         return active ? new double[]{capture.frameMicrosAverage, capture.frameMicrosMax, capture.pendingSections} : new double[3];
+    }
+
+    /**
+     * Dev checks (M1c): starts recording every frame's main-thread time (true), or stops and returns the frames recorded
+     * since, in nanoseconds (false; null when the store isn't running), with the sections copied meanwhile as the last
+     * value.
+     */
+    public static long[] recordFramesForChecks(boolean start) {
+        if (!active) {
+            return null;
+        }
+        if (start) {
+            capture.recorded = new long[4096];
+            capture.recordedFrames = 0;
+            capture.recordedLoads = new long[65536];
+            capture.recordedLoadCount = 0;
+            capture.recordedFrom = capture.sectionsCaptured;
+            capture.recordedLostFrom = capture.sectionsLost;
+            return null;
+        }
+        long[] frames = capture.recorded == null ? new long[0] : java.util.Arrays.copyOf(capture.recorded, capture.recordedFrames);
+        long[] out = java.util.Arrays.copyOf(frames, frames.length + 2);
+        out[frames.length] = capture.sectionsCaptured - capture.recordedFrom;
+        out[frames.length + 1] = capture.sectionsLost - capture.recordedLostFrom;
+        capture.recorded = null;
+        return out;
+    }
+
+    /**
+     * Dev checks (M1c): the time from each chunk's load to its first copy while frames were recorded, in nanoseconds
+     * (call after {@link #recordFramesForChecks}(false)); the recording ends.
+     */
+    public static long[] recordedLoadsForChecks() {
+        if (!active || capture.recordedLoads == null) {
+            return new long[0];
+        }
+        long[] loads = java.util.Arrays.copyOf(capture.recordedLoads, capture.recordedLoadCount);
+        capture.recordedLoads = null;
+        return loads;
+    }
+
+    /** Dev checks (M1c): the processor time the worker thread has used so far, in nanoseconds (-1 without a worker). */
+    public static long workerCpuNanosForChecks() {
+        FarWorker w = worker;
+        return w == null ? -1 : java.lang.management.ManagementFactory.getThreadMXBean().getThreadCpuTime(w.thread.getId());
+    }
+
+    /** Dev checks (M1c): the worker's counters now ({@link FarStats#counters}); null when the store is off. */
+    public static CompletableFuture<long[]> countersForChecks() {
+        if (!active) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return worker.ask(store -> store == null ? null : FarStats.counters(store));
+    }
+
+    /** Dev checks (M1c): what the worker did between two readings of {@link #countersForChecks}. */
+    public static String countersSummary(long[] a, long[] b) {
+        if (a == null || b == null) {
+            return "no counters";
+        }
+        long[] d = new long[b.length];
+        for (int i = 0; i < d.length; i++) {
+            d[i] = b[i] - a[i];
+        }
+        return String.format("%d sections stored (%d new, %d changed, %d unchanged), %.1f us a section (of which hidden voxels %.1f us, %d sections, "
+                        + "%d voxels replaced); %d coarser rebuilds, %.0f us each (%d octant folds, %.0f us each); %d nodes encoded, %.0f us each; %d decoded, %.0f us each "
+                        + "(%.0f us of it reading); %d batches, %.0f nodes and %.1f ms each, at most %.1f ms (%.0f us a node); cache %d hits, %d misses (%d read from disk, "
+                        + "%d new), %d nodes written",
+                d[0], d[2], d[3], d[4], d[0] == 0 ? 0.0 : d[1] / 1.0e3 / d[0], d[0] == 0 ? 0.0 : d[24] / 1.0e3 / d[0], d[25], d[23], d[5], d[5] == 0 ? 0.0 : d[6] / 1.0e3 / d[5], d[7], d[7] == 0 ? 0.0 : d[8] / 1.0e3 / d[7], d[14], d[14] == 0 ? 0.0 : d[15] / 1.0e3 / d[14],
+                d[16], d[16] == 0 ? 0.0 : d[17] / 1.0e3 / d[16], d[16] == 0 ? 0.0 : d[18] / 1.0e3 / d[16], d[19], d[19] == 0 ? 0.0 : (double) d[20] / d[19],
+                d[19] == 0 ? 0.0 : d[21] / 1.0e6 / d[19], b[22] / 1.0e6, d[20] == 0 ? 0.0 : d[21] / 1.0e3 / d[20], d[9], d[10], d[11], d[12], d[13]);
     }
 }

@@ -84,6 +84,8 @@ final class FarDisk {
     long batchNodes;
     long writeNanos;
     long batchMaxNanos;
+    /** Dev checks: the longest batch since the counters were last read (FarStats.counters). */
+    long windowBatchMaxNanos;
 
     FarDisk(Path folder, StateIds states, BiomeIds biomes, int minY, int maxY) {
         this.folder = folder;
@@ -416,6 +418,7 @@ final class FarDisk {
         batchNodes += nodes;
         writeNanos += nanos;
         batchMaxNanos = Math.max(batchMaxNanos, nanos);
+        windowBatchMaxNanos = Math.max(windowBatchMaxNanos, nanos);
     }
 
     private void append(Path path, List<String> lines, int which) throws IOException {

@@ -43,6 +43,19 @@ final class CoarseLevels {
     /** A compact child's one state and light, spread over arrays for the loops below (made on first use). */
     private int[] uniformState;
     private byte[] uniformLight;
+    /** The fold at hand's neighbour nodes in memory, or the face masks of those on disk. */
+    private Node west;
+    private Node east;
+    private Node down;
+    private Node up;
+    private Node north;
+    private Node south;
+    private long[] westMasks;
+    private long[] eastMasks;
+    private long[] downMasks;
+    private long[] upMasks;
+    private long[] northMasks;
+    private long[] southMasks;
 
     CoarseLevels(FarNodes nodes) {
         this.nodes = nodes;
@@ -66,13 +79,20 @@ final class CoarseLevels {
         for (int i = 0; i < Node.VOXELS; i++) {
             open[i] = (nodes.flags(state[i]) & (FarNodes.OPEN | FarNodes.THIN)) != 0;
         }
-        // The six nodes around the child, for the exposure of its border voxels (null when not in memory: not open)
-        Node west = nodes.neighbour(child, -1, 0, 0);
-        Node east = nodes.neighbour(child, 1, 0, 0);
-        Node down = nodes.neighbour(child, 0, -1, 0);
-        Node up = nodes.neighbour(child, 0, 1, 0);
-        Node north = nodes.neighbour(child, 0, 0, -1);
-        Node south = nodes.neighbour(child, 0, 0, 1);
+        // The six nodes around the child, for the exposure of its border voxels: in memory, or else the masks of their
+        // faces read from disk (M1c; null both when none is stored: not open)
+        west = nodes.neighbour(child, -1, 0, 0);
+        east = nodes.neighbour(child, 1, 0, 0);
+        down = nodes.neighbour(child, 0, -1, 0);
+        up = nodes.neighbour(child, 0, 1, 0);
+        north = nodes.neighbour(child, 0, 0, -1);
+        south = nodes.neighbour(child, 0, 0, 1);
+        westMasks = west == null ? nodes.faceMasks(child.level, child.x - 1, child.y, child.z) : null;
+        eastMasks = east == null ? nodes.faceMasks(child.level, child.x + 1, child.y, child.z) : null;
+        downMasks = down == null ? nodes.faceMasks(child.level, child.x, child.y - 1, child.z) : null;
+        upMasks = up == null ? nodes.faceMasks(child.level, child.x, child.y + 1, child.z) : null;
+        northMasks = north == null ? nodes.faceMasks(child.level, child.x, child.y, child.z - 1) : null;
+        southMasks = south == null ? nodes.faceMasks(child.level, child.x, child.y, child.z + 1) : null;
         int ox = (octant & 1) * 16;
         int oy = (octant >> 1 & 1) * 16;
         int oz = (octant >> 2 & 1) * 16;
@@ -116,10 +136,10 @@ final class CoarseLevels {
                                 if (dy == 1 && water == 0 && (flags & FarNodes.WATER) != 0) {
                                     water = id;
                                 }
-                                if (y < 31 ? open[Node.index(x, y + 1, z)] : openIn(up, x, 0, z)) {
+                                if (y < 31 ? open[Node.index(x, y + 1, z)] : openIn(up, upMasks, 2, x, 0, z)) {
                                     exposed[k] = 2;
                                     faceUp++;
-                                } else if (exposed(child, x, y, z, west, east, down, north, south)) {
+                                } else if (exposed(x, y, z)) {
                                     exposed[k] = 1;
                                 }
                                 if (exposed[k] > 0) {
@@ -223,15 +243,28 @@ final class CoarseLevels {
      * Whether a child voxel has a seen face neighbour other than the one above (checked first by the caller), in its
      * node or in the next node (when that is in memory).
      */
-    private boolean exposed(Node child, int x, int y, int z, Node west, Node east, Node down, Node north, Node south) {
-        return (x > 0 ? open[Node.index(x - 1, y, z)] : openIn(west, 31, y, z))
-                || (x < 31 ? open[Node.index(x + 1, y, z)] : openIn(east, 0, y, z))
-                || (y > 0 ? open[Node.index(x, y - 1, z)] : openIn(down, x, 31, z))
-                || (z > 0 ? open[Node.index(x, y, z - 1)] : openIn(north, x, y, 31))
-                || (z < 31 ? open[Node.index(x, y, z + 1)] : openIn(south, x, y, 0));
+    private boolean exposed(int x, int y, int z) {
+        return (x > 0 ? open[Node.index(x - 1, y, z)] : openIn(west, westMasks, 1, 31, y, z))
+                || (x < 31 ? open[Node.index(x + 1, y, z)] : openIn(east, eastMasks, 0, 0, y, z))
+                || (y > 0 ? open[Node.index(x, y - 1, z)] : openIn(down, downMasks, 3, x, 31, z))
+                || (z > 0 ? open[Node.index(x, y, z - 1)] : openIn(north, northMasks, 5, x, y, 31))
+                || (z < 31 ? open[Node.index(x, y, z + 1)] : openIn(south, southMasks, 4, x, y, 0));
     }
 
-    private boolean openIn(Node node, int x, int y, int z) {
-        return node != null && (nodes.flags(node.state(Node.index(x, y, z))) & (FarNodes.OPEN | FarNodes.THIN)) != 0;
+    /**
+     * Whether a voxel of a neighbour node is open: from the node when it is in memory, else from its face masks
+     * ({@link FarNodes#faceMasks}: face 0 to 5 is the layer x 0, x 31, y 0, y 31, z 0, z 31), else not.
+     */
+    private boolean openIn(Node node, long[] masks, int face, int x, int y, int z) {
+        if (node != null) {
+            return (nodes.flags(node.state(Node.index(x, y, z))) & (FarNodes.OPEN | FarNodes.THIN)) != 0;
+        }
+        if (masks == null) {
+            return false;
+        }
+        int a = face < 2 ? y : x;
+        int b = face < 4 ? z : y;
+        int at = face * 1024 + a * 32 + b;
+        return (masks[at >> 6] & 1L << (at & 63)) != 0;
     }
 }
