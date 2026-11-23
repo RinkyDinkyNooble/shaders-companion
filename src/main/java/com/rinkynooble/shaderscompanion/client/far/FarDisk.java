@@ -338,6 +338,44 @@ final class FarDisk {
         return node;
     }
 
+    /** A stored node as it is on disk: its blob, or the values of a uniform node (blob null). */
+    record Raw(byte[] blob, int uniformState, byte uniformLight, short uniformBiome) {
+    }
+
+    /** Blobs read without decoding them ({@link #raw}), and the time it took. */
+    long rawReads;
+    long rawReadNanos;
+
+    /**
+     * A stored node without decoding it (the far mesher's jobs: the mesher decodes), from the batch or its region file,
+     * or null when none is stored.
+     */
+    Raw raw(long key) throws IOException {
+        Pending pending = batch.get(key);
+        if (pending != null) {
+            return new Raw(pending.blob(), pending.uniformState(), pending.uniformLight(), pending.uniformBiome());
+        }
+        int level = Node.keyLevel(key);
+        int nx = Node.keyX(key);
+        int nz = Node.keyZ(key);
+        FarRegion region = region(level, nx >> 3, nz >> 3, false);
+        if (region == null) {
+            return null;
+        }
+        int slot = region.slot(nx, Node.keyY(key), nz);
+        if (slot < 0 || region.kind[slot] == FarRegion.NONE) {
+            return null;
+        }
+        if (region.kind[slot] == FarRegion.UNIFORM) {
+            return new Raw(null, region.uniformState[slot], region.uniformLight[slot], region.uniformBiome[slot]);
+        }
+        long start = System.nanoTime();
+        byte[] blob = region.read(slot);
+        rawReads++;
+        rawReadNanos += System.nanoTime() - start;
+        return new Raw(blob, 0, (byte) 0, (short) 0);
+    }
+
     private static void setUniform(Node node, int state, short biome, byte light) {
         node.uniformState = state;
         node.uniformBiome = biome;

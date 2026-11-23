@@ -29,6 +29,11 @@ import net.minecraft.world.level.storage.LevelResource;
  * or dimension change, leaving the world or turning the setting off closes it (every change written), and the game's
  * end waits for that. In singleplayer, {@code /shaderscompanion lod import} adds the chunks the world has saved
  * ({@link FarImport}).
+ * <p>
+ * Far terrain (M2): while meshing is on ({@code /shaderscompanion far mesh on}, not saved, or the dev checks; off by
+ * default until M2b draws something), the worker keeps the resident set ({@link FarResidency}) from the camera posted
+ * here at most 4 times a second, the mesher thread meshes it ({@link FarMesher}), this frame hook works out the colour
+ * table ({@link StateColors}) and takes the finished meshes (for now only held and counted; M2b uploads them here).
  */
 public final class FarStore {
     /** Capturing for {@link #capture}'s level (main thread). The hooks check only this. */
@@ -44,6 +49,19 @@ public final class FarStore {
     // Dev checks (src/verify): the store on for a run and its cache size, without touching the config file
     private static boolean forcedOn;
     private static int forcedCacheMb;
+
+    // Far terrain meshing (M2a): the switch (not saved), the last view posted, and the meshes the render thread holds
+    private static boolean meshing;
+    private static int forcedFarRange;
+    private static FarResidency.View postedView;
+    private static long postedAt;
+    private static FarResidency outboxOf;
+    private static final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<NodeMesh> meshes = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private static long meshQuads;
+    private static long meshBytes;
+    private static long meshFrameNanos;
+    private static long meshFrameMaxNanos;
+    private static long meshFrames;
 
     private FarStore() {
     }
@@ -87,12 +105,217 @@ public final class FarStore {
             }
             capture.frame(Mth.floor(camera.getPosition().x) >> 4, Mth.floor(camera.getPosition().y) >> 4, Mth.floor(camera.getPosition().z) >> 4,
                     Config.FAR_STORE_BUDGET.get() * 1000L);
+            terrainFrame(mc, camera);
             chat(mc);
         } catch (Throwable t) {
             failure = t.toString();
             ShadersCompanion.LOGGER.error("Shaders Companion far store stopped after an error", t);
             stop();
         }
+    }
+
+    /** The far terrain's part of the frame: the switch, the camera for the residency, the colour table, the finished meshes. */
+    private static void terrainFrame(Minecraft mc, Camera camera) {
+        FarWorker w = worker;
+        if (w.meshingWanted != meshing) {
+            w.meshingWanted = meshing;
+            postedView = null;
+        }
+        if (!meshing) {
+            takeMeshes(null);
+            return;
+        }
+        long start = System.nanoTime();
+        FarResidency.View view = new FarResidency.View(camera.getPosition().x, camera.getPosition().y, camera.getPosition().z, mc.options.getEffectiveRenderDistance(),
+                mc.getWindow().getHeight(), mc.options.fov().get(), Config.FAR_PIXELS_PER_VOXEL.get(), farRange());
+        if (postedView == null || !view.sameRings(postedView) || view.distance(postedView) >= 32
+                || start - postedAt >= 250_000_000L && view.distance(postedView) >= 1) {
+            postedView = view;
+            postedAt = start;
+            w.postView(view);
+        }
+        StateIds states = w.publishedStates;
+        BiomeIds biomes = w.publishedBiomes;
+        if (states != null && biomes != null && mc.level != null) {
+            StateColors.frame(states, biomes, mc.level);
+        }
+        takeMeshes(w.residency);
+        long nanos = System.nanoTime() - start;
+        meshFrameNanos += nanos;
+        meshFrameMaxNanos = Math.max(meshFrameMaxNanos, nanos);
+        meshFrames++;
+    }
+
+    /** Most render-thread time a frame spent taking meshes from the outbox (a teleport drops thousands at once). */
+    private static final long TAKE_NANOS = 300_000L;
+
+    /**
+     * The render thread's side of the meshes: takes the residency's outbox in order (a mesh replaces the node's last
+     * one, a drop removes it), within {@link #TAKE_NANOS} a frame. M2b uploads here, within a byte budget a frame; M2a
+     * only holds and counts them.
+     */
+    private static void takeMeshes(FarResidency r) {
+        if (r != outboxOf) {
+            meshes.clear();
+            meshQuads = 0;
+            meshBytes = 0;
+            outboxOf = r;
+        }
+        if (r == null) {
+            return;
+        }
+        long start = System.nanoTime();
+        int taken = 0;
+        Object item;
+        while ((++taken & 63) != 0 || System.nanoTime() - start < TAKE_NANOS) {
+            item = r.outbox.poll();
+            if (item == null) {
+                break;
+            }
+            NodeMesh old;
+            if (item instanceof NodeMesh mesh) {
+                old = meshes.put(mesh.key, mesh);
+                meshQuads += mesh.quadCount;
+                meshBytes += mesh.bytes();
+            } else {
+                old = meshes.remove(((FarResidency.Drop) item).key());
+            }
+            if (old != null) {
+                meshQuads -= old.quadCount;
+                meshBytes -= old.bytes();
+            }
+        }
+    }
+
+    private static int farRange() {
+        return forcedFarRange > 0 ? forcedFarRange : Config.FAR_RANGE.get();
+    }
+
+    /** The far terrain's status line ("Far terrain: ..."). */
+    public static String terrainStatus() {
+        if (!meshing) {
+            return "off (/shaderscompanion far mesh on meshes it; nothing is drawn before M2b)";
+        }
+        FarWorker w = worker;
+        String residency = !active || w == null || w.meshStatus == null ? "waiting for the far store (farStore)" : w.meshStatus;
+        return String.format("%s; the render thread holds %d meshes (%d quads, %.1f MB), %.0f us a frame (max %.0f); %s", residency, meshes.size(), meshQuads,
+                meshBytes / 1048576.0, meshFrames == 0 ? 0.0 : meshFrameNanos / 1.0e3 / meshFrames, meshFrameMaxNanos / 1.0e3, StateColors.status());
+    }
+
+    /** The {@code far mesh on|off} command: meshing on or off for this session. */
+    public static String setMeshing(boolean on) {
+        meshing = on;
+        return on ? "Far terrain meshing on (needs farStore on; nothing is drawn yet)" : "Far terrain meshing off";
+    }
+
+    /** The {@code far stats} lines, from the worker. */
+    public static CompletableFuture<String[]> terrainStats() {
+        if (!active) {
+            return CompletableFuture.completedFuture(new String[]{"The far store is off (farStore in config/shaderscompanion-client.toml)"});
+        }
+        FarWorker w = worker;
+        return w.ask(store -> {
+            FarResidency r = w.residency;
+            FarMesher m = w.mesher;
+            String[] lines = r == null ? new String[]{"Far terrain meshing is off (/shaderscompanion far mesh on)"} : r.lines();
+            if (m != null) {
+                lines = java.util.Arrays.copyOf(lines, lines.length + 1);
+                lines[lines.length - 1] = String.format("Mesher thread: %.1f s of processor time so far, %d jobs failed; %d blobs decoded, neighbours' face layers %d "
+                        + "from its cache, %d decoded", cpuNanos(m.thread) / 1.0e9, m.failures, m.decodes, m.layerHits, m.layerMisses);
+            }
+            return lines;
+        });
+    }
+
+    private static long cpuNanos(Thread thread) {
+        return java.lang.management.ManagementFactory.getThreadMXBean().getThreadCpuTime(thread.getId());
+    }
+
+    /**
+     * The {@code far meshmap} command and the dev checks: a level's mesh map over a square (FarMeshMap) and LodMap's
+     * map of the same square, both in screenshots/.
+     */
+    public static CompletableFuture<String[]> meshMap(int level, int minX, int minZ, int size, String name) {
+        if (!active) {
+            return CompletableFuture.completedFuture(new String[]{"The far store is off (farStore in config/shaderscompanion-client.toml)"});
+        }
+        Path dir = Minecraft.getInstance().gameDirectory.toPath().resolve("screenshots");
+        return worker.ask(store -> {
+            if (store == null) {
+                return new String[]{"The far store is off"};
+            }
+            try {
+                String mesh = FarMeshMap.write(store, level, minX, minZ, size, size, dir.resolve(name + "-mesh-L" + level + ".png"));
+                String lod = LodMap.write(store, level, minX, minZ, size, size, dir.resolve(name + "-lod-L" + level + ".png"));
+                return new String[]{"Saved screenshots/" + name + "-mesh-L" + level + ".png: " + mesh, "Saved screenshots/" + name + "-lod-L" + level + ".png: " + lod};
+            } catch (java.io.IOException e) {
+                return new String[]{"Mesh map failed: " + e};
+            }
+        });
+    }
+
+    /** The mesh map around the camera, radius nodes of that level each way (the command). */
+    public static CompletableFuture<String[]> meshMapAroundCamera(int level, int radius) {
+        Camera camera = Minecraft.getInstance().gameRenderer.getMainCamera();
+        int nodeBlocks = Node.SIZE << level;
+        int nx = Math.floorDiv(Mth.floor(camera.getPosition().x), nodeBlocks);
+        int nz = Math.floorDiv(Mth.floor(camera.getPosition().z), nodeBlocks);
+        return meshMap(level, (nx - radius) * nodeBlocks, (nz - radius) * nodeBlocks, (2 * radius + 1) * nodeBlocks, "shaderscompanion");
+    }
+
+    // Far terrain dev checks (M2a)
+
+    /** Dev checks: meshing on or off for the run. */
+    public static void meshingForChecks(boolean on) {
+        meshing = on;
+    }
+
+    /** Dev checks: the far range for the run (0: the config's). */
+    public static void farRangeForChecks(int blocks) {
+        forcedFarRange = blocks;
+    }
+
+    /** Dev checks: the first level whose dark air is filled (FarMesher.fillFromLevel; nodes meshed from now on). */
+    public static void caveFillFromForChecks(int level) {
+        FarMesher.fillFromLevel = level;
+    }
+
+    /** Dev checks: corner shading in the quads (FarMesher.cornerShading; nodes meshed from now on). */
+    public static void cornerShadingForChecks(boolean on) {
+        FarMesher.cornerShading = on;
+    }
+
+    /** Dev checks: the residency's numbers (FarResidency.numbers), or null while it isn't running. */
+    public static CompletableFuture<long[]> terrainNumbersForChecks() {
+        if (!active) {
+            return CompletableFuture.completedFuture(null);
+        }
+        FarWorker w = worker;
+        return w.ask(store -> w.residency == null ? null : w.residency.numbers());
+    }
+
+    /** Dev checks: the mesher thread's processor time so far, in nanoseconds (-1 before it exists). */
+    public static long mesherCpuNanosForChecks() {
+        FarWorker w = worker;
+        return w == null || w.mesher == null ? -1 : cpuNanos(w.mesher.thread);
+    }
+
+    /**
+     * Dev checks: the colour table's numbers (StateColors.numbers), then the render thread's far terrain part of the
+     * frame: nanos, max nanos, frames (the counters start again).
+     */
+    public static long[] colourNumbersForChecks(boolean reset) {
+        long[] c = StateColors.numbers();
+        long[] out = java.util.Arrays.copyOf(c, c.length + 3);
+        out[c.length] = meshFrameNanos;
+        out[c.length + 1] = meshFrameMaxNanos;
+        out[c.length + 2] = meshFrames;
+        if (reset) {
+            meshFrameNanos = 0;
+            meshFrameMaxNanos = 0;
+            meshFrames = 0;
+        }
+        return out;
     }
 
     private static void start(Minecraft mc, ClientLevel level, Camera camera) {
@@ -135,6 +358,7 @@ public final class FarStore {
      * worker: nothing waits here).
      */
     private static void stop() {
+        takeMeshes(null);
         if (!active && capture == null) {
             return;
         }

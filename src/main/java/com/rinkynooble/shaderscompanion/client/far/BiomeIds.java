@@ -12,7 +12,7 @@ import net.minecraft.world.level.biome.Biome;
  * number by its registry name the first time the worker sees it, saved as {@code biomes.txt} (line n is id n, line 0 a
  * placeholder). Biomes are kept by name, not by holder, so a biome that leaves the registry still keeps its number, and
  * the client's and the integrated server's holders of one biome (live capture and import) get the same number. Only
- * the worker uses it.
+ * the worker assigns ids; any thread may read a name back by id ({@link #published}, for the far colour table).
  */
 final class BiomeIds {
     static final int UNKNOWN = 0;
@@ -20,6 +20,8 @@ final class BiomeIds {
     private final Reference2IntOpenHashMap<Holder<Biome>> byHolder = new Reference2IntOpenHashMap<>();
     private final Object2IntOpenHashMap<String> byName = new Object2IntOpenHashMap<>();
     private final List<String> names = new ArrayList<>();
+    /** The names by id for other threads, copied whenever one is added (a world has a few dozen). */
+    private volatile String[] published = {""};
     private int saved;
 
     BiomeIds() {
@@ -38,6 +40,7 @@ final class BiomeIds {
             }
         }
         saved = lines.size();
+        published = names.toArray(new String[0]);
     }
 
     /** The id of a biome, assigning the next one when it is new (worker thread only). */
@@ -57,6 +60,7 @@ final class BiomeIds {
             id = names.size();
             names.add(name);
             byName.put(name, id);
+            published = names.toArray(new String[0]);
         }
         byHolder.put(biome, id);
         return id;
@@ -69,6 +73,11 @@ final class BiomeIds {
 
     int size() {
         return names.size();
+    }
+
+    /** The names by id as far as assigned (any thread; index 0 is "", unknown). */
+    String[] published() {
+        return published;
     }
 
     /** The lines of biomes.txt not written yet ({@link #markSaved} once they are, as for {@link StateIds}). */

@@ -16,6 +16,10 @@ import java.util.function.Supplier;
  * do it waits on the queue. A new world (or the store turned off) replaces the store, the old one closed first (every
  * change written); sections captured for an earlier one are let go by their generation. At the game's end a shutdown
  * hook waits for the store to close, so a normal quit loses nothing.
+ * <p>
+ * While the far terrain meshes ({@link #meshingWanted}), the worker also keeps the store's {@link FarResidency}: the
+ * resident set from the camera the main thread posts, and the mesh jobs for {@link FarMesher}'s thread, made after
+ * every task while the mesher has room.
  */
 final class FarWorker {
     private static final long REBUILD_PASS_NANOS = 100_000_000L;
@@ -48,6 +52,20 @@ final class FarWorker {
     volatile java.util.Queue<Long> recaptures;
     /** Lines for the chat (an import's start and end), taken by the main thread. */
     final LinkedBlockingQueue<String> messages = new LinkedBlockingQueue<>();
+
+    /** The far terrain meshes (set by the main thread): the residency runs while the store is open. */
+    volatile boolean meshingWanted;
+    /** The current residency, for the render thread's outbox and the status line; null while nothing meshes. */
+    volatile FarResidency residency;
+    /** The mesher thread, made the first time something meshes. */
+    volatile FarMesher mesher;
+    /** The last camera the main thread posted (a new residency starts from it). */
+    private FarResidency.View lastView;
+    /** The residency's status line part, published with the statistics. */
+    volatile String meshStatus;
+    /** The store's ids, for the render thread's colour table ({@link StateColors}); null without a store. */
+    volatile StateIds publishedStates;
+    volatile BiomeIds publishedBiomes;
 
     FarWorker() {
         thread = new Thread(this::run, "Shaders Companion far store");
@@ -164,6 +182,10 @@ final class FarWorker {
             try {
                 long now = System.nanoTime();
                 long wait = store == null ? Long.MAX_VALUE : store.nanosUntilWork(now);
+                FarResidency r = residency;
+                if (r != null) {
+                    wait = Math.min(wait, r.nanosUntilWork());
+                }
                 if (wait == Long.MAX_VALUE) {
                     busy = false;
                     task = tasks.take();
@@ -207,6 +229,10 @@ final class FarWorker {
                         }
                     }
                 }
+                syncResidency();
+                if (residency != null) {
+                    residency.pump(now);
+                }
                 publish(now);
             } catch (Throwable t) {
                 ShadersCompanion.LOGGER.error("Shaders Companion far store: the worker stopped the store after an error", t);
@@ -217,8 +243,41 @@ final class FarWorker {
                 store = null;
                 importer = null;
                 tasks.clear();
+                syncResidency();
                 publish(System.nanoTime());
                 FarStore.workerFailed(t);
+            }
+        }
+    }
+
+    /** The camera and ring settings from the main thread (at most 4 times a second, and on a jump). */
+    void postView(FarResidency.View view) {
+        post(w -> {
+            w.lastView = view;
+            if (w.residency != null) {
+                w.residency.camera(view);
+            }
+        });
+    }
+
+    /** Starts or stops the residency to match the store and {@link #meshingWanted} (worker thread). */
+    private void syncResidency() {
+        boolean want = meshingWanted && store != null;
+        FarResidency r = residency;
+        if (r != null && (!want || r.store != store)) {
+            r.close();
+            residency = null;
+            r = null;
+        }
+        if (want && r == null) {
+            if (mesher == null) {
+                mesher = new FarMesher();
+            }
+            r = new FarResidency(store, mesher, () -> post(w -> {
+            }));
+            residency = r;
+            if (lastView != null) {
+                r.camera(lastView);
             }
         }
     }
@@ -229,8 +288,12 @@ final class FarWorker {
             return;
         }
         lastPublish = now;
+        FarResidency r = residency;
+        meshStatus = r == null ? null : r.status();
         FarNodes s = store;
         recaptures = s == null ? null : s.recaptures;
+        publishedStates = s == null ? null : s.states;
+        publishedBiomes = s == null ? null : s.biomes;
         if (s == null) {
             sectionsStored = 0;
             sessionNew = 0;

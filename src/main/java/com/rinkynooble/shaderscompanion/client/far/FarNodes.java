@@ -99,7 +99,18 @@ final class FarNodes {
      */
     static final byte OPAQUE = 16;
     private byte[] flags = new byte[256];
+    /** Per state id: the far mesher's class and its tint and translucent bits ({@link #meshClasses}, worked out only while something meshes). */
+    private byte[] meshClasses = new byte[256];
     private int flagsKnown = 2;
+    /** Ids whose mesh class is worked out (only while something meshes: {@link #meshClasses}). */
+    private int meshKnown = 2;
+    private int waterId = -1;
+    private int stoneId = -1;
+    /**
+     * Told the key of every node whose voxels change (an ingest, a fold into a coarser node, hidden voxels next to a
+     * new section): the far residency's remeshing ({@link FarResidency}). Worker thread; null when nothing listens.
+     */
+    java.util.function.LongConsumer changeListener;
 
     // Statistics (the worker's; FarWorker publishes them)
     final int[] nodes = new int[Node.LEVELS];
@@ -155,6 +166,8 @@ final class FarNodes {
         this.maxY = maxY;
         setCacheMb(cacheMb);
         flags[StateIds.AIR] = OPEN;
+        meshClasses[StateIds.UNKNOWN] = FarMesher.UNKNOWN;
+        meshClasses[StateIds.AIR] = FarMesher.AIR;
         FarDisk opened = null;
         String error = null;
         if (folder != null) {
@@ -305,6 +318,14 @@ final class FarNodes {
     void changedWithoutIngest(Node node) {
         node.dirty = true;
         changedSinceWrite = true;
+        changed(node.key);
+    }
+
+    private void changed(long key) {
+        java.util.function.LongConsumer listener = changeListener;
+        if (listener != null) {
+            listener.accept(key);
+        }
     }
 
     /** Gives a node in the cache its arrays before they are written to. */
@@ -389,6 +410,91 @@ final class FarNodes {
             flagsKnown = size;
         }
         return id < flagsKnown ? flags[id] : 0;
+    }
+
+    /**
+     * The far mesher's class of a state with these flags (FarMesher's class comment), with {@link FarMesher#TINTED}
+     * when the state has a tint provider (its faces keep their biome in a mesh's palette) or is water-like, and
+     * {@link FarMesher#TRANSLUCENT} when it is drawn in the translucent pass (water-like ones too).
+     */
+    private static byte meshClassOf(BlockState state, byte f) {
+        if (state == null) {
+            // A line of states.txt that no longer parses: an unknown block, still a block
+            return FarMesher.SOLID;
+        }
+        int c;
+        boolean invisible;
+        try {
+            invisible = state.getRenderShape() == net.minecraft.world.level.block.RenderShape.INVISIBLE && state.getFluidState().isEmpty();
+        } catch (RuntimeException e) {
+            invisible = false;
+        }
+        if ((f & OPEN) != 0) {
+            c = state.isAir() ? FarMesher.AIR : FarMesher.WATER;
+        } else if (invisible || (f & THIN) != 0) {
+            // Decorations, and blocks nothing draws (barriers, light blocks, structure voids)
+            c = FarMesher.AIR;
+        } else if ((f & SHEER) != 0) {
+            c = FarMesher.SHEER;
+        } else {
+            c = FarMesher.SOLID;
+        }
+        boolean tinted = c == FarMesher.WATER;
+        boolean translucent = c == FarMesher.WATER;
+        if (!tinted && c != FarMesher.AIR) {
+            try {
+                // A tint provider answers without a world (vanilla's give their default colours); none answers -1
+                tinted = net.minecraft.client.Minecraft.getInstance().getBlockColors().getColor(state, null, null, 0) != -1;
+            } catch (RuntimeException e) {
+                tinted = true;
+            }
+            try {
+                // Drawn in the translucent pass (stained glass, ice, slime): the far terrain's second pass too
+                translucent = net.minecraft.client.Minecraft.getInstance().getBlockRenderer().getBlockModel(state)
+                        .getRenderTypes(state, net.minecraft.util.RandomSource.create(42L), net.minecraftforge.client.model.data.ModelData.EMPTY)
+                        .contains(net.minecraft.client.renderer.RenderType.translucent());
+            } catch (RuntimeException e) {
+                translucent = false;
+            }
+        }
+        return (byte) (c | (tinted ? FarMesher.TINTED : 0) | (translucent ? FarMesher.TRANSLUCENT : 0));
+    }
+
+    /** Every state id's mesh class so far (worker thread; the array is shared with mesh jobs, entries never change). */
+    byte[] meshClasses() {
+        int size = states.size();
+        if (meshKnown < size) {
+            if (flagsKnown < size) {
+                flagsOfNew(size - 1);
+            }
+            byte[] classes = meshClasses;
+            if (classes.length < size) {
+                // A new array: jobs made before keep the old one, whose entries stay as they were
+                classes = Arrays.copyOf(classes, Math.max(size, classes.length * 2));
+            }
+            for (int i = meshKnown; i < size; i++) {
+                classes[i] = meshClassOf(states.state(i), flags[i]);
+            }
+            meshClasses = classes;
+            meshKnown = size;
+        }
+        return meshClasses;
+    }
+
+    /** The id of still water (the palette's state for every water-like voxel), assigned when new. */
+    int waterId() {
+        if (waterId < 0) {
+            waterId = states.id(Blocks.WATER.defaultBlockState());
+        }
+        return waterId;
+    }
+
+    /** The id of stone (the palette's state for cave-filled air), assigned when new. */
+    int stoneId() {
+        if (stoneId < 0) {
+            stoneId = states.id(Blocks.STONE.defaultBlockState());
+        }
+        return stoneId;
     }
 
     /** Converts a captured section to ids, and stores it in its level-0 node unless it is unchanged. */
@@ -512,6 +618,7 @@ final class FarNodes {
             node.dirty = true;
             changedSinceWrite = true;
             markParent(node, now);
+            changed(node.key);
         }
         long nanos = System.nanoTime() - start;
         ingestNanos += nanos;
@@ -719,6 +826,7 @@ final class FarNodes {
         coarse.fold(child, parent, octant);
         folds++;
         foldNanos += System.nanoTime() - start;
+        changed(parent.key);
     }
 
     /**

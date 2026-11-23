@@ -74,7 +74,27 @@ public final class DebugOverlay {
                                 .executes(context -> say(context.getSource(), FarStore.startImport(IMPORT_RADIUS)))
                                 .then(Commands.literal("stop").executes(context -> say(context.getSource(), FarStore.stopImport())))
                                 .then(Commands.argument("radius", IntegerArgumentType.integer(1, 2048))
-                                        .executes(context -> say(context.getSource(), FarStore.startImport(IntegerArgumentType.getInteger(context, "radius"))))))));
+                                        .executes(context -> say(context.getSource(), FarStore.startImport(IntegerArgumentType.getInteger(context, "radius")))))))
+                .then(Commands.literal("far")
+                        .then(Commands.literal("mesh")
+                                .then(Commands.literal("on").executes(context -> say(context.getSource(), FarStore.setMeshing(true))))
+                                .then(Commands.literal("off").executes(context -> say(context.getSource(), FarStore.setMeshing(false)))))
+                        .then(Commands.literal("stats").executes(context -> {
+                            reply(context.getSource(), FarStore.terrainStats());
+                            return 1;
+                        }))
+                        .then(Commands.literal("meshmap")
+                                .then(Commands.argument("level", IntegerArgumentType.integer(0, 6))
+                                        .executes(context -> {
+                                            reply(context.getSource(), FarStore.meshMapAroundCamera(IntegerArgumentType.getInteger(context, "level"), 4));
+                                            return 1;
+                                        })
+                                        .then(Commands.argument("radius", IntegerArgumentType.integer(0, 32))
+                                                .executes(context -> {
+                                                    reply(context.getSource(), FarStore.meshMapAroundCamera(IntegerArgumentType.getInteger(context, "level"),
+                                                            IntegerArgumentType.getInteger(context, "radius")));
+                                                    return 1;
+                                                }))))));
     }
 
     /** The far store's map of a level, radius nodes around you, written by its worker; the chat says when it is saved. */
@@ -127,6 +147,7 @@ public final class DebugOverlay {
                 "Light leak fix: " + LightLeaks.status(),
                 "Closed doors: " + DoorLight.status(),
                 "Far store: " + FarStore.status(),
+                "Far terrain: " + FarStore.terrainStatus(),
                 "Bundled shader pack: " + BundledPack.status
                         + (Gl.mismatches == 0 ? "" : "; GL state out of step with Minecraft's record " + Gl.mismatches + " times (see the log)")
         };

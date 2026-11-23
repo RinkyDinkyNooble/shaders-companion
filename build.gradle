@@ -309,8 +309,18 @@ minecraft {
                     property "shaderscompanion.${name}", 'true'
                 }
             }
+            // gpu-lods M2a (research/lod/M2.md): -PdevFarMesh (the far store check meshes the far terrain: the join's fill,
+            // the mesh maps, the far range at 4096, a teleport and the M1c flight), -PdevFarCornerShading (quads with corner
+            // shading), -PdevFarRange=N (the far range for the run, the config's farRange by default), -PdevFarFillFrom=0 (dark air
+            // filled from level 0, not 1), -PdevFarMeshShort (only the join and the maps).
+            ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort'].each { name ->
+                if (project.hasProperty(name)) {
+                    property "shaderscompanion.${name}", 'true'
+                }
+            }
             // -PdevFarDiff=200: the log says what differs in the first 200 stored sections that change.
-            ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache', 'devFarImport', 'devFarDiff', 'devFarRawStore'].each { name ->
+            // -PdevFov=90: the field of view for the run (restored; the dev client's default is 70, the user's 90).
+            ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache', 'devFarImport', 'devFarDiff', 'devFarRawStore', 'devFarRange', 'devFov', 'devFarFillFrom'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }

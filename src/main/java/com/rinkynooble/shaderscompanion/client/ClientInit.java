@@ -67,6 +67,7 @@ public final class ClientInit {
     private static void onModelsBaked(ModelEvent.BakingCompleted event) {
         Lattice.modelsChanged();
         MirrorPlaneSearch.modelsChanged();
+        com.rinkynooble.shaderscompanion.client.far.StateColors.modelsChanged();
     }
 
     private static void onClientSetup(FMLClientSetupEvent event) {

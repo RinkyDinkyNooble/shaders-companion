@@ -228,6 +228,42 @@ final class NodeCodec {
 
     /** Decodes a blob into a node made for it (its arrays, uniform values and known count). */
     void decode(byte[] blob, Node node) throws DataFormatException {
+        intoState = null;
+        intoLight = null;
+        intoBiome = null;
+        decodeBlob(blob, node);
+    }
+
+    /**
+     * {@link #decode} into the given arrays instead of new ones (the far mesher's scratch, so a decode makes no
+     * garbage): the node's arrays are those arrays afterwards, or null when it is uniform.
+     */
+    void decodeInto(byte[] blob, Node node, int[] state, byte[] light, short[] biome) throws DataFormatException {
+        intoState = state;
+        intoLight = light;
+        intoBiome = biome;
+        try {
+            decodeBlob(blob, node);
+        } finally {
+            intoState = null;
+            intoLight = null;
+            intoBiome = null;
+        }
+    }
+
+    private int[] intoState;
+    private byte[] intoLight;
+    private short[] intoBiome;
+
+    private int[] newStates() {
+        return intoState != null ? intoState : new int[Node.VOXELS];
+    }
+
+    private byte[] newLight() {
+        return intoLight != null ? intoLight : new byte[Node.VOXELS];
+    }
+
+    private void decodeBlob(byte[] blob, Node node) throws DataFormatException {
         inflater.reset();
         inflater.setInput(blob, 0, blob.length);
         int n = 0;
@@ -252,14 +288,14 @@ final class NodeCodec {
             int uniform = palette[0];
             int[] state = null;
             if (size > 1) {
-                state = new int[Node.VOXELS];
+                state = newStates();
                 unpack(Node.VOXELS, get(), size, state);
             }
             int biomes = getPalette();
             short[] biome = null;
             if (biomes > 1) {
                 unpack(Node.BIOME_CELLS, get(), biomes, indices);
-                biome = new short[Node.BIOME_CELLS];
+                biome = intoBiome != null ? intoBiome : new short[Node.BIOME_CELLS];
                 for (int i = 0; i < Node.BIOME_CELLS; i++) {
                     biome[i] = (short) indices[i];
                 }
@@ -272,13 +308,13 @@ final class NodeCodec {
             if (lightMode == LIGHT_UNIFORM) {
                 byte value = (byte) get();
                 if (state != null) {
-                    light = new byte[Node.VOXELS];
+                    light = newLight();
                     Arrays.fill(light, value);
                 } else {
                     node.uniformLight = value;
                 }
             } else {
-                light = new byte[Node.VOXELS];
+                light = newLight();
                 check(Node.VOXELS / 2);
                 for (int i = 0; i < Node.VOXELS; i += 2) {
                     int b = raw[readAt++];
@@ -299,7 +335,7 @@ final class NodeCodec {
                     }
                 }
                 if (state == null) {
-                    state = new int[Node.VOXELS];
+                    state = newStates();
                     Arrays.fill(state, uniform);
                 }
             }

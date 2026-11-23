@@ -284,6 +284,9 @@ public final class DevRun {
     /** -PdevFarRender=N: the render distance for the run (restored at the end). */
     private static final int FAR_RENDER = Integer.getInteger("shaderscompanion.devFarRender", 0);
     private static int renderBefore = -1;
+    /** -PdevFov=N: the field of view for the run (restored at the end; the dev client's is 70, the user's 90). */
+    private static final int DEV_FOV = Integer.getInteger("shaderscompanion.devFov", 0);
+    private static int fovBefore = -1;
     /**
      * The far scene's world is kept between runs (Distant Horizons' database in it grows run by run, so later runs draw
      * the same terrain); the fill check's is made fresh every run; every other scene's is the usual dev world.
@@ -354,12 +357,25 @@ public final class DevRun {
             FarStore.diskBordersForChecks(!Boolean.getBoolean("shaderscompanion.devFarMemoryBorders"));
             // -PdevFarNoStale: sections next to an opened voxel are not marked stale (the tunnel check's negative control)
             FarStore.markStaleForChecks(!Boolean.getBoolean("shaderscompanion.devFarNoStale"));
+            if (FAR_MESH) {
+                // M2a: the far terrain meshed for the run, at -PdevFarRange (the config's by default), corner shading with -PdevFarCornerShading
+                FarStore.meshingForChecks(true);
+                FarStore.farRangeForChecks(MESH_RANGE);
+                FarStore.cornerShadingForChecks(Boolean.getBoolean("shaderscompanion.devFarCornerShading"));
+                // -PdevFarFillFrom=0: dark air filled from level 0 (the plan keeps level 0's caves)
+                FarStore.caveFillFromForChecks(Integer.getInteger("shaderscompanion.devFarFillFrom", 1));
+            }
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: far store on for the run, heap {} MB", Runtime.getRuntime().maxMemory() >> 20);
         }
         if (FAR_RENDER > 0) {
             renderBefore = mc.options.renderDistance().get();
             mc.options.renderDistance().set(FAR_RENDER);
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: render distance {} for the run (was {})", FAR_RENDER, renderBefore);
+        }
+        if (DEV_FOV > 0) {
+            fovBefore = mc.options.fov().get();
+            mc.options.fov().set(DEV_FOV);
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run: field of view {} for the run (was {})", DEV_FOV, fovBefore);
         }
         if (SHADERS_LATE > 0) {
             setShaders(mc, false);
@@ -2761,9 +2777,13 @@ public final class DevRun {
         int t = ticks - phaseTick;
         double[] frame = FarStore.frameMicrosForChecks();
         if (phase == 1) {
-            phase = FAR_IMPORT > 0 ? 40 : FAR_FLIGHT ? 50 : 10;
+            phase = FAR_IMPORT > 0 ? 40 : FAR_FLIGHT ? 50 : FAR_MESH ? 60 : 10;
             phaseTick = ticks;
             storeSettledTicks = 0;
+            return;
+        }
+        if (phase >= 60) {
+            farMeshCheck(mc, t);
             return;
         }
         if (phase >= 50) {
@@ -3180,6 +3200,190 @@ public final class DevRun {
         }
     }
 
+    // The far terrain check (-PdevScene=far -PdevFarStore -PdevFarMesh: M2a, research/lod/M2.md)
+
+    /** -PdevFarMesh: the far store check meshes the far terrain instead (M2a). */
+    private static final boolean FAR_MESH = Boolean.getBoolean("shaderscompanion.devFarMesh");
+    /** -PdevFarRange=N: the far range of the run's first fills (0: the config's farRange). */
+    private static final int MESH_RANGE = Integer.getInteger("shaderscompanion.devFarRange", 0);
+    private static long[] meshNumbers;
+    private static long meshFillsBefore;
+    private static boolean meshWindowOpen;
+    private static long meshWall;
+    private static long meshWorkerCpu;
+    private static long meshMesherCpu;
+    private static long meshRenderCpu;
+    private static long meshServerCpu;
+    private static long[] meshCounters;
+
+    /**
+     * -PdevFarMesh (with -PdevFarStore): 60 waits after joining at the vantage until the resident set is meshed and the
+     * store has settled, and logs the join (the residency's own fill time and the threads' processor time over it);
+     * 61 writes the mesh maps of levels 0 to 2 beside LodMap's (the 512-block square of the store maps); 62 sets the
+     * far range to 4,096 and waits for that fill, 63 sets it back; 64 teleports to the M1c flight's start, 1,000
+     * blocks away, and waits for the fill there; 65 flies the M1c diagonal at 30 blocks a second, logging the threads'
+     * shares of a core; 66 goes back to the vantage and quits.
+     */
+    private static void farMeshCheck(Minecraft mc, int t) {
+        // Settled first: the numbers' request below is a task in the worker's queue for a moment
+        storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+        if (t % 20 == 0) {
+            FarStore.terrainNumbersForChecks().whenComplete((n, e) -> meshNumbers = n);
+        }
+        long[] n = meshNumbers;
+        int at = n == null ? 0 : n.length - 11;
+        long fills = n == null ? 0 : n[at + 7];
+        boolean filledSince = n != null && n[at + 5] == 0 && fills > meshFillsBefore;
+        double[] frame = FarStore.frameMicrosForChecks();
+        if (phase == 60 || phase == 62 || phase == 63 || phase == 64) {
+            if (!meshWindowOpen) {
+                meshWindowOpen = true;
+                // The join: any fill since the store started counts (once nothing fills any more)
+                meshFillsBefore = phase == 60 ? 0 : fills;
+                startMeshWindow();
+                if (phase == 62) {
+                    FarStore.farRangeForChecks(4096);
+                } else if (phase == 63) {
+                    FarStore.farRangeForChecks(MESH_RANGE);
+                } else if (phase == 64) {
+                    mc.player.connection.sendCommand("tp @s " + FLIGHT_AX + " " + STORE_FLY_Y + " " + FLIGHT_AZ + " " + FAR_YAW + " " + FAR_PITCH);
+                }
+                return;
+            }
+            if (phase == 64 && t > 2) {
+                holdAt(mc, FLIGHT_AX, FLIGHT_AZ);
+            }
+            if (t % 40 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain {} s (phase {}): main thread {} us a frame (max {}) | Far store: {} | Far terrain: {}", t / 20, phase,
+                        String.format("%.0f", frame[0]), String.format("%.0f", frame[1]), FarStore.status(), FarStore.terrainStatus());
+            }
+            boolean done = filledSince && meshNumbers != null && storeSettledTicks >= 60 && t >= 200;
+            if (done || t >= 4800) {
+                String what = phase == 60 ? "the join at the vantage" : phase == 62 ? "the far range set to 4096" : phase == 63 ? "the far range set back"
+                        : "a teleport 1,000 blocks to the flight's start";
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain, {}: {}; {}; {}", what, done ? "meshed and settled" : "NOT settled after 240 s",
+                        fillSummary(n), meshWindowSummary());
+                meshWindowOpen = false;
+                phase = phase == 60 ? 61 : phase == 62 ? 63 : phase == 63 ? 64 : 65;
+                phaseTick = ticks;
+                // The stats, and at 61 the three maps the next phase waits for
+                storeMapsLeft = phase == 61 ? 4 : 1;
+                logWhenDone(FarStore.terrainStats());
+                if (phase == 61) {
+                    for (int level = 0; level <= 2; level++) {
+                        logWhenDone(FarStore.meshMap(level, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, "shaderscompanion-far"));
+                    }
+                } else if (phase == 65) {
+                    startMeshWindow();
+                    FarStore.recordFramesForChecks(true);
+                    storeFlyMax = 0;
+                    storeFlySum = 0;
+                    storeFlySeconds = 0;
+                }
+            }
+        } else if (phase == 61) {
+            if (storeMapsLeft <= 0 || t >= 2400) {
+                // -PdevFarMeshShort: the join and the maps only (for comparing mesher settings)
+                phase = Boolean.getBoolean("shaderscompanion.devFarMeshShort") ? 66 : 62;
+                phaseTick = ticks;
+            }
+        } else if (phase == 65) {
+            double flightLength = Math.hypot(FLIGHT_BX - FLIGHT_AX, FLIGHT_BZ - FLIGHT_AZ);
+            int flightTicks = (int) Math.ceil(flightLength / FILL_SPEED);
+            double f = Math.min(1.0, (double) t / flightTicks);
+            double x = FLIGHT_AX + (FLIGHT_BX - FLIGHT_AX) * f;
+            double z = FLIGHT_AZ + (FLIGHT_BZ - FLIGHT_AZ) * f;
+            holdAt(mc, x, z);
+            if (t % 20 == 19) {
+                storeFlyMax = Math.max(storeFlyMax, frame[1]);
+                storeFlySum += frame[0];
+                storeFlySeconds++;
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain flying {} s at x {} z {}: main thread {} us a frame (max {}), frame {} ms | Far terrain: {}",
+                        t / 20, String.format("%.0f", x), String.format("%.0f", z), String.format("%.0f", frame[0]), String.format("%.0f", frame[1]),
+                        String.format("%.2f", median(frameMillis)), FarStore.terrainStatus());
+            }
+            if (t >= flightTicks) {
+                String frames = framesSummary(FarStore.recordFramesForChecks(false));
+                FarStore.recordedLoadsForChecks();
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain flight ({} blocks at 30 a second, render distance {}): the store's main thread {}; {}; {}",
+                        String.format("%.0f", flightLength), mc.options.getEffectiveRenderDistance(), frames, meshWindowSummary(), meshCountersSummary(n));
+                logWhenDone(FarStore.terrainStats());
+                logWhenDone(FarStore.stats());
+                phase = 66;
+                phaseTick = ticks;
+            }
+        } else if (phase == 66) {
+            if (t == 1) {
+                mc.player.connection.sendCommand("tp @s " + FAR_X + ".5 " + farY + " " + FAR_Z + ".5 " + FAR_YAW + " " + FAR_PITCH);
+            } else if (t >= 100) {
+                finish(mc);
+            }
+        }
+    }
+
+    private static void startMeshWindow() {
+        meshWall = System.nanoTime();
+        meshWorkerCpu = FarStore.workerCpuNanosForChecks();
+        meshMesherCpu = Math.max(0, FarStore.mesherCpuNanosForChecks());
+        meshRenderCpu = renderCpu();
+        meshServerCpu = serverCpu();
+        FarStore.colourNumbersForChecks(true);
+        meshCounters = meshNumbers;
+    }
+
+    /** The threads' share of a core since startMeshWindow, and the render thread's far terrain part a frame. */
+    private static String meshWindowSummary() {
+        long wall = System.nanoTime() - meshWall;
+        long worker = FarStore.workerCpuNanosForChecks() - meshWorkerCpu;
+        long mesher = Math.max(0, FarStore.mesherCpuNanosForChecks()) - meshMesherCpu;
+        long render = renderCpu() - meshRenderCpu;
+        long server = serverCpu() - meshServerCpu;
+        long[] c = FarStore.colourNumbersForChecks(false);
+        return String.format("over %.1f s: the far store's worker %.1f%% of a core, the far mesher %.1f%%, the render thread %.1f%%, the server thread %.1f%%; "
+                        + "the render thread's far terrain part %.1f us a frame (at most %.0f, %d frames); colour table so far: %d states, %.1f us a state (at most %.0f), "
+                        + "%d frames working, %.0f us each (at most %.0f), all states in %.0f ms", wall / 1.0e9, 100.0 * worker / wall, 100.0 * mesher / wall,
+                100.0 * render / wall, 100.0 * server / wall, c[9] == 0 ? 0.0 : c[7] / 1.0e3 / c[9], c[8] / 1.0e3, c[9], c[0], c[0] == 0 ? 0.0 : c[1] / 1.0e3 / c[0],
+                c[2] / 1.0e3, c[3], c[3] == 0 ? 0.0 : c[4] / 1.0e3 / c[3], c[5] / 1.0e3, c[6] / 1.0e6);
+    }
+
+    /** The residency's last fill (its own clock: from the view that started it until nothing waits). */
+    private static String fillSummary(long[] n) {
+        if (n == null) {
+            return "no residency";
+        }
+        int at = n.length - 11;
+        StringBuilder levels = new StringBuilder();
+        long quads = 0;
+        long bytes = 0;
+        for (int level = 0; level < 7; level++) {
+            if (n[level * 5] == 0) {
+                continue;
+            }
+            quads += n[level * 5 + 2];
+            bytes += n[level * 5 + 4];
+            levels.append(String.format("; level %d: %d resident, %d with geometry, %d quads (%d border), %.1f MB", level, n[level * 5], n[level * 5 + 1], n[level * 5 + 2],
+                    n[level * 5 + 3], n[level * 5 + 4] / 1048576.0));
+        }
+        return String.format("fill %.1f s (%d jobs; the mesher's processor %.1f s, the worker's %.1f s); %d quads, %.1f MB in all; %.0f us a node meshed on average, "
+                        + "at most %.0f us%s", n[at + 6] / 1.0e9, n[at + 10], n[at + 8] / 1.0e9, n[at + 9] / 1.0e9, quads, bytes / 1048576.0,
+                n[at] == 0 ? 0.0 : n[at + 1] / 1.0e3 / n[at], n[at + 2] / 1.0e3, levels);
+    }
+
+    /** Meshes and jobs since startMeshWindow. */
+    private static String meshCountersSummary(long[] n) {
+        long[] a = meshCounters;
+        if (n == null || a == null) {
+            return "no counters";
+        }
+        int at = n.length - 11;
+        long meshes = n[at] - a[at];
+        long nanos = n[at + 1] - a[at + 1];
+        long jobs = n[at + 3] - a[at + 3];
+        long jobNanos = n[at + 4] - a[at + 4];
+        return String.format("%d meshes (%.0f us each), %d jobs (%.0f us of the worker each)", meshes, meshes == 0 ? 0.0 : nanos / 1.0e3 / meshes, jobs,
+                jobs == 0 ? 0.0 : jobNanos / 1.0e3 / jobs);
+    }
+
     /** Keeps the player at a spot in the air at the flight's height (client side, as the other flights do). */
     private static void holdAt(Minecraft mc, double x, double z) {
         mc.player.setDeltaMovement(0.0, 0.0, 0.0);
@@ -3383,6 +3587,9 @@ public final class DevRun {
     private static void finish(Minecraft mc) {
         if (renderBefore >= 0) {
             mc.options.renderDistance().set(renderBefore);
+        }
+        if (fovBefore >= 0) {
+            mc.options.fov().set(fovBefore);
         }
         if (!shadersOn) {
             setShaders(mc, true);

@@ -32,6 +32,8 @@ public final class Config {
     public static final ForgeConfigSpec.IntValue FAR_STORE_BUDGET;
     public static final ForgeConfigSpec.IntValue FAR_STORE_CACHE_MB;
     public static final ForgeConfigSpec.IntValue FAR_STORE_DISK_MB;
+    public static final ForgeConfigSpec.IntValue FAR_RANGE;
+    public static final ForgeConfigSpec.IntValue FAR_PIXELS_PER_VOXEL;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -116,6 +118,12 @@ public final class Config {
         FAR_STORE_DISK_MB = builder
                 .comment("Most disk space for far terrain, in MB, per world.")
                 .defineInRange("farStoreDiskMb", 4096, 256, 1048576);
+        FAR_RANGE = builder
+                .comment("How far the far terrain reaches, in blocks (in development; nothing is drawn from it yet).")
+                .defineInRange("farRange", 1024, 64, 32768);
+        FAR_PIXELS_PER_VOXEL = builder
+                .comment("Far terrain detail: the most pixels one of its voxels may cover before a finer level is used. Lower is sharper and costs more.")
+                .defineInRange("farPixelsPerVoxel", 2, 1, 8);
         SPEC = builder.build();
     }
 
