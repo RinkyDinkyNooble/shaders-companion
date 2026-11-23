@@ -118,6 +118,15 @@ import org.lwjgl.opengl.GL33C;
  * -PdevScene=lodmirror: a black glass wall 4 blocks ahead, 30 blocks up (-PdevLift), so the glass shows the land behind
  * the camera out to Distant Horizons' LODs (-PdevDh); -PdevTime, -PdevCycle, -PdevYaw, -PdevPitch.
  * <p>
+ * -PdevScene=far (M0 of the far-terrain work, research/lod/BASELINE.md): a high vantage over mountains and sea in its
+ * own world (run/saves/shaderscompanion-far, kept between runs so Distant Horizons' database grows in it), the feet on
+ * a barrier, looking east. With -PdevDh it waits until Distant Horizons' LODs hold steady (at most -PdevWait ticks,
+ * logging DhProbe's line and the video memory every 10 seconds), then times twelve rounds: Distant Horizons drawing and
+ * not, then two black glass walls beside the camera with the pack's mirror off, at 1 and at 2 planes (FAR_ROUNDS).
+ * -PdevFarFreeze pauses Distant Horizons' generation; -PdevFarSearch logs candidate vantages and quits; -PdevFarFill
+ * times how LODs fill fresh terrain, held still and then flown at 30 blocks a second (a fresh world each run);
+ * -PdevChunky -PdevFarChunky=R has Chunky generate real chunks in R blocks around the vantage first.
+ * <p>
  * -PdevShadersLate=N: the world loads with Oculus's shaders off and they come on N ticks in (Distant Horizons first,
  * then shaders); the scene follows as usual.
  * <p>
@@ -222,7 +231,22 @@ public final class DevRun {
     private static final int START_FRAME = 60;
     /** Ticks per timing round: long enough for the 120 timed frames to be all from that round. */
     private static final int TIMING_TICKS = 120;
-    private static final String WORLD = "shaderscompanion-dev";
+    /** The far scene (M0 of the far-terrain work): a high vantage over mountains and sea, -PdevDh for Distant Horizons. */
+    private static final boolean FAR = SCENE.equals("far");
+    /** -PdevFarFill: the far scene's fill check instead (a fresh world each run, deleted and made again). */
+    private static final boolean FAR_FILL = Boolean.getBoolean("shaderscompanion.devFarFill");
+    /**
+     * -PdevFarFreeze: the far scene pauses Distant Horizons' generation of unvisited terrain from the start (through its
+     * API, not saved), so it times the LODs its database already holds with no generation load.
+     */
+    private static final boolean FAR_FREEZE = Boolean.getBoolean("shaderscompanion.devFarFreeze");
+    /** -PdevFarSearch: the far scene logs candidate vantages around the spawn and quits. */
+    private static final boolean FAR_SEARCH = Boolean.getBoolean("shaderscompanion.devFarSearch");
+    /**
+     * The far scene's world is kept between runs (Distant Horizons' database in it grows run by run, so later runs draw
+     * the same terrain); the fill check's is made fresh every run; every other scene's is the usual dev world.
+     */
+    private static final String WORLD = FAR ? (FAR_FILL ? "shaderscompanion-fill" : "shaderscompanion-far") : "shaderscompanion-dev";
     private static boolean worldRequested;
     private static int phase;
     private static int phaseTick;
@@ -280,6 +304,25 @@ public final class DevRun {
         if (SHADERS_LATE > 0) {
             setShaders(mc, false);
         }
+        if (FAR && !FAR_FILL && mc.getLevelSource().levelExists(WORLD)) {
+            // The far scene's world from an earlier run: loaded, with Distant Horizons' database
+            mc.tell(() -> {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: loading world {}", WORLD);
+                mc.createWorldOpenFlows().loadLevel(new TitleScreen(), WORLD);
+            });
+            return;
+        }
+        if (FAR_FILL) {
+            // The fill check's world starts fresh every run
+            java.nio.file.Path old = mc.gameDirectory.toPath().resolve("saves").resolve(WORLD);
+            if (java.nio.file.Files.isDirectory(old)) {
+                try (var walk = java.nio.file.Files.walk(old)) {
+                    walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+                } catch (java.io.IOException e) {
+                    ShadersCompanion.LOGGER.error("Shaders Companion dev run: deleting {} failed", old, e);
+                }
+            }
+        }
         mc.tell(() -> {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: creating world {}", WORLD);
             // Spawn radius 0: the player starts on the world's spawn point, not up to 10 blocks off it at random, so
@@ -335,7 +378,7 @@ public final class DevRun {
     }
 
     private static String frameTiming() {
-        PassProfiler.log(TOGGLE.isEmpty() ? SCENE : TOGGLE + " round " + timingRound);
+        PassProfiler.log(profileTitle != null ? profileTitle : TOGGLE.isEmpty() ? SCENE : TOGGLE + " round " + timingRound);
         return String.format("frame %.2f ms, GPU %.2f ms, the mod's GPU %.2f ms, entities' CPU %.3f ms (medians of the last %d frames)", median(frameMillis),
                 median(gpuMillis), median(modGpuMillis), median(entityMillis), Math.min(framesTimed, TIMED_FRAMES));
     }
@@ -412,6 +455,14 @@ public final class DevRun {
         boolean match = SCENE.equals("match");
         boolean materials = SCENE.equals("materials");
         boolean rainCover = SCENE.equals("raincover");
+        boolean far = FAR;
+        if (far && !FAR_FILL && !FAR_SEARCH && phase >= 1 && mc.player != null) {
+            // The far scene's view held still (the window takes mouse input while it has the focus)
+            mc.player.setYRot(FAR_YAW);
+            mc.player.yRotO = FAR_YAW;
+            mc.player.setXRot(FAR_PITCH);
+            mc.player.xRotO = FAR_PITCH;
+        }
         if (phase == 1 && importCamera != null && mc.player != null && (ticks - phaseTick == 300 || ticks - phaseTick == 306 || ticks - phaseTick == 312)) {
             // The ocean scene's -PdevImport camera, 15 seconds in (after the import): in the air after a teleport, flying
             // holds (on the ground the client turns it off at once), and a second teleport puts the camera back
@@ -578,6 +629,50 @@ public final class DevRun {
                     }
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the hand scene");
+            } else if (far) {
+                // A high vantage over mountains and sea (FAR_X/Y/Z, FAR_YAW: found by -PdevFarSearch), standing on a barrier
+                mc.options.hideGui = true;
+                for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear",
+                        "gamerule doDaylightCycle false", "gamerule doWeatherCycle false", "gamerule doMobSpawning false"}) {
+                    mc.player.connection.sendCommand(command);
+                }
+                MinecraftServer server = mc.getSingleplayerServer();
+                if (FAR_SEARCH) {
+                    server.execute(() -> {
+                        farSearch(server);
+                        mc.tell(() -> finish(mc));
+                    });
+                } else if (FAR_FILL) {
+                    // Fresh terrain far from the spawn, looking +X, the way the flight goes
+                    mc.player.connection.sendCommand("tp @s " + FILL_X + ".5 " + FILL_Y + " 0.5 -90 " + FAR_PITCH);
+                } else {
+                    if (FAR_FREEZE && dhLoaded()) {
+                        DhProbe.setGeneration(false);
+                        ShadersCompanion.LOGGER.info("Shaders Companion dev run: far scene with Distant Horizons' generation paused");
+                    }
+                    server.execute(() -> {
+                        var level = server.overworld();
+                        if (farY < 0) {
+                            // The feet two blocks above the generated ground (leaves left out), on a barrier
+                            level.getChunk(FAR_X >> 4, FAR_Z >> 4);
+                            farY = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, FAR_X, FAR_Z) + 1;
+                            ShadersCompanion.LOGGER.info("Shaders Companion dev run: far scene feet at y {} (from the ground)", farY);
+                        }
+                        // Placed by the server, which loads the chunk; the space above it cleared (a tree, say)
+                        level.setBlock(new BlockPos(FAR_X, farY - 1, FAR_Z), Blocks.BARRIER.defaultBlockState(), 3);
+                        for (int y = farY; y <= farY + 2; y++) {
+                            level.setBlock(new BlockPos(FAR_X, y, FAR_Z), Blocks.AIR.defaultBlockState(), 3);
+                        }
+                        farGlass(level, false);
+                        int chunkyRadius = Integer.getInteger("shaderscompanion.devFarChunky", 0);
+                        if (chunkyRadius > 0) {
+                            farChunky(chunkyRadius);
+                        }
+                        mc.tell(() -> mc.player.connection.sendCommand("tp @s " + FAR_X + ".5 " + farY + " " + FAR_Z + ".5 " + FAR_YAW + " " + FAR_PITCH));
+                    });
+                }
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the far scene (DH {}, range {} blocks)", dhLoaded() ? "loaded" : "not loaded",
+                        dhLoaded() ? farDhRange() : 0);
             } else if (ocean) {
                 mc.options.hideGui = true;
                 for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear", "gamerule doDaylightCycle false"}) {
@@ -1475,8 +1570,26 @@ public final class DevRun {
                 // -PdevNightVision=true: vanilla night vision for the whole run (any scene)
                 mc.player.connection.sendCommand("effect give @s minecraft:night_vision infinite 0 true");
             }
-            phase = 1;
+            phase = far && FAR_SEARCH ? 9 : far && FAR_FILL ? 7 : 1;
             phaseTick = ticks;
+            farRefTick = ticks;
+        } else if (phase == 9) {
+            // -PdevFarSearch: the search runs on the server and quits
+        } else if (phase == 1 && far && !farSettled(mc)) {
+            // The far scene waits until Distant Horizons' LODs (and Chunky's chunks) have settled, at most -PdevWait ticks
+        } else if (phase == 7) {
+            farFill(mc, false);
+        } else if (phase == 8) {
+            farFill(mc, true);
+        } else if (phase == 6 && !farRoundReady && ticks - phaseTick >= FAR_SETTLE_TICKS) {
+            // Distant Horizons rebuilds its render data from its database when its rendering comes back on: the round's
+            // timed frames start once the uploaded sections are back to the settled count and bytes
+            farRoundReady = farLodsBack(mc);
+            if (farRoundReady) {
+                phaseTick = ticks - FAR_SETTLE_TICKS;
+            }
+        } else if (phase == 6 && farRoundReady && ticks - phaseTick >= FAR_SETTLE_TICKS + TIMING_TICKS) {
+            farRoundEnd(mc);
         } else if (phase == 1 && corner && ticks - phaseTick < WAIT_TICKS) {
             // Turn from 60 to 30 degrees right of +Z across the glass block's front edge (at 45 degrees) and back
             float progress = 2.0F * (ticks - phaseTick) / WAIT_TICKS;
@@ -1727,7 +1840,7 @@ public final class DevRun {
             // The last pose settles before the usual shots
         } else if (phase == 1 && grass && ticks - phaseTick == WAIT_TICKS - 6) {
             Screenshot.grab(mc.gameDirectory, "shaderscompanion-grass-" + System.currentTimeMillis() + "-on-early.png", mc.getMainRenderTarget(), message -> { });
-        } else if (phase == 1 && (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall || doorWall || store || lampGlass || bedroom || corridor ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES)) {
+        } else if (phase == 1 && (far || (pool || hand || mobs || corner || grass || ocean || match || materials || shadows || aquarium || overlay || turn || city || reflectPool || facade || glassBox || street || stairWall || doorWall || store || lampGlass || bedroom || corridor ? ticks - phaseTick >= WAIT_TICKS : CubeView.framesDrawn() >= START_FRAME + DUMP_FRAMES))) {
             // The usual shots: timed scenes after WAIT_TICKS (turn is listed only to hold them back; its own branch above
             // takes over at WAIT_TICKS), the others once the mod has drawn DUMP_FRAMES frames
             if (noShaders) {
@@ -1756,7 +1869,7 @@ public final class DevRun {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, pig (+X): {}", CubeDump.describeTexel(size / 2, size * 7 / 20));
                     // The chest at +X 4, +Z 2 (face 0), its lid about 0.75 blocks below eye level
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, chest (+X): {}", CubeDump.describeTexel(size * 778 / 1000, size * 39 / 100));
-                } else if (!pool && !hand && !glass && !ocean) {
+                } else if (!pool && !hand && !glass && !ocean && !far) {
                     // Just below the horizon of the +X face (face 0: column 0, row 0): far ground, LODs with Distant Horizons
                     for (int percent : new int[]{46, 43, 40}) {
                         ShadersCompanion.LOGGER.info("Shaders Companion dev run, +X horizon {}%: {}", percent, CubeDump.describeTexel(size / 2, size * percent / 100));
@@ -1765,7 +1878,7 @@ public final class DevRun {
                 if (overlay) {
                     logOverlayContainer(mc);
                 }
-                Screenshot.grab(mc.gameDirectory, prefix + (pool || hand || glass || ocean ? "-on.png" : "-main.png"), mc.getMainRenderTarget(), message -> { });
+                Screenshot.grab(mc.gameDirectory, prefix + (far ? "-far.png" : pool || hand || glass || ocean ? "-on.png" : "-main.png"), mc.getMainRenderTarget(), message -> { });
             } catch (Exception e) {
                 ShadersCompanion.LOGGER.error("Shaders Companion dev run: saving failed", e);
             }
@@ -1775,7 +1888,14 @@ public final class DevRun {
                 logRayCoverage(mc);
             }
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod on: {}", frameTiming());
-            if (!TOGGLE.isEmpty() && !shadows) {
+            if (far) {
+                // Timing rounds with Distant Horizons on and off, then with the glass walls and the mirror view
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene rounds start: {} | {}", vram(), farProbe(mc, true));
+                timingRound = 0;
+                farRound(mc, 0);
+                phase = 6;
+                phaseTick = ticks;
+            } else if (!TOGGLE.isEmpty() && !shadows) {
                 // Timing rounds with the option off, on, off, on..., each with a screenshot
                 timingRound = 0;
                 setPackRound(0);
@@ -1876,6 +1996,393 @@ public final class DevRun {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with the mod off: {}", frameTiming());
             Config.ENABLED.set(true);
             finish(mc);
+        }
+    }
+
+    // The far scene (-PdevScene=far: M0 of the far-terrain work, research/lod/BASELINE.md)
+
+    /**
+     * The far scene's vantage and view, the best candidate of -PdevFarSearch in the dev worlds' seed (20261108; 2026-11-22:
+     * a 175-block peak 640 blocks west of the spawn, looking east over sea and peaks). The feet stand on a barrier a block
+     * above the ground; FAR_Y_FIXED is that height (176, logged by the first run), or -1 to take it from the generated ground.
+     */
+    private static final int FAR_X = -544;
+    private static final int FAR_Y_FIXED = 186;
+    private static final int FAR_Z = -320;
+    private static final float FAR_YAW = 270.0F;
+    private static int farY = FAR_Y_FIXED;
+    /** The far scene's pitch (-PdevPitch, 6 degrees down by default): the horizon a little above the middle. */
+    private static final float FAR_PITCH = Integer.getInteger("shaderscompanion.devPitch", 6);
+    /** -PdevWait for the far scene: the longest it waits for Distant Horizons' LODs to settle (30 minutes by default). */
+    private static final int FAR_WAIT_TICKS = Integer.getInteger("shaderscompanion.devWait", 36000);
+    /** Settled: the uploaded LOD sections' count and bytes within 0.5% for this long, after at least FAR_MIN_WAIT. */
+    private static final int FAR_STABLE_TICKS = 2400;
+    private static final int FAR_MIN_WAIT_TICKS = 1200;
+    /** -PdevFarSettle: ticks a far round waits after its changes (a pack reload) before its timed frames. */
+    private static final int FAR_SETTLE_TICKS = Integer.getInteger("shaderscompanion.devFarSettle", 200);
+    /** The fill check: fresh terrain this far along +X from the spawn, at this height, held still and then flown. */
+    private static final int FILL_X = 30000;
+    private static final int FILL_Y = 300;
+    private static final int FILL_HOLD_TICKS = Integer.getInteger("shaderscompanion.devFillHold", 4800);
+    private static final int FILL_FLY_TICKS = Integer.getInteger("shaderscompanion.devFillFly", 2400);
+    /** 30 blocks a second. */
+    private static final double FILL_SPEED = 1.5;
+    /**
+     * The far scene's timing rounds: Distant Horizons drawing (1, its own rendering and the mod's views) or not (0); the
+     * two black glass walls (1) or none (0); the mirror view's planes (0: the pack's mirror off). Each round reloads the
+     * shader pack.
+     */
+    private static final int[][] FAR_ROUNDS = {
+            {1, 0, 0}, {0, 0, 0}, {1, 0, 0}, {0, 0, 0},
+            {1, 1, 0}, {0, 1, 0}, {1, 1, 1}, {0, 1, 1}, {1, 1, 2}, {0, 1, 2}, {1, 1, 0}, {0, 1, 0}};
+    private static int farRefTick;
+    private static long farRefCount = -1;
+    private static long farRefBytes = -1;
+    private static boolean farGlassPlaced;
+    private static boolean farRoundReady;
+    private static int farBackTicks;
+    private static String profileTitle;
+
+    /** Distant Horizons loaded (-PdevDh): checked here, so DhProbe and its Distant Horizons classes load only then. */
+    private static boolean dhLoaded() {
+        return net.minecraftforge.fml.ModList.get().isLoaded("distanthorizons");
+    }
+
+    private static String farLabel(int[] spec) {
+        return "DH " + (spec[0] == 1 ? "on" : "off") + ", " + (spec[1] == 1 ? "glass walls" : "no glass") + ", "
+                + (spec[2] == 0 ? "mirror off" : "mirror " + spec[2] + (spec[2] == 1 ? " plane" : " planes"));
+    }
+
+    private static int farDhRange() {
+        return dhLoaded() ? DhProbe.range() : 0;
+    }
+
+    /** Distant Horizons' LOD sections (DhProbe) seen from the camera along the view, or why there are none. */
+    private static String farProbe(Minecraft mc, boolean f3) {
+        if (!dhLoaded() || mc.player == null) {
+            return "DH probe: Distant Horizons not loaded";
+        }
+        try {
+            float yaw = FAR_FILL ? -90.0F : FAR_YAW;
+            return DhProbe.status(mc.player.getX(), mc.player.getZ(), -Math.sin(Math.toRadians(yaw)), Math.cos(Math.toRadians(yaw)), f3);
+        } catch (RuntimeException e) {
+            return "DH probe failed: " + e;
+        }
+    }
+
+    /** Video memory from GL_NVX_gpu_memory_info (the whole GPU's, as the driver reports it), in MiB. */
+    private static String vram() {
+        if (!org.lwjgl.opengl.GL.getCapabilities().GL_NVX_gpu_memory_info) {
+            return "VRAM: no GL_NVX_gpu_memory_info";
+        }
+        int dedicated = org.lwjgl.opengl.GL11C.glGetInteger(0x9047);
+        int total = org.lwjgl.opengl.GL11C.glGetInteger(0x9048);
+        int available = org.lwjgl.opengl.GL11C.glGetInteger(0x9049);
+        int evictions = org.lwjgl.opengl.GL11C.glGetInteger(0x904A);
+        int evicted = org.lwjgl.opengl.GL11C.glGetInteger(0x904B);
+        return String.format("VRAM (NVX): %.0f MiB in use of %.0f (dedicated %.0f, %.0f available), %d evictions (%.0f MiB)", (total - available) / 1024.0,
+                total / 1024.0, dedicated / 1024.0, available / 1024.0, evictions, evicted / 1024.0);
+    }
+
+    /**
+     * The far scene's wait: logs every 10 seconds and is done once Distant Horizons' uploaded sections have held steady
+     * for two minutes (and Chunky has finished, with -PdevFarChunky), or after -PdevWait ticks.
+     */
+    private static boolean farSettled(Minecraft mc) {
+        int waited = ticks - phaseTick;
+        if (waited % 200 == 0) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene waiting {} s: frame {} ms, GPU {} ms | {} | {}{}", waited / 20,
+                    String.format("%.2f", median(frameMillis)), String.format("%.2f", median(gpuMillis)), vram(), farProbe(mc, waited % 1200 == 0),
+                    chunkyRunning() ? " | Chunky running" : "");
+        }
+        if (waited >= FAR_WAIT_TICKS) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene: waited {} s (the most -PdevWait allows); LODs last changed {} s ago{}",
+                    waited / 20, (ticks - farRefTick) / 20, chunkyRunning() ? ", Chunky still running" : "");
+            return true;
+        }
+        if (chunkyRunning()) {
+            farRefTick = ticks;
+            return false;
+        }
+        if (!dhLoaded()) {
+            return waited >= Math.min(FAR_WAIT_TICKS, 600);
+        }
+        if (waited % 20 == 0) {
+            long[] now = DhProbe.counts();
+            if (Math.abs(now[0] - farRefCount) > Math.max(2, farRefCount / 200) || Math.abs(now[1] - farRefBytes) > Math.max(65536, farRefBytes / 200)) {
+                farRefCount = now[0];
+                farRefBytes = now[1];
+                farRefTick = ticks;
+            }
+        }
+        if (waited >= FAR_MIN_WAIT_TICKS && ticks - farRefTick >= FAR_STABLE_TICKS) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene settled after {} s: {} uploaded sections, {} MiB, steady for {} s", waited / 20,
+                    farRefCount, String.format("%.1f", farRefBytes / 1048576.0), (ticks - farRefTick) / 20);
+            return true;
+        }
+        return false;
+    }
+
+    /** Applies a far round: Distant Horizons drawing or not, the glass walls, the pack's mirror and its planes (a reload). */
+    private static void farRound(Minecraft mc, int round) {
+        int[] spec = FAR_ROUNDS[round];
+        boolean dh = spec[0] == 1;
+        Config.DISTANT_HORIZONS.set(dh);
+        boolean glassWanted = spec[1] == 1;
+        if (glassWanted != farGlassPlaced) {
+            MinecraftServer server = mc.getSingleplayerServer();
+            server.execute(() -> farGlass(server.overworld(), glassWanted));
+            farGlassPlaced = glassWanted;
+        }
+        try {
+            Iris.getShaderPackOptionQueue().put("COMPANION_MIRROR", Boolean.toString(spec[2] > 0));
+            if (spec[2] > 0) {
+                Iris.getShaderPackOptionQueue().put("COMPANION_MIRROR_PLANES", Integer.toString(spec[2]));
+            }
+            // Distant Horizons' rendering changed through its API: Oculus's own check reloads the pack (with the queued
+            // options) when it sees the change. A reload of our own at the same time, before that check, compiled
+            // dh_terrain with the old state and failed ("dhMaterialId" declared twice), so Oculus reloads it here
+            boolean before = net.irisshaders.iris.compat.dh.DHCompat.hasRenderingEnabled();
+            if (dhLoaded()) {
+                DhProbe.setRendering(dh);
+            }
+            if (!dhLoaded() || before == dh) {
+                Iris.reload();
+            } else {
+                net.irisshaders.iris.compat.dh.DHCompat.checkFrame();
+            }
+        } catch (Exception e) {
+            ShadersCompanion.LOGGER.error("Shaders Companion dev run: far round {} failed", round, e);
+        }
+        farRoundReady = false;
+        farBackTicks = 0;
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run: far round {}: {}", round, farLabel(spec));
+    }
+
+    /**
+     * A far round with Distant Horizons on may start timing once its uploaded sections are back to at least 99% of the
+     * settled count and 98% of the settled bytes (checked once a second), or after a minute (logged either way).
+     */
+    private static boolean farLodsBack(Minecraft mc) {
+        if (!dhLoaded() || FAR_ROUNDS[timingRound][0] == 0 || farRefCount <= 0) {
+            return true;
+        }
+        if (++farBackTicks % 20 != 0) {
+            return false;
+        }
+        long[] now = DhProbe.counts();
+        boolean back = now[0] >= farRefCount * 0.99 && now[1] >= farRefBytes * 0.98;
+        if (back || farBackTicks >= 1200) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, far round {}: LODs {} after {} s more ({} of {} sections, {} of {} MiB)", timingRound,
+                    back ? "back" : "not back", farBackTicks / 20, now[0], farRefCount, String.format("%.1f", now[1] / 1048576.0),
+                    String.format("%.1f", farRefBytes / 1048576.0));
+            return true;
+        }
+        return false;
+    }
+
+    private static void farRoundEnd(Minecraft mc) {
+        int[] spec = FAR_ROUNDS[timingRound];
+        String[] lines = DebugOverlay.statusLines();
+        profileTitle = "far round " + timingRound + ": " + farLabel(spec);
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run timing, far round {} ({}): {} | {} | {} | {}", timingRound, farLabel(spec), frameTiming(), vram(),
+                lines.length > 4 ? lines[1] + " | " + lines[3] + " | " + lines[4] : "", farProbe(mc, false));
+        profileTitle = null;
+        Screenshot.grab(mc.gameDirectory, prefix + "-far" + timingRound + ".png", mc.getMainRenderTarget(), message -> { });
+        phaseTick = ticks;
+        if (++timingRound < FAR_ROUNDS.length) {
+            farRound(mc, timingRound);
+            return;
+        }
+        // Back to Distant Horizons drawing, the mod's setting on, no glass
+        if (dhLoaded()) {
+            DhProbe.clearRendering();
+            DhProbe.clearGeneration();
+        }
+        Config.DISTANT_HORIZONS.set(true);
+        MinecraftServer server = mc.getSingleplayerServer();
+        server.execute(() -> farGlass(server.overworld(), false));
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene done: {} | {}", vram(), farProbe(mc, true));
+        finish(mc);
+    }
+
+    /**
+     * The far scene's two black glass walls, 4 blocks to either side of the camera along the view, from 3 blocks below
+     * the feet to 6 above and from 3 behind to 12 ahead: placed only in air, removed only where they are glass.
+     */
+    private static void farGlass(net.minecraft.server.level.ServerLevel level, boolean place) {
+        double forwardX = -Math.sin(Math.toRadians(FAR_YAW));
+        double forwardZ = Math.cos(Math.toRadians(FAR_YAW));
+        BlockPos at = new BlockPos(FAR_X, farY, FAR_Z);
+        int changed = 0;
+        for (int side : new int[]{-4, 4}) {
+            for (int ahead = -3; ahead <= 12; ahead++) {
+                for (int y = farY - 3; y <= farY + 6; y++) {
+                    BlockPos pos = trunkOffset(at, y, ahead, side, forwardX, forwardZ);
+                    var state = level.getBlockState(pos);
+                    if (place ? state.isAir() : state.is(Blocks.BLACK_STAINED_GLASS)) {
+                        level.setBlock(pos, (place ? Blocks.BLACK_STAINED_GLASS : Blocks.AIR).defaultBlockState(), 2);
+                        changed++;
+                    }
+                }
+            }
+        }
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run: far scene glass walls {} ({} blocks)", place ? "placed" : "removed", changed);
+    }
+
+    /**
+     * The fill check (-PdevFarFill), in a fresh world: from FILL_X (30,000 blocks along +X, never generated) held still
+     * for -PdevFillHold ticks, then flown along +X at 30 blocks a second for -PdevFillFly ticks; Distant Horizons'
+     * sections logged once a second (DhProbe: the count, and how far along the flight line they reach).
+     */
+    private static void farFill(Minecraft mc, boolean flying) {
+        if (mc.player == null) {
+            return;
+        }
+        int t = ticks - phaseTick;
+        if (flying) {
+            mc.player.setDeltaMovement(0.0, 0.0, 0.0);
+            mc.player.setPos(mc.player.getX() + FILL_SPEED, FILL_Y, 0.5);
+        }
+        mc.player.setYRot(-90.0F);
+        mc.player.yRotO = -90.0F;
+        mc.player.setXRot(FAR_PITCH);
+        mc.player.xRotO = FAR_PITCH;
+        if (t % 20 == 0) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, fill {} {} s at x {}: frame {} ms, GPU {} ms | {}", flying ? "fly" : "hold", t / 20,
+                    String.format("%.0f", mc.player.getX()), String.format("%.2f", median(frameMillis)), String.format("%.2f", median(gpuMillis)),
+                    farProbe(mc, t % 200 == 0));
+        }
+        if (!flying && t >= FILL_HOLD_TICKS) {
+            phase = 8;
+            phaseTick = ticks;
+        } else if (flying && t >= FILL_FLY_TICKS) {
+            finish(mc);
+        }
+    }
+
+    /** -PdevFarChunky=R: Chunky (-PdevChunky) generates real chunks in a square of radius R blocks around the vantage. */
+    private static void farChunky(int radius) {
+        try {
+            Object chunky = Class.forName("org.popcraft.chunky.ChunkyProvider").getMethod("get").invoke(null);
+            Object api = chunky.getClass().getMethod("getApi").invoke(chunky);
+            Class<?> apiClass = Class.forName("org.popcraft.chunky.api.ChunkyAPI");
+            boolean started = (boolean) apiClass.getMethod("startTask", String.class, String.class, double.class, double.class, double.class, double.class, String.class)
+                    .invoke(api, "minecraft:overworld", "square", FAR_X + 0.5, FAR_Z + 0.5, (double) radius, (double) radius, "concentric");
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run: Chunky task around {} {} radius {}: {}", FAR_X, FAR_Z, radius, started ? "started" : "not started");
+        } catch (ReflectiveOperationException | LinkageError e) {
+            ShadersCompanion.LOGGER.error("Shaders Companion dev run: Chunky failed (needs -PdevChunky)", e);
+        }
+    }
+
+    private static boolean chunkyRunning() {
+        if (Integer.getInteger("shaderscompanion.devFarChunky", 0) <= 0) {
+            return false;
+        }
+        try {
+            Object chunky = Class.forName("org.popcraft.chunky.ChunkyProvider").getMethod("get").invoke(null);
+            Object api = chunky.getClass().getMethod("getApi").invoke(chunky);
+            return (boolean) Class.forName("org.popcraft.chunky.api.ChunkyAPI").getMethod("isRunning", String.class).invoke(api, "minecraft:overworld");
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * -PdevFarSearch: the terrain's height every 32 blocks within 4,096 of the spawn from the world generator's noise
+     * (no chunks generated), then for each peak of 140 blocks or more and each view along an axis, the share of sea
+     * (ground below 58) and of mountains (110 and up) in a 100 degree cone from 128 to 4,000 blocks out. Logs the best
+     * candidates and the surface of the best one (that chunk generated).
+     */
+    private static void farSearch(MinecraftServer server) {
+        var level = server.overworld();
+        var source = level.getChunkSource();
+        var generator = source.getGenerator();
+        var random = source.randomState();
+        BlockPos spawn = level.getSharedSpawnPos();
+        int step = 32;
+        int half = 4096 / step;
+        int n = half * 2 + 1;
+        int[] height = new int[n * n];
+        long start = System.nanoTime();
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                height[i * n + j] = generator.getBaseHeight(spawn.getX() + (i - half) * step, spawn.getZ() + (j - half) * step,
+                        net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG, level, random);
+            }
+        }
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run, far search: {} heights around the spawn {} in {} s", n * n, spawn,
+                String.format("%.1f", (System.nanoTime() - start) / 1.0e9));
+        java.util.List<double[]> found = new java.util.ArrayList<>();
+        for (int i = 4; i < n - 4; i++) {
+            for (int j = 4; j < n - 4; j++) {
+                int h = height[i * n + j];
+                if (h < 140 || (i - half) * (i - half) + (j - half) * (j - half) > (3000 / step) * (3000 / step)) {
+                    continue;
+                }
+                boolean peak = true;
+                for (int a = -2; a <= 2 && peak; a++) {
+                    for (int b = -2; b <= 2; b++) {
+                        if (height[(i + a) * n + j + b] > h) {
+                            peak = false;
+                            break;
+                        }
+                    }
+                }
+                if (!peak) {
+                    continue;
+                }
+                for (int yaw = 0; yaw < 360; yaw += 90) {
+                    int samples = 0;
+                    int sea = 0;
+                    int mountain = 0;
+                    int blocked = 0;
+                    for (int d = 128; d <= 4000; d += 64) {
+                        for (int a = -50; a <= 50; a += 5) {
+                            double angle = Math.toRadians(yaw + a);
+                            int si = i + (int) Math.round(-Math.sin(angle) * d / step);
+                            int sj = j + (int) Math.round(Math.cos(angle) * d / step);
+                            if (si < 0 || sj < 0 || si >= n || sj >= n) {
+                                continue;
+                            }
+                            int sh = height[si * n + sj];
+                            samples++;
+                            if (sh < 58) {
+                                sea++;
+                            } else if (sh >= 110) {
+                                mountain++;
+                            }
+                            if (d < 600 && sh > h - 5) {
+                                blocked++;
+                            }
+                        }
+                    }
+                    if (samples == 0) {
+                        continue;
+                    }
+                    double seaShare = sea / (double) samples;
+                    double mountainShare = mountain / (double) samples;
+                    double score = Math.min(seaShare, 0.5) * Math.min(mountainShare, 0.35) * Math.max(0.0, 1.0 - 4.0 * blocked / samples) * (h / 160.0);
+                    found.add(new double[]{spawn.getX() + (i - half) * step, spawn.getZ() + (j - half) * step, h, yaw, seaShare, mountainShare,
+                            blocked / (double) samples, score});
+                }
+            }
+        }
+        found.sort((x, y) -> Double.compare(y[7], x[7]));
+        for (int k = 0; k < Math.min(15, found.size()); k++) {
+            double[] c = found.get(k);
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, far search candidate {}: x {} z {} height {} yaw {}: sea {}%, mountains {}%, near ground above {}%, score {}",
+                    k, (int) c[0], (int) c[1], (int) c[2], (int) c[3], Math.round(c[4] * 100), Math.round(c[5] * 100), Math.round(c[6] * 100),
+                    String.format("%.4f", c[7]));
+        }
+        if (!found.isEmpty()) {
+            double[] best = found.get(0);
+            int x = (int) best[0];
+            int z = (int) best[1];
+            level.getChunk(x >> 4, z >> 4);
+            int surface = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x, z);
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, far search best: x {} z {} yaw {}, generated surface {} (noise height {})", x, z, (int) best[3],
+                    surface, (int) best[2]);
         }
     }
 
@@ -2170,7 +2677,7 @@ public final class DevRun {
         if (!shadersOn) {
             setShaders(mc, true);
         }
-        if (CubeView.lodRangeForChecks() > 0 || System.getProperty("shaderscompanion.devDh") != null) {
+        if (CubeView.lodRangeForChecks() > 0 || System.getProperty("shaderscompanion.devDh") != null || FAR) {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: Distant Horizons range {}", CubeView.lodRangeForChecks());
         }
         phase = -1;
