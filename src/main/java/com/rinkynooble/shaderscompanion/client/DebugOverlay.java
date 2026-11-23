@@ -1,6 +1,9 @@
 package com.rinkynooble.shaderscompanion.client;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.rinkynooble.shaderscompanion.client.far.FarStore;
+import java.util.concurrent.CompletableFuture;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -12,7 +15,8 @@ import net.minecraftforge.client.gui.overlay.ForgeGui;
 
 /**
  * {@code /shaderscompanion debug} shows the cube faces in a corner, {@code status} prints the state, {@code dump} saves
- * the views as pictures, and {@code on} and {@code off} start and stop all drawing.
+ * the views as pictures, and {@code on} and {@code off} start and stop all drawing. {@code lod map <level> [radius]}
+ * saves a map of the far store's level around you and {@code lod stats} prints its sizes (both in development).
  */
 public final class DebugOverlay {
     private static boolean visible;
@@ -50,7 +54,33 @@ public final class DebugOverlay {
                     String line = message;
                     context.getSource().sendSuccess(() -> Component.literal(line), false);
                     return 1;
-                })));
+                }))
+                .then(Commands.literal("lod")
+                        .then(Commands.literal("map")
+                                .then(Commands.argument("level", IntegerArgumentType.integer(0, 6))
+                                        .executes(context -> lodMap(context.getSource(), IntegerArgumentType.getInteger(context, "level"), 4))
+                                        .then(Commands.argument("radius", IntegerArgumentType.integer(0, 32))
+                                                .executes(context -> lodMap(context.getSource(), IntegerArgumentType.getInteger(context, "level"),
+                                                        IntegerArgumentType.getInteger(context, "radius"))))))
+                        .then(Commands.literal("stats").executes(context -> {
+                            reply(context.getSource(), FarStore.stats());
+                            return 1;
+                        }))));
+    }
+
+    /** The far store's map of a level, radius nodes around you, written by its worker; the chat says when it is saved. */
+    private static int lodMap(CommandSourceStack source, int level, int radius) {
+        reply(source, FarStore.mapAroundCamera(level, radius).thenApply(line -> new String[]{line}));
+        return 1;
+    }
+
+    /** Sends lines to the chat once the far store's worker has them (on the main thread). */
+    private static void reply(CommandSourceStack source, CompletableFuture<String[]> lines) {
+        lines.whenComplete((result, error) -> Minecraft.getInstance().execute(() -> {
+            for (String line : error != null ? new String[]{"Failed: " + error} : result) {
+                source.sendSuccess(() -> Component.literal(line), false);
+            }
+        }));
     }
 
     /** Turns all of the mod's drawing on or off, now and in the config file. */
@@ -82,6 +112,7 @@ public final class DebugOverlay {
                 "Materials: " + Materials.status,
                 "Light leak fix: " + LightLeaks.status(),
                 "Closed doors: " + DoorLight.status(),
+                "Far store: " + FarStore.status(),
                 "Bundled shader pack: " + BundledPack.status
                         + (Gl.mismatches == 0 ? "" : "; GL state out of step with Minecraft's record " + Gl.mismatches + " times (see the log)")
         };

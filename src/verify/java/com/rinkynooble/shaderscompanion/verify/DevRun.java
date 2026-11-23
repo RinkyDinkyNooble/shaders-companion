@@ -5,6 +5,7 @@ import com.rinkynooble.shaderscompanion.client.Config;
 import com.rinkynooble.shaderscompanion.client.CubeDump;
 import com.rinkynooble.shaderscompanion.client.CubeView;
 import com.rinkynooble.shaderscompanion.client.DebugOverlay;
+import com.rinkynooble.shaderscompanion.client.far.FarStore;
 import net.irisshaders.iris.Iris;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
@@ -127,6 +128,18 @@ import org.lwjgl.opengl.GL33C;
  * times how LODs fill fresh terrain, held still and then flown at 30 blocks a second (a fresh world each run);
  * -PdevChunky -PdevFarChunky=R has Chunky generate real chunks in R blocks around the vantage first.
  * <p>
+ * -PdevScene=far -PdevFarStore (M1a of the far-terrain work, research/lod/M1.md): the far store on for the run (not
+ * saved; its cache -PdevFarStoreCache MB, 1536 by default, so nothing is dropped) and -PdevFarRender=N the render
+ * distance for the run (16 loads the whole 512-block square around the vantage at once). Instead of the M0 rounds it
+ * waits at least a minute until the store has settled (FarStore.settledForChecks for 5 seconds), logging the main
+ * thread's time per frame every second while sections wait; then writes the maps of levels 0 to 4 of the same 512-block
+ * square (screenshots/shaderscompanion-lod-far-L0.png to -L4.png) and the command's own map, logs the stats, turns
+ * the store off and on again, and flies east across Chunky's square at 30 blocks a second at render distance 5
+ * (-PdevFillFly ticks, 520 by default) logging the main thread's time every second. -PdevFarDim then goes to the
+ * Nether and back (the store must stop and start for each dimension). -PdevFarShapes floats thin test shapes at y 200
+ * over the plains south of the vantage while the store fills (a one-block roof, a slab roof, a wall, a diagonal wall,
+ * a glass wall, fence posts and a half-filled leaf canopy; FAR_SHAPES) and takes them away again at the end.
+ * <p>
  * -PdevShadersLate=N: the world loads with Oculus's shaders off and they come on N ticks in (Distant Horizons first,
  * then shaders); the scene follows as usual.
  * <p>
@@ -242,6 +255,11 @@ public final class DevRun {
     private static final boolean FAR_FREEZE = Boolean.getBoolean("shaderscompanion.devFarFreeze");
     /** -PdevFarSearch: the far scene logs candidate vantages around the spawn and quits. */
     private static final boolean FAR_SEARCH = Boolean.getBoolean("shaderscompanion.devFarSearch");
+    /** -PdevFarStore: the far scene checks the far store (M1a) instead of timing Distant Horizons. */
+    private static final boolean FAR_STORE = Boolean.getBoolean("shaderscompanion.devFarStore");
+    /** -PdevFarRender=N: the render distance for the run (restored at the end). */
+    private static final int FAR_RENDER = Integer.getInteger("shaderscompanion.devFarRender", 0);
+    private static int renderBefore = -1;
     /**
      * The far scene's world is kept between runs (Distant Horizons' database in it grows run by run, so later runs draw
      * the same terrain); the fill check's is made fresh every run; every other scene's is the usual dev world.
@@ -301,6 +319,16 @@ public final class DevRun {
         }
         worldRequested = true;
         Minecraft mc = Minecraft.getInstance();
+        if (FAR_STORE) {
+            // On for this run only, before the world loads so the whole join is captured
+            FarStore.forceForChecks(true, Integer.getInteger("shaderscompanion.devFarStoreCache", 1536));
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run: far store on for the run, heap {} MB", Runtime.getRuntime().maxMemory() >> 20);
+        }
+        if (FAR_RENDER > 0) {
+            renderBefore = mc.options.renderDistance().get();
+            mc.options.renderDistance().set(FAR_RENDER);
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run: render distance {} for the run (was {})", FAR_RENDER, renderBefore);
+        }
         if (SHADERS_LATE > 0) {
             setShaders(mc, false);
         }
@@ -664,6 +692,9 @@ public final class DevRun {
                             level.setBlock(new BlockPos(FAR_X, y, FAR_Z), Blocks.AIR.defaultBlockState(), 3);
                         }
                         farGlass(level, false);
+                        if (FAR_STORE && Boolean.getBoolean("shaderscompanion.devFarShapes")) {
+                            farShapes(level, true);
+                        }
                         int chunkyRadius = Integer.getInteger("shaderscompanion.devFarChunky", 0);
                         if (chunkyRadius > 0) {
                             farChunky(chunkyRadius);
@@ -1575,6 +1606,8 @@ public final class DevRun {
             farRefTick = ticks;
         } else if (phase == 9) {
             // -PdevFarSearch: the search runs on the server and quits
+        } else if ((phase == 1 || phase >= 10) && far && FAR_STORE) {
+            farStoreCheck(mc);
         } else if (phase == 1 && far && !farSettled(mc)) {
             // The far scene waits until Distant Horizons' LODs (and Chunky's chunks) have settled, at most -PdevWait ticks
         } else if (phase == 7) {
@@ -2665,6 +2698,195 @@ public final class DevRun {
     }
 
     /** Turns Oculus's shaders on or off, as its toggle key does (saved in its settings file). */
+    // The far store check (-PdevScene=far -PdevFarStore: M1a of the far-terrain work, research/lod/M1.md)
+
+    /** The 512-block square around the vantage the maps of every level show (aligned to level 4's 16-block voxels). */
+    private static final int STORE_MAP_X = Math.floorDiv(FAR_X - 256, 16) * 16;
+    private static final int STORE_MAP_Z = Math.floorDiv(FAR_Z - 256, 16) * 16;
+    private static final int STORE_MAP_SIZE = 512;
+    /** The flight: east across Chunky's square (x -1056 to -32) at render distance 5, never past what it generated. */
+    private static final int STORE_FLY_X = -980;
+    private static final int STORE_FLY_Y = 230;
+    private static final int STORE_FLY_TICKS = Integer.getInteger("shaderscompanion.devFillFly", 520);
+    private static int storeSettledTicks;
+    private static int storeMapsLeft;
+    private static double storeFlyMax;
+    private static double storeFlySum;
+    private static int storeFlySeconds;
+
+    /**
+     * Phases: 1 (and 10) wait until the store has settled; 11 waits for the maps and stats; 12 has the store off for 2
+     * seconds, then on again; 13 moves to the flight's start at render distance 5 and waits 5 seconds; 14 flies.
+     */
+    private static void farStoreCheck(Minecraft mc) {
+        int t = ticks - phaseTick;
+        double[] frame = FarStore.frameMicrosForChecks();
+        if (phase == 1) {
+            phase = 10;
+            phaseTick = ticks;
+            storeSettledTicks = 0;
+            return;
+        }
+        if (phase == 10) {
+            if (t % 20 == 0 && (frame[2] > 0 || t < 1200)) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store {} s: main thread {} us a frame (max {}), {} sections waiting, frame {} ms | {}", t / 20,
+                        String.format("%.0f", frame[0]), String.format("%.0f", frame[1]), (int) frame[2], String.format("%.2f", median(frameMillis)), FarStore.status());
+            }
+            storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+            boolean timeUp = t >= Math.min(FAR_WAIT_TICKS, 6000);
+            if (t >= 1200 && storeSettledTicks >= 100 || timeUp) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store {} after {} s: {}", timeUp ? "not settled" : "settled", t / 20, FarStore.status());
+                storeMapsLeft = 7;
+                for (int level = 0; level <= 4; level++) {
+                    logWhenDone(FarStore.map(level, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, STORE_MAP_SIZE, "shaderscompanion-lod-far-L" + level + ".png")
+                            .thenApply(line -> new String[]{line}));
+                }
+                // And the command's own: level 0, 4 nodes around the camera
+                logWhenDone(FarStore.mapAroundCamera(0, 4).thenApply(line -> new String[]{line}));
+                logWhenDone(FarStore.stats());
+                phase = 11;
+                phaseTick = ticks;
+            }
+        } else if (phase == 11) {
+            if (storeMapsLeft == 0 || t >= 1200) {
+                // The switch off at runtime: capture stops and the store is let go
+                FarStore.forceForChecks(false, Integer.getInteger("shaderscompanion.devFarStoreCache", 1536));
+                phase = 12;
+                phaseTick = ticks;
+            }
+        } else if (phase == 12) {
+            if (t == 40) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store turned off: {}", FarStore.status());
+                FarStore.forceForChecks(true, Integer.getInteger("shaderscompanion.devFarStoreCache", 1536));
+            } else if (t == 80) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store on again: {}", FarStore.status());
+                if (FAR_RENDER > 0) {
+                    mc.options.renderDistance().set(renderBefore);
+                }
+                mc.player.connection.sendCommand("tp @s " + STORE_FLY_X + ".5 " + STORE_FLY_Y + " " + FAR_Z + ".5 " + FAR_YAW + " " + FAR_PITCH);
+                phase = 13;
+                phaseTick = ticks;
+            }
+        } else if (phase == 13) {
+            if (t % 20 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store before the flight {} s: main thread {} us a frame (max {}), {} sections waiting | {}", t / 20,
+                        String.format("%.0f", frame[0]), String.format("%.0f", frame[1]), (int) frame[2], FarStore.status());
+            }
+            if (t >= 200) {
+                phase = 14;
+                phaseTick = ticks;
+                storeFlyMax = 0;
+                storeFlySum = 0;
+                storeFlySeconds = 0;
+            }
+        } else if (phase == 14) {
+            mc.player.setDeltaMovement(0.0, 0.0, 0.0);
+            mc.player.setPos(mc.player.getX() + FILL_SPEED, STORE_FLY_Y, FAR_Z + 0.5);
+            if (t % 20 == 19) {
+                storeFlyMax = Math.max(storeFlyMax, frame[1]);
+                storeFlySum += frame[0];
+                storeFlySeconds++;
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store flying {} s at x {}: main thread {} us a frame (max {}), {} sections waiting, frame {} ms | {}",
+                        t / 20, String.format("%.0f", mc.player.getX()), String.format("%.0f", frame[0]), String.format("%.0f", frame[1]), (int) frame[2],
+                        String.format("%.2f", median(frameMillis)), FarStore.status());
+            }
+            if (t >= STORE_FLY_TICKS) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store flight done: main thread {} us a frame on average over {} s, at most {} in a frame | {}",
+                        String.format("%.0f", storeFlySum / Math.max(1, storeFlySeconds)), storeFlySeconds, String.format("%.0f", storeFlyMax), FarStore.status());
+                phase = 15;
+                phaseTick = ticks;
+                logWhenDone(FarStore.stats());
+            }
+        } else if (phase == 15 && t == 1) {
+            // Back to the vantage, so the next run joins there (the world saves the player where the run ends)
+            mc.player.connection.sendCommand("tp @s " + FAR_X + ".5 " + farY + " " + FAR_Z + ".5 " + FAR_YAW + " " + FAR_PITCH);
+            if (Boolean.getBoolean("shaderscompanion.devFarShapes")) {
+                MinecraftServer server = mc.getSingleplayerServer();
+                server.execute(() -> farShapes(server.overworld(), false));
+            }
+        } else if (phase == 15 && t >= 100) {
+            if (Boolean.getBoolean("shaderscompanion.devFarDim")) {
+                // Another dimension and back: the store stops with the level and starts for the next one
+                mc.player.connection.sendCommand("execute in minecraft:the_nether run tp @s 0.5 120 0.5");
+                phase = 16;
+                phaseTick = ticks;
+            } else {
+                finish(mc);
+            }
+        } else if (phase == 16) {
+            if (t % 40 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store in {} {} s: {}", mc.level.dimension().location(), t / 20, FarStore.status());
+            }
+            if (t == 300) {
+                mc.player.connection.sendCommand("execute in minecraft:overworld run tp @s " + FAR_X + ".5 " + farY + " " + FAR_Z + ".5 " + FAR_YAW + " " + FAR_PITCH);
+                phase = 17;
+                phaseTick = ticks;
+            }
+        } else if (phase == 17) {
+            if (t % 40 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store back in {} {} s: {}", mc.level.dimension().location(), t / 20, FarStore.status());
+            }
+            if (t >= 200) {
+                logWhenDone(FarStore.stats());
+                phase = 18;
+                phaseTick = ticks;
+            }
+        } else if (phase == 18 && t >= 40) {
+            finish(mc);
+        }
+    }
+
+    /**
+     * -PdevFarShapes: thin shapes floating at y 200 over the plains south of the vantage, for the coarser levels' rules
+     * (placed only in air, taken away only where they are what was placed): from x -600, z -230, a one-block oak roof
+     * (24 x 24), a stone wall (24 long, 8 high, along x at z -200), a diagonal stone brick wall, a glass wall (along z at
+     * x -540), fence posts 3 blocks apart, a stone slab roof and an oak leaf canopy filled in a checkerboard.
+     */
+    private static void farShapes(net.minecraft.server.level.ServerLevel level, boolean place) {
+        java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> shapes = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < 24; i++) {
+            for (int j = 0; j < 24; j++) {
+                shapes.put(new BlockPos(-600 + i, 200, -230 + j), Blocks.OAK_PLANKS.defaultBlockState());
+                shapes.put(new BlockPos(-520 + i, 200, -230 + j), Blocks.STONE_SLAB.defaultBlockState());
+                if ((i + j & 1) == 0) {
+                    shapes.put(new BlockPos(-490 + i, 200, -230 + j),
+                            Blocks.OAK_LEAVES.defaultBlockState().setValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT, true));
+                }
+            }
+            for (int y = 196; y <= 203; y++) {
+                shapes.put(new BlockPos(-600 + i, y, -200), Blocks.STONE.defaultBlockState());
+                shapes.put(new BlockPos(-570 + i, y, -230 + i), Blocks.STONE_BRICKS.defaultBlockState());
+                shapes.put(new BlockPos(-540, y, -230 + i), Blocks.GLASS.defaultBlockState());
+            }
+        }
+        for (int i = 0; i < 8; i++) {
+            for (int j = 0; j < 8; j++) {
+                for (int y = 196; y <= 200; y++) {
+                    shapes.put(new BlockPos(-530 + 3 * i, y, -230 + 3 * j), Blocks.OAK_FENCE.defaultBlockState());
+                }
+            }
+        }
+        int changed = 0;
+        for (var entry : shapes.entrySet()) {
+            var state = level.getBlockState(entry.getKey());
+            if (place ? state.isAir() : state.is(entry.getValue().getBlock())) {
+                level.setBlock(entry.getKey(), place ? entry.getValue() : Blocks.AIR.defaultBlockState(), 2);
+                changed++;
+            }
+        }
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run: far store test shapes {} ({} blocks)", place ? "placed" : "removed", changed);
+    }
+
+    /** Logs a far store answer when the worker has it (and counts down the maps the check waits for). */
+    private static void logWhenDone(java.util.concurrent.CompletableFuture<String[]> lines) {
+        lines.whenComplete((result, error) -> Minecraft.getInstance().execute(() -> {
+            for (String line : error != null ? new String[]{"failed: " + error} : result) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store: {}", line);
+            }
+            storeMapsLeft--;
+        }));
+    }
+
     private static void setShaders(Minecraft mc, boolean on) {
         try {
             Iris.toggleShaders(mc, on);
@@ -2674,6 +2896,9 @@ public final class DevRun {
     }
 
     private static void finish(Minecraft mc) {
+        if (renderBefore >= 0) {
+            mc.options.renderDistance().set(renderBefore);
+        }
         if (!shadersOn) {
             setShaders(mc, true);
         }

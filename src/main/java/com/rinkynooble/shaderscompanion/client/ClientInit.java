@@ -1,6 +1,9 @@
 package com.rinkynooble.shaderscompanion.client;
 
+import com.rinkynooble.shaderscompanion.client.far.FarStore;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraftforge.client.event.ModelEvent;
 import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
@@ -41,18 +44,23 @@ public final class ClientInit {
             CubeView.forgetWorld();
             RainCover.forgetWorld();
             Lattice.forgetWorld();
+            FarStore.forgetWorld();
         }
     }
 
     private static void onChunkLoad(ChunkEvent.Load event) {
         if (event.getLevel().isClientSide()) {
             Lattice.markChunk(event.getChunk().getPos().x, event.getChunk().getPos().z);
+            FarStore.chunkLoaded((Level) event.getLevel(), event.getChunk().getPos().x, event.getChunk().getPos().z);
         }
     }
 
     private static void onChunkUnload(ChunkEvent.Unload event) {
         if (event.getLevel().isClientSide()) {
             Lattice.markChunk(event.getChunk().getPos().x, event.getChunk().getPos().z);
+            if (event.getChunk() instanceof LevelChunk chunk) {
+                FarStore.chunkUnloaded((Level) event.getLevel(), chunk);
+            }
         }
     }
 

@@ -28,6 +28,10 @@ public final class Config {
     public static final ForgeConfigSpec.IntValue LATTICE_BUDGET;
     public static final ForgeConfigSpec.BooleanValue LIGHT_LEAK_FIX;
     public static final ForgeConfigSpec.BooleanValue MATERIALS;
+    public static final ForgeConfigSpec.BooleanValue FAR_STORE;
+    public static final ForgeConfigSpec.IntValue FAR_STORE_BUDGET;
+    public static final ForgeConfigSpec.IntValue FAR_STORE_CACHE_MB;
+    public static final ForgeConfigSpec.IntValue FAR_STORE_DISK_MB;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -100,6 +104,18 @@ public final class Config {
         MATERIALS = builder
                 .comment("Give blocks without their own PBR maps material values (how smooth, how reflective, whether metal) for a shader pack that reads them: vanilla blocks and some tech mods' machines from the mod's own tables, other modded blocks from their sound, tags and name, and any block from config/shaderscompanion-materials.json. A resource pack's own PBR maps win. Takes effect when the shader pack is next loaded.")
                 .define("materials", true);
+        FAR_STORE = builder
+                .comment("Keep the mod's own copy of the world for far terrain (in development; nothing is drawn from it yet).")
+                .define("farStore", false);
+        FAR_STORE_BUDGET = builder
+                .comment("Most processor time per frame spent copying the world for far terrain, in microseconds. It is used up only while sections wait to be copied: on joining a world, after a teleport or while flying fast.")
+                .defineInRange("farStoreBudget", 150, 20, 2000);
+        FAR_STORE_CACHE_MB = builder
+                .comment("Memory for the far terrain kept ready near you, in MB.")
+                .defineInRange("farStoreCacheMb", 64, 16, 8192);
+        FAR_STORE_DISK_MB = builder
+                .comment("Most disk space for far terrain, in MB, per world.")
+                .defineInRange("farStoreDiskMb", 4096, 256, 1048576);
         SPEC = builder.build();
     }
 

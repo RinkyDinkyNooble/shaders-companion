@@ -280,7 +280,20 @@ minecraft {
             if (project.hasProperty('devFarFreeze')) {
                 property 'shaderscompanion.devFarFreeze', 'true'
             }
-            ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly'].each { name ->
+            // -PdevFarStore: the far scene checks the far store (M1a) instead; -PdevFarRender=16 the render distance for the
+            // run, -PdevFarStoreCache=1536 the store's cache in MB (research/lod/M1.md).
+            if (project.hasProperty('devFarStore')) {
+                property 'shaderscompanion.devFarStore', 'true'
+            }
+            // -PdevFarDim: the far store check ends with a visit to the Nether and back; -PdevFarShapes: thin test shapes in
+            // the sky while it runs (taken away at the end).
+            if (project.hasProperty('devFarShapes')) {
+                property 'shaderscompanion.devFarShapes', 'true'
+            }
+            if (project.hasProperty('devFarDim')) {
+                property 'shaderscompanion.devFarDim', 'true'
+            }
+            ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }
