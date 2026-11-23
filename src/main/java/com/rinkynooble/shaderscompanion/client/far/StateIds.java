@@ -98,14 +98,21 @@ final class StateIds {
         return count;
     }
 
-    /** The lines of states.txt not written yet (marked written: the caller appends them before writing any node). */
+    /**
+     * The lines of states.txt not written yet. The caller appends them before writing any node and then calls
+     * {@link #markSaved}, so a failed append leaves them unsaved (line n must stay id n).
+     */
     List<String> unsaved() {
         List<String> lines = new ArrayList<>();
         int n = count;
         for (int id = saved; id < n; id++) {
             lines.add(id == UNKNOWN ? "#unknown" : id == AIR ? "minecraft:air" : BlockStateParser.serialize(states[id]));
         }
-        saved = n;
         return lines;
+    }
+
+    /** The first {@code lines} of {@link #unsaved} are in states.txt now. */
+    void markSaved(int lines) {
+        saved += lines;
     }
 }

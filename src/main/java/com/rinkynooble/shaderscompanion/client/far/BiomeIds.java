@@ -71,13 +71,17 @@ final class BiomeIds {
         return names.size();
     }
 
-    /** The lines of biomes.txt not written yet (marked written). */
+    /** The lines of biomes.txt not written yet ({@link #markSaved} once they are, as for {@link StateIds}). */
     List<String> unsaved() {
         List<String> lines = new ArrayList<>();
         for (int id = saved; id < names.size(); id++) {
             lines.add(id == UNKNOWN ? "#unknown" : names.get(id));
         }
-        saved = names.size();
         return lines;
+    }
+
+    /** The first {@code lines} of {@link #unsaved} are in biomes.txt now. */
+    void markSaved(int lines) {
+        saved += lines;
     }
 }

@@ -210,6 +210,10 @@ final class FarWorker {
                 publish(now);
             } catch (Throwable t) {
                 ShadersCompanion.LOGGER.error("Shaders Companion far store: the worker stopped the store after an error", t);
+                if (store != null && store.disk != null) {
+                    // Its files closed without writing (what waits may be what failed)
+                    store.disk.abandon();
+                }
                 store = null;
                 importer = null;
                 tasks.clear();

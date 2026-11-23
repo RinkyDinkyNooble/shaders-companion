@@ -323,7 +323,9 @@ final class FarDisk {
             long start = System.nanoTime();
             try {
                 codec.decode(blob, node);
-            } catch (DataFormatException e) {
+            } catch (DataFormatException | RuntimeException e) {
+                // A blob that inflates but doesn't decode (its palette or indices out of range) is damaged too: the
+                // store goes on without it rather than stopping
                 damaged++;
                 ShadersCompanion.LOGGER.warn("Shaders Companion far store: node {} {} {} at level {} is damaged ({}); it is built again", node.x, node.y, node.z, level,
                         e.getMessage());
@@ -379,7 +381,9 @@ final class FarDisk {
         }
         long start = System.nanoTime();
         append(folder.resolve("states.txt"), newStates, 0);
+        states.markSaved(newStates.size());
         append(folder.resolve("biomes.txt"), newBiomes, 1);
+        biomes.markSaved(newBiomes.size());
         // The batch by region file
         Long2ObjectOpenHashMap<List<Long2ObjectMap.Entry<Pending>>> byRegion = new Long2ObjectOpenHashMap<>();
         for (Long2ObjectMap.Entry<Pending> entry : batch.long2ObjectEntrySet()) {
@@ -442,6 +446,21 @@ final class FarDisk {
                 channel.force(true);
             }
         }
+    }
+
+    /**
+     * Closes the region files without writing anything (after the worker failed: what waits may be what failed). Never
+     * throws; the files must not stay open, since Windows keeps an open file locked.
+     */
+    void abandon() {
+        for (FarRegion region : open.values()) {
+            try {
+                region.close();
+            } catch (IOException | RuntimeException e) {
+                // Closing is all that is left to try
+            }
+        }
+        open.clear();
     }
 
     /** Writes what waits and closes the region files. */
