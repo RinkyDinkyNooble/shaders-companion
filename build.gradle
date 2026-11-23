@@ -281,7 +281,7 @@ minecraft {
                 property 'shaderscompanion.devFarFreeze', 'true'
             }
             // -PdevFarStore: the far scene checks the far store (M1a) instead; -PdevFarRender=16 the render distance for the
-            // run, -PdevFarStoreCache=1536 the store's cache in MB (research/lod/M1.md).
+            // run, -PdevFarStoreCache=1536 the store's cache in MB (the config's by default; research/lod/M1.md).
             if (project.hasProperty('devFarStore')) {
                 property 'shaderscompanion.devFarStore', 'true'
             }
@@ -293,7 +293,13 @@ minecraft {
             if (project.hasProperty('devFarDim')) {
                 property 'shaderscompanion.devFarDim', 'true'
             }
-            ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache'].each { name ->
+            // -PdevFarRejoin: the far store check leaves the world and joins it again; -PdevFarImport=64 imports the saved
+            // chunks within 64 chunks first (M1b, the store on disk; research/lod/M1.md).
+            if (project.hasProperty('devFarRejoin')) {
+                property 'shaderscompanion.devFarRejoin', 'true'
+            }
+            // -PdevFarDiff=200: the log says what differs in the first 200 stored sections that change.
+            ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache', 'devFarImport', 'devFarDiff'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }

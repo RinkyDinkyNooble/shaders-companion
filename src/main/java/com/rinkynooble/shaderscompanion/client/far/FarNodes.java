@@ -1,8 +1,12 @@
 package com.rinkynooble.shaderscompanion.client.far;
 
+import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Path;
 import java.util.Arrays;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -17,16 +21,21 @@ import net.minecraft.world.level.chunk.DataLayer;
 
 /**
  * The far store of one world and dimension, owned by the worker thread: the decoded nodes in a cache sized in MB
- * (per level, least recently used first; the finest level leaves first, as DESIGN's disk eviction has it), the state and biome ids, and the coarser levels' rebuilds. A captured section is converted to
- * ids and hashed; when the hash equals the one stored for that section nothing changes (what lets a rejoin skip
- * sections once M1b keeps the hashes on disk), else its 16 x 16 x 16 voxels go into their level-0 node and every node
- * above it is marked. A marked node is rebuilt from its changed children ({@link CoarseLevels}) no sooner than 5
- * seconds after its last mark, which marks its own parent in turn, up to level 6. A node pushed out of the cache folds
- * its pending changes into its parent first; then it is dropped (M1a has no disk: dropped nodes are counted, and M1b
- * writes them instead).
+ * (least recently used first, all levels in one order), the state and biome ids, the coarser levels' rebuilds and the
+ * disk ({@link FarDisk}). A captured section is converted to ids
+ * and hashed; when the hash equals the one stored for that section (in its node when the node is in memory, else in
+ * its region file's table, without reading the node) nothing changes: this is how a rejoin, or an import of what is
+ * already stored, writes nothing. Otherwise its 16 x 16 x 16 voxels go into their level-0 node and every node above it
+ * is marked. A marked node is rebuilt from its changed children ({@link CoarseLevels}) no sooner than 5 seconds after
+ * its last mark, which marks its own parent in turn, up to level 6. A node pushed out of the cache folds its pending
+ * changes into its parent first and is written if it changed; a node not in memory is read back when it is needed.
+ * Changed nodes are also written every 10 seconds, and all of them (after every rebuild still waiting) when the store
+ * closes.
  */
 final class FarNodes {
     static final long REBUILD_DELAY = 5_000_000_000L;
+    /** Changed nodes not waiting for a rebuild are written this often. */
+    static final long WRITE_INTERVAL = 10_000_000_000L;
 
     final int generation;
     final String world;
@@ -36,17 +45,32 @@ final class FarNodes {
     final int maxY;
     final StateIds states = new StateIds();
     final BiomeIds biomes = new BiomeIds();
+    /** The store's folder, or null when it couldn't be opened (then what leaves the cache is lost, as in M1a). */
+    final FarDisk disk;
+    final String diskError;
     private final CoarseLevels coarse = new CoarseLevels(this);
-    /** Per level, in order of use (least recent first). */
-    @SuppressWarnings("unchecked")
-    private final Long2ObjectLinkedOpenHashMap<Node>[] cache = new Long2ObjectLinkedOpenHashMap[Node.LEVELS];
+    /**
+     * Every level's nodes in order of use (least recent first). A parent is used after each change of a child (its
+     * mark), so a changed child leaves before its parent; a parent that leaves first rebuilds itself from the children
+     * still here.
+     */
+    private final Long2ObjectLinkedOpenHashMap<Node> cache = new Long2ObjectLinkedOpenHashMap<>();
     private int cached;
+    private int compact;
+    private long bytes;
     private long maxBytes;
     /** Nodes waiting for a rebuild, in the order they were marked, with the due time each was queued with. */
     private final LongArrayFIFOQueue rebuildKeys = new LongArrayFIFOQueue();
     private final LongArrayFIFOQueue rebuildDues = new LongArrayFIFOQueue();
     /** Chunk columns with at least one section stored. */
     final LongOpenHashSet explored = new LongOpenHashSet();
+    /**
+     * Chunk columns the client showed this session (copied live): the import leaves them alone, since the server's
+     * saved copy can be older than what the client saw (changes not saved yet).
+     */
+    final LongOpenHashSet liveColumns = new LongOpenHashSet();
+    private long lastWrite;
+    private boolean changedSinceWrite;
 
     // Per state id: CoarseLevels' flags, worked out the first time an id is used
     /** Air, or water a face can be seen through (water itself, kelp, seagrass). */
@@ -63,9 +87,21 @@ final class FarNodes {
     // Statistics (the worker's; FarWorker publishes them)
     final int[] nodes = new int[Node.LEVELS];
     final long[] dropped = new long[Node.LEVELS];
+    /** Sections with a stored hash, on disk or in memory. */
     long sectionsStored;
+    /** This session: sections stored for the first time, sections whose content changed, sections found unchanged. */
+    long sessionNew;
+    long sessionChanged;
+    long sessionUnchanged;
+    /** Of the unchanged ones: found by the hash in the region file, the node not read. */
+    long unchangedOnDisk;
+    /** Of the changed ones: those whose block states differ, those where only the light does, those where only biomes do. */
+    long changedStates;
+    long changedLightOnly;
+    long changedBiomesOnly;
+    /** Dev checks: log what differs in the first changed sections (FarStore.logChangesForChecks). */
+    static volatile int logChanges;
     long sectionsIngested;
-    long sectionsUnchanged;
     long rebuilds;
     long folds;
     long ingestNanos;
@@ -73,13 +109,20 @@ final class FarNodes {
     long foldNanos;
     double ingestMicros;
     double rebuildMicros;
+    /** Cache lookups that found the node, and those that didn't (then read from disk, or made new). */
+    long hits;
+    long misses;
+    long loads;
+    long creates;
+    long written;
 
     // Scratch for one section
     private final int[] sectionIds = new int[4096];
     private final byte[] sectionLight = new byte[4096];
     private final short[] sectionBiomes = new short[64];
 
-    FarNodes(int generation, String world, String dimension, int minY, int maxY, int cacheMb) {
+    /** Opens the store; {@code folder} null keeps it in memory only. */
+    FarNodes(int generation, String world, String dimension, int minY, int maxY, int cacheMb, Path folder) {
         this.generation = generation;
         this.world = world;
         this.dimension = dimension;
@@ -87,9 +130,31 @@ final class FarNodes {
         this.maxY = maxY;
         setCacheMb(cacheMb);
         flags[StateIds.AIR] = OPEN;
-        for (int level = 0; level < Node.LEVELS; level++) {
-            cache[level] = new Long2ObjectLinkedOpenHashMap<>();
+        FarDisk opened = null;
+        String error = null;
+        if (folder != null) {
+            long start = System.nanoTime();
+            try {
+                opened = new FarDisk(folder, states, biomes, minY, maxY);
+                opened.open();
+                sectionsStored = opened.sectionsOnDisk;
+                explored.addAll(opened.exploredOnDisk);
+                opened.exploredOnDisk.clear();
+                ShadersCompanion.LOGGER.info("Shaders Companion far store: opened {} in {} ms: {} sections stored in {} chunk columns, {} region files ({} MB), {} block states, {} biomes",
+                        folder, (System.nanoTime() - start) / 1_000_000, sectionsStored, explored.size(), opened.regionFiles, opened.fileBytes >> 20,
+                        states.size() - 2, biomes.size() - 1);
+                if (states.unparsed > 0) {
+                    ShadersCompanion.LOGGER.warn("Shaders Companion far store: {} block states of states.txt no longer exist (kept as unknown blocks)", states.unparsed);
+                }
+            } catch (IOException | RuntimeException e) {
+                ShadersCompanion.LOGGER.error("Shaders Companion far store: opening {} failed; keeping the store in memory only", folder, e);
+                opened = null;
+                error = e.toString();
+            }
         }
+        disk = opened;
+        diskError = error;
+        lastWrite = System.nanoTime();
     }
 
     void setCacheMb(int cacheMb) {
@@ -101,15 +166,17 @@ final class FarNodes {
     }
 
     void forEachNode(java.util.function.Consumer<Node> action) {
-        for (Long2ObjectLinkedOpenHashMap<Node> level : cache) {
-            for (Node node : level.values()) {
-                action.accept(node);
-            }
+        for (Node node : cache.values()) {
+            action.accept(node);
         }
     }
 
     int cachedNodes() {
         return cached;
+    }
+
+    int compactNodes() {
+        return compact;
     }
 
     int rebuildsWaiting() {
@@ -118,23 +185,83 @@ final class FarNodes {
 
     /** A node if it is in memory, without counting as a use (the cache's order stays). */
     Node peek(long key) {
-        return cache[(int) (key >>> 60)].get(key);
+        return cache.get(key);
     }
 
     Node peek(int level, int x, int y, int z) {
-        return cache[level].get(Node.key(level, x, y, z));
+        return cache.get(Node.key(level, x, y, z));
     }
 
+    /**
+     * A node to read, from memory or else from disk without keeping it (the map), or null when none is stored. Don't
+     * change what it returns.
+     */
+    Node read(int level, int x, int y, int z) {
+        Node node = peek(level, x, y, z);
+        if (node != null || disk == null) {
+            return node;
+        }
+        try {
+            return disk.load(Node.key(level, x, y, z));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** A node in memory, read from disk or made new when it isn't (and kept, as the most recently used). */
     private Node getOrCreate(int level, int x, int y, int z) {
         long key = Node.key(level, x, y, z);
-        Node node = cache[level].getAndMoveToLast(key);
-        if (node == null) {
+        Node node = cache.getAndMoveToLast(key);
+        if (node != null) {
+            hits++;
+            return node;
+        }
+        misses++;
+        if (disk != null) {
+            try {
+                node = disk.load(key);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        if (node != null) {
+            loads++;
+        } else {
             node = new Node(level, x, y, z);
-            cache[level].putAndMoveToLast(key, node);
-            cached++;
-            nodes[level]++;
+            creates++;
+        }
+        cache.putAndMoveToLast(key, node);
+        cached++;
+        nodes[level]++;
+        bytes += node.bytes();
+        if (node.compact()) {
+            compact++;
         }
         return node;
+    }
+
+    /** Gives a node in the cache its arrays before they are written to. */
+    void expand(Node node) {
+        if (node.state == null || node.biome == null) {
+            boolean wasCompact = node.compact();
+            long before = node.bytes();
+            node.expand();
+            bytes += node.bytes() - before;
+            if (wasCompact) {
+                compact--;
+            }
+        }
+    }
+
+    /** Lets a node in the cache drop the arrays that hold one value. */
+    private void tryCompact(Node node) {
+        boolean wasCompact = node.compact();
+        long before = node.bytes();
+        node.tryCompact();
+        bytes += node.bytes() - before;
+        if (!wasCompact && node.compact()) {
+            compact++;
+        }
     }
 
     /** CoarseLevels' flags of a state id ({@link #OPEN}, {@link #WATER}, {@link #THIN}, {@link #SHEER}). */
@@ -151,7 +278,9 @@ final class FarNodes {
                     if (state.is(Blocks.WATER)) {
                         f |= WATER;
                     }
-                    if (state.getFluidState().is(FluidTags.WATER) && !state.canOcclude()) {
+                    if (state.isAir()) {
+                        f |= OPEN;
+                    } else if (state.getFluidState().is(FluidTags.WATER) && !state.canOcclude()) {
                         // Water, and plants standing in it (kelp, seagrass): a face next to them is seen
                         f |= OPEN;
                     } else if (state.getFluidState().isEmpty() && !state.canOcclude()) {
@@ -208,17 +337,46 @@ final class FarNodes {
         }
         long hash = hash();
         sectionsIngested++;
-        Node node = getOrCreate(0, section.x >> 1, section.y >> 1, section.z >> 1);
+        if (section.live) {
+            liveColumns.add(ChunkPos.asLong(section.x, section.z));
+        }
+        int nx = section.x >> 1;
+        int ny = section.y >> 1;
+        int nz = section.z >> 1;
+        long key = Node.key(0, nx, ny, nz);
         int slot = Node.sectionSlot(section.x, section.y, section.z);
-        if (node.sectionHash[slot] == hash) {
-            sectionsUnchanged++;
+        Node node = cache.getAndMoveToLast(key);
+        long stored;
+        if (node != null) {
+            hits++;
+            stored = node.sectionHash[slot];
         } else {
+            try {
+                stored = disk == null ? 0 : disk.storedHash(key, slot);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        if (stored == hash) {
+            sessionUnchanged++;
+            if (node == null) {
+                unchangedOnDisk++;
+            }
+        } else {
+            if (node == null) {
+                node = getOrCreate(0, nx, ny, nz);
+            }
             if (node.sectionHash[slot] == 0) {
                 node.known += 4096;
                 sectionsStored++;
+                sessionNew++;
                 explored.add(ChunkPos.asLong(section.x, section.z));
+            } else {
+                sessionChanged++;
+                countChange(node, section);
             }
             node.sectionHash[slot] = hash;
+            expand(node);
             int ox = (section.x & 1) * 16;
             int oy = (section.y & 1) * 16;
             int oz = (section.z & 1) * 16;
@@ -238,12 +396,94 @@ final class FarNodes {
                     }
                 }
             }
+            if (node.known == Node.VOXELS && sectionUniform()) {
+                // Complete, and the section was one state: perhaps the whole node is (open sky, solid rock)
+                tryCompact(node);
+            }
             node.dirty = true;
+            changedSinceWrite = true;
             markParent(node, now);
         }
         long nanos = System.nanoTime() - start;
         ingestNanos += nanos;
         ingestMicros = ingestMicros == 0 ? nanos / 1.0e3 : ingestMicros * 0.99 + nanos / 1.0e3 * 0.01;
+    }
+
+    /** What differs between a section as stored and its new copy (before it is written over): the statistics, and the log in dev checks. */
+    private void countChange(Node node, CapturedSection section) {
+        int ox = (section.x & 1) * 16;
+        int oy = (section.y & 1) * 16;
+        int oz = (section.z & 1) * 16;
+        int states = 0;
+        int sky = 0;
+        int block = 0;
+        int biomeCells = 0;
+        int example = -1;
+        int i = 0;
+        for (int y = 0; y < 16; y++) {
+            for (int z = 0; z < 16; z++) {
+                for (int x = 0; x < 16; x++, i++) {
+                    int at = Node.index(ox + x, oy + y, oz + z);
+                    if (node.state(at) != sectionIds[i]) {
+                        states++;
+                        if (example < 0) {
+                            example = i;
+                        }
+                    }
+                    int light = node.light(at) ^ (sectionLight[i] & 0xFF);
+                    if ((light & 0xF0) != 0) {
+                        sky++;
+                    }
+                    if ((light & 0x0F) != 0) {
+                        block++;
+                    }
+                }
+            }
+        }
+        i = 0;
+        for (int y = 0; y < 4; y++) {
+            for (int z = 0; z < 4; z++) {
+                for (int x = 0; x < 4; x++) {
+                    if (node.biome(Node.biomeIndex(ox / 4 + x, oy / 4 + y, oz / 4 + z)) != sectionBiomes[i++]) {
+                        biomeCells++;
+                    }
+                }
+            }
+        }
+        if (states > 0) {
+            changedStates++;
+        } else if (sky + block > 0) {
+            changedLightOnly++;
+        } else {
+            changedBiomesOnly++;
+        }
+        if (logChanges > 0) {
+            logChanges--;
+            String what = "";
+            if (example >= 0) {
+                int at = Node.index(ox + (example & 15), oy + (example >> 8), oz + (example >> 4 & 15));
+                what = String.format(" (first at %d %d %d: %s -> %s)", section.x * 16 + (example & 15), section.y * 16 + (example >> 8),
+                        section.z * 16 + (example >> 4 & 15), states(node.state(at)), states(sectionIds[example]));
+            }
+            ShadersCompanion.LOGGER.info("Shaders Companion far store: section {} {} {} changed ({}): {} states{}, {} sky light, {} block light, {} biome cells",
+                    section.x, section.y, section.z, section.live ? "live" : "imported", states, what, sky, block, biomeCells);
+        }
+    }
+
+    private String states(int id) {
+        BlockState state = states.state(id);
+        return state == null ? (id == StateIds.UNKNOWN ? "unknown" : "#" + id) : state.toString();
+    }
+
+    private boolean sectionUniform() {
+        int id = sectionIds[0];
+        byte light = sectionLight[0];
+        for (int i = 1; i < 4096; i++) {
+            if (sectionIds[i] != id || sectionLight[i] != light) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** The section's light into {@link #sectionLight}: sky light in the high nibble, block light in the low one. */
@@ -306,9 +546,16 @@ final class FarNodes {
         }
     }
 
-    /** Nanoseconds until the first queued rebuild may run (0 if now, Long.MAX_VALUE if none is queued). */
-    long nanosUntilRebuild(long now) {
-        return rebuildKeys.isEmpty() ? Long.MAX_VALUE : Math.max(0, rebuildDues.firstLong() - now);
+    /**
+     * Nanoseconds until the worker has something to do here: the first queued rebuild, or writing the changed nodes
+     * (0 if now, Long.MAX_VALUE if nothing is waiting).
+     */
+    long nanosUntilWork(long now) {
+        long wait = rebuildKeys.isEmpty() ? Long.MAX_VALUE : Math.max(0, rebuildDues.firstLong() - now);
+        if (disk != null && (changedSinceWrite || !disk.batchEmpty())) {
+            wait = Math.min(wait, Math.max(0, lastWrite + WRITE_INTERVAL - now));
+        }
+        return wait;
     }
 
     /** Runs the rebuilds that are due, for at most the given time. */
@@ -346,7 +593,11 @@ final class FarNodes {
                 }
             }
         }
+        if (node.known == Node.VOXELS) {
+            tryCompact(node);
+        }
         node.dirty = true;
+        changedSinceWrite = true;
         markParent(node, now);
         long nanos = System.nanoTime() - start;
         rebuilds++;
@@ -362,18 +613,14 @@ final class FarNodes {
     }
 
     /**
-     * Pushes nodes out until the cache fits its size: the least recently used of the finest level that has any, so the
-     * coarser levels, which hold everything folded into them, stay while level 0 streams through.
+     * Pushes the least recently used nodes out until the cache fits its size. A node leaving runs its own pending
+     * rebuild from its children still in memory, folds its changes into its parent and is written if it changed (into
+     * the disk's batch, written when full). M1a evicted the finest level first, which kept the coarser levels whole
+     * while there was no disk; with the disk that starved level 0 during an import (research/lod/M1.md, "M1b").
      */
     void trim(long now) {
-        while (cached > Node.LEVELS && cached * Node.BYTES > maxBytes) {
-            int finest = 0;
-            while (cache[finest].isEmpty()) {
-                finest++;
-            }
-            Node node = cache[finest].removeFirst();
-            cached--;
-            nodes[node.level]--;
+        while (cached > Node.LEVELS && bytes > maxBytes) {
+            Node node = cache.get(cache.firstLongKey());
             // Its own pending rebuild first, from its children still in memory
             if (node.dirtyOctants != 0) {
                 node.queued = false;
@@ -392,16 +639,92 @@ final class FarNodes {
                     markParent(parent, now);
                 }
             }
-            if (node.level == 0) {
-                for (long hash : node.sectionHash) {
-                    if (hash != 0) {
-                        sectionsStored--;
+            cache.remove(node.key);
+            cached--;
+            nodes[node.level]--;
+            bytes -= node.bytes();
+            if (node.compact()) {
+                compact--;
+            }
+            if (disk != null) {
+                if (node.dirty) {
+                    disk.put(node);
+                    written++;
+                }
+            } else {
+                // No disk: gone
+                if (node.level == 0) {
+                    for (long hash : node.sectionHash) {
+                        if (hash != 0) {
+                            sectionsStored--;
+                        }
                     }
                 }
+                dropped[node.level]++;
             }
-            // M1b writes a dirty node here; until then it is gone
-            dropped[node.level]++;
         }
+        if (disk != null && disk.batchFull()) {
+            writeBatch(now);
+        }
+    }
+
+    /** Writes the changed nodes when it is time (every {@link #WRITE_INTERVAL}). */
+    void writeWhenDue(long now) {
+        if (disk != null && now - lastWrite >= WRITE_INTERVAL && (changedSinceWrite || !disk.batchEmpty())) {
+            writeChanged(now, false);
+        }
+    }
+
+    /** Writes every changed node in memory (but those waiting for a rebuild, unless {@code all}), then the batch. */
+    private void writeChanged(long now, boolean all) {
+        for (Node node : cache.values()) {
+            if (node.dirty && (all || !node.queued)) {
+                if (disk.put(node)) {
+                    tryCompact(node);
+                }
+                written++;
+                if (disk.batchFull()) {
+                    writeBatch(now);
+                }
+            }
+        }
+        changedSinceWrite = false;
+        writeBatch(now);
+    }
+
+    private void writeBatch(long now) {
+        try {
+            disk.writeBatch();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        lastWrite = now;
+    }
+
+    /**
+     * Closes the store: every queued rebuild runs now (cascading up to level 6, so the coarser levels on disk hold every
+     * change), every changed node is written, and the region files are closed.
+     */
+    void close() {
+        if (disk == null) {
+            return;
+        }
+        long start = System.nanoTime();
+        int waiting = rebuildKeys.size();
+        long t = start;
+        while (!rebuildKeys.isEmpty()) {
+            t += REBUILD_DELAY + 1;
+            runDueRebuilds(t, Long.MAX_VALUE);
+        }
+        long rebuilt = System.nanoTime();
+        writeChanged(t, true);
+        try {
+            disk.close();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        ShadersCompanion.LOGGER.info("Shaders Companion far store: closed {} {} ({} rebuilds waiting, run in {} ms; written in {} ms): {} sections stored, {} MB in {} region files",
+                world, dimension, waiting, (rebuilt - start) / 1_000_000, (System.nanoTime() - rebuilt) / 1_000_000, sectionsStored, disk.fileBytes >> 20, disk.regionFiles);
     }
 
     /** The node next to the given one at its level, if it is in memory (for CoarseLevels' exposure test at node borders). */
@@ -410,6 +733,6 @@ final class FarNodes {
     }
 
     long bytesInMemory() {
-        return cached * Node.BYTES;
+        return bytes;
     }
 }

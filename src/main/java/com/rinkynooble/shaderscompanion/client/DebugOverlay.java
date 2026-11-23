@@ -16,9 +16,13 @@ import net.minecraftforge.client.gui.overlay.ForgeGui;
 /**
  * {@code /shaderscompanion debug} shows the cube faces in a corner, {@code status} prints the state, {@code dump} saves
  * the views as pictures, and {@code on} and {@code off} start and stop all drawing. {@code lod map <level> [radius]}
- * saves a map of the far store's level around you and {@code lod stats} prints its sizes (both in development).
+ * saves a map of the far store's level around you, {@code lod stats} prints its sizes and {@code lod import [radius]}
+ * (singleplayer) adds the world's saved chunks within that many chunks of you to it, {@code lod import stop} stops
+ * that (all in development).
  */
 public final class DebugOverlay {
+    /** {@code lod import} without a radius: 256 chunks (4,096 blocks) each way. */
+    private static final int IMPORT_RADIUS = 256;
     private static boolean visible;
 
     private DebugOverlay() {
@@ -65,12 +69,22 @@ public final class DebugOverlay {
                         .then(Commands.literal("stats").executes(context -> {
                             reply(context.getSource(), FarStore.stats());
                             return 1;
-                        }))));
+                        }))
+                        .then(Commands.literal("import")
+                                .executes(context -> say(context.getSource(), FarStore.startImport(IMPORT_RADIUS)))
+                                .then(Commands.literal("stop").executes(context -> say(context.getSource(), FarStore.stopImport())))
+                                .then(Commands.argument("radius", IntegerArgumentType.integer(1, 2048))
+                                        .executes(context -> say(context.getSource(), FarStore.startImport(IntegerArgumentType.getInteger(context, "radius"))))))));
     }
 
     /** The far store's map of a level, radius nodes around you, written by its worker; the chat says when it is saved. */
     private static int lodMap(CommandSourceStack source, int level, int radius) {
         reply(source, FarStore.mapAroundCamera(level, radius).thenApply(line -> new String[]{line}));
+        return 1;
+    }
+
+    private static int say(CommandSourceStack source, String line) {
+        source.sendSuccess(() -> Component.literal(line), false);
         return 1;
     }
 

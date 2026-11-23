@@ -8,7 +8,10 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -20,8 +23,10 @@ import net.minecraft.world.level.storage.LevelResource;
  * loads. Nothing is drawn from it yet. Behind the {@code farStore} setting, off by default: every hook here returns at
  * once while it is off. The main thread only marks sections and copies them within {@code farStoreBudget}
  * microseconds a frame ({@link FarCapture}); one worker thread does the rest ({@link FarWorker}, {@link FarNodes}).
- * A world or dimension change, leaving the world or turning the setting off drops the store (M1a keeps it in memory
- * only; M1b adds the disk).
+ * The store lives on disk in {@code <game dir>/shaderscompanion/lod/<world>/<dimension>/} ({@link FarDisk}); a world
+ * or dimension change, leaving the world or turning the setting off closes it (every change written), and the game's
+ * end waits for that. In singleplayer, {@code /shaderscompanion lod import} adds the chunks the world has saved
+ * ({@link FarImport}).
  */
 public final class FarStore {
     /** Capturing for {@link #capture}'s level (main thread). The hooks check only this. */
@@ -31,6 +36,8 @@ public final class FarStore {
     private static int generation;
     private static int cacheMb;
     private static volatile String failure;
+    /** The import's progress line in the chat: when it was last sent. */
+    private static long lastImportChat;
 
     // Dev checks (src/verify): the store on for a run and its cache size, without touching the config file
     private static boolean forcedOn;
@@ -70,6 +77,7 @@ public final class FarStore {
             }
             capture.frame(Mth.floor(camera.getPosition().x) >> 4, Mth.floor(camera.getPosition().y) >> 4, Mth.floor(camera.getPosition().z) >> 4,
                     Config.FAR_STORE_BUDGET.get() * 1000L);
+            chat(mc);
         } catch (Throwable t) {
             failure = t.toString();
             ShadersCompanion.LOGGER.error("Shaders Companion far store stopped after an error", t);
@@ -89,8 +97,10 @@ public final class FarStore {
         int minY = level.getMinBuildHeight();
         int maxY = level.getMaxBuildHeight();
         int mb = cacheMb;
-        worker.clear();
-        worker.post(w -> w.replaceStore(new FarNodes(gen, world, dimension, minY, maxY, mb)));
+        Path folder = mc.gameDirectory.toPath().resolve("shaderscompanion").resolve("lod").resolve(world).resolve(dimension);
+        // Sections of the store before are let go by their generation; the old store closes first (the queue's order)
+        worker.messages.clear();
+        worker.post(w -> w.replaceStore(() -> new FarNodes(gen, world, dimension, minY, maxY, mb, folder)));
         FarWorker sink = worker;
         capture = new FarCapture(level, gen, sink::post);
         active = true;
@@ -110,7 +120,10 @@ public final class FarStore {
         ShadersCompanion.LOGGER.info("Shaders Companion far store: started for {} {} ({} chunks already loaded, cache {} MB)", world, dimension, loaded, mb);
     }
 
-    /** Stops capturing and lets the store go (M1b: after writing it). */
+    /**
+     * Stops capturing; the worker stores what was already copied, then closes the store (every change written, on the
+     * worker: nothing waits here).
+     */
     private static void stop() {
         if (!active && capture == null) {
             return;
@@ -119,10 +132,25 @@ public final class FarStore {
         capture = null;
         generation++;
         if (worker != null) {
-            worker.clear();
-            worker.post(w -> w.replaceStore(null));
+            worker.post(w -> w.replaceStore(() -> null));
         }
         ShadersCompanion.LOGGER.info("Shaders Companion far store: stopped");
+    }
+
+    /** Sends the worker's chat lines (an import's start and end) and the import's progress every 10 seconds. */
+    private static void chat(Minecraft mc) {
+        FarWorker w = worker;
+        String line;
+        while ((line = w.messages.poll()) != null) {
+            mc.gui.getChat().addMessage(Component.literal(line));
+        }
+        FarImport.Progress progress = w.importProgress;
+        long now = System.nanoTime();
+        if (progress != null && progress.end() == null && now - lastImportChat >= 10_000_000_000L) {
+            lastImportChat = now;
+            mc.gui.getChat().addMessage(Component.literal(String.format("Far store import: %d of %d chunks, %.0f a second", progress.done(), progress.total(),
+                    progress.perSecond())));
+        }
     }
 
     /**
@@ -195,19 +223,27 @@ public final class FarStore {
             return wanted() ? "waiting for a world" : "off";
         }
         FarWorker w = worker;
-        StringBuilder line = new StringBuilder(String.format("%d sections stored, %d waiting, main thread %.0f us a frame (max %.0f), worker %.0f us a section",
-                w.sectionsStored, capture.pendingSections + w.queued(), capture.frameMicrosAverage, capture.frameMicrosMax, w.ingestMicros));
+        StringBuilder line = new StringBuilder(String.format("%d sections stored (this session %d new, %d changed, %d unchanged), %d waiting, "
+                        + "main thread %.0f us a frame (max %.0f), worker %.0f us a section", w.sectionsStored, w.sessionNew, w.sessionChanged, w.sessionUnchanged,
+                capture.pendingSections + w.queued(), capture.frameMicrosAverage, capture.frameMicrosMax, w.ingestMicros));
         if (w.rebuildsWaiting > 0) {
             line.append(String.format(", %d coarser nodes to rebuild (%.0f us each)", w.rebuildsWaiting, w.rebuildMicros));
         }
-        line.append(String.format(", %d nodes in memory (%d MB)", w.nodesInMemory, w.bytesInMemory >> 20));
+        line.append(String.format(", %d nodes in memory (%d compact, %d MB)", w.nodesInMemory, w.compactInMemory, w.bytesInMemory >> 20));
         if (w.nodesDropped > 0) {
-            line.append(String.format(", %d dropped from memory (kept nowhere until the disk comes)", w.nodesDropped));
+            line.append(String.format(", %d dropped from memory", w.nodesDropped));
         }
         if (capture.sectionsLost > 0) {
             line.append(String.format(", %d sections not copied at unload", capture.sectionsLost));
         }
-        return line.append(", 0 MB on disk in 0 region files").toString();
+        FarImport.Progress progress = w.importProgress;
+        if (progress != null && progress.end() == null) {
+            line.append(String.format(", importing: %d of %d chunks, %.0f a second", progress.done(), progress.total(), progress.perSecond()));
+        }
+        if (w.diskError != null) {
+            return line.append(", no disk (").append(w.diskError).append(")").toString();
+        }
+        return line.append(String.format(", %d MB on disk in %d region files", w.diskBytes >> 20, w.regionFiles)).toString();
     }
 
     // Commands and dev checks
@@ -252,6 +288,63 @@ public final class FarStore {
         double mainMicros = capture.averageSectionMicros();
         long captured = capture.sectionsCaptured;
         return worker.ask(store -> store == null ? new String[]{"The far store is off"} : FarStats.lines(store, captured, mainMicros));
+    }
+
+    /**
+     * Starts an import of the chunks the integrated server has saved, in a square of {@code radius} chunks around the
+     * player (the {@code lod import} command); the line says whether it started (its progress follows in the chat).
+     */
+    public static String startImport(int radius) {
+        if (!active) {
+            return "The far store is off (farStore in config/shaderscompanion-client.toml)";
+        }
+        Minecraft mc = Minecraft.getInstance();
+        IntegratedServer server = mc.getSingleplayerServer();
+        if (server == null || mc.player == null) {
+            return "The far store's import works in singleplayer only (it reads the world's saved chunks)";
+        }
+        ServerLevel level = server.getLevel(capture.level().dimension());
+        if (level == null) {
+            return "The far store's import found no saved dimension " + capture.level().dimension().location();
+        }
+        FarImport next = new FarImport(level, mc.player.chunkPosition().x, mc.player.chunkPosition().z, radius, generation);
+        lastImportChat = System.nanoTime();
+        worker.post(w -> w.startImport(next));
+        return "Far store import of the saved chunks within " + next.radius + " chunks of you: starting";
+    }
+
+    /** Stops the import (the {@code lod import stop} command). */
+    public static String stopImport() {
+        if (!active) {
+            return "The far store is off";
+        }
+        worker.post(FarWorker::stopImport);
+        return "Far store import: stopping";
+    }
+
+    /** Dev checks: the compression measurement over the stored nodes (FarStats.compression), on the worker. */
+    public static CompletableFuture<String[]> compressionForChecks() {
+        if (!active) {
+            return CompletableFuture.completedFuture(new String[]{"The far store is off"});
+        }
+        return worker.ask(store -> {
+            try {
+                return store == null ? new String[]{"The far store is off"} : FarStats.compression(store);
+            } catch (java.io.IOException e) {
+                return new String[]{"Compression check failed: " + e};
+            }
+        });
+    }
+
+    /** Dev checks: null before any import; while one runs, "N of M"; once it has ended, its summary line. */
+    public static String importForChecks() {
+        FarImport.Progress progress = worker == null ? null : worker.importProgress;
+        return progress == null ? null : progress.end() != null ? progress.end() : progress.done() + " of " + progress.total();
+    }
+
+    /** Dev checks: log what differs in the next {@code count} changed sections. */
+    public static void logChangesForChecks(int count) {
+        FarNodes.logChanges = count;
     }
 
     /** Dev checks: the store on for this run with this cache size (0: the config's), without saving the config. */

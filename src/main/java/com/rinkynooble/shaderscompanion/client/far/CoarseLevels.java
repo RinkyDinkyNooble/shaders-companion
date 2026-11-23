@@ -1,5 +1,7 @@
 package com.rinkynooble.shaderscompanion.client.far;
 
+import java.util.Arrays;
+
 /**
  * The rules that build a coarser level from the one below (DESIGN "Building the coarser levels", M1-PLAN step 3). A
  * level L+1 voxel stands for a 2 x 2 x 2 group of level-L voxels, its children, all in one child node, so a child node
@@ -26,8 +28,8 @@ package com.rinkynooble.shaderscompanion.client.far;
  * </ul>
  * The plan's rules (M1-PLAN step 3) were the first version; the map dumps of M1a showed slopes turning to dirt and
  * stone, and lone trees and canopies thinning by half a level, which the decoration, see-through and face-above parts
- * answer (research/lod/M1.md).
- * Worker thread only.
+ * answer (research/lod/M1.md). A compact child (one state and light) is read as if it had its arrays; the parent gets
+ * its arrays before it is written. Worker thread only.
  */
 final class CoarseLevels {
     private final FarNodes nodes;
@@ -38,6 +40,9 @@ final class CoarseLevels {
     private final int[] exposed = new int[8];
     private final byte[] lights = new byte[8];
     private final int[] biomeVotes = new int[8];
+    /** A compact child's one state and light, spread over arrays for the loops below (made on first use). */
+    private int[] uniformState;
+    private byte[] uniformLight;
 
     CoarseLevels(FarNodes nodes) {
         this.nodes = nodes;
@@ -45,7 +50,19 @@ final class CoarseLevels {
 
     /** Folds a child node into its octant of the parent, replacing what the parent held there. */
     void fold(Node child, Node parent, int octant) {
+        nodes.expand(parent);
         int[] state = child.state;
+        byte[] childLight = child.light;
+        if (state == null) {
+            if (uniformState == null) {
+                uniformState = new int[Node.VOXELS];
+                uniformLight = new byte[Node.VOXELS];
+            }
+            Arrays.fill(uniformState, child.uniformState);
+            Arrays.fill(uniformLight, child.uniformLight);
+            state = uniformState;
+            childLight = uniformLight;
+        }
         for (int i = 0; i < Node.VOXELS; i++) {
             open[i] = (nodes.flags(state[i]) & (FarNodes.OPEN | FarNodes.THIN)) != 0;
         }
@@ -88,7 +105,7 @@ final class CoarseLevels {
                                 known++;
                                 byte flags = nodes.flags(id);
                                 if (open[i]) {
-                                    int light = child.light[i];
+                                    int light = childLight[i];
                                     sky = Math.max(sky, light >> 4 & 15);
                                     block = Math.max(block, light & 15);
                                 }
@@ -139,7 +156,7 @@ final class CoarseLevels {
                     for (int dy = 0; dy < 2; dy++) {
                         for (int dz = 0; dz < 2; dz++) {
                             for (int dx = 0; dx < 2; dx++) {
-                                biomeVotes[k++] = child.biome[Node.biomeIndex(2 * bx + dx, 2 * by + dy, 2 * bz + dz)];
+                                biomeVotes[k++] = child.biome(Node.biomeIndex(2 * bx + dx, 2 * by + dy, 2 * bz + dz));
                             }
                         }
                     }
@@ -215,6 +232,6 @@ final class CoarseLevels {
     }
 
     private boolean openIn(Node node, int x, int y, int z) {
-        return node != null && (nodes.flags(node.state[Node.index(x, y, z)]) & (FarNodes.OPEN | FarNodes.THIN)) != 0;
+        return node != null && (nodes.flags(node.state(Node.index(x, y, z))) & (FarNodes.OPEN | FarNodes.THIN)) != 0;
     }
 }

@@ -129,7 +129,7 @@ import org.lwjgl.opengl.GL33C;
  * -PdevChunky -PdevFarChunky=R has Chunky generate real chunks in R blocks around the vantage first.
  * <p>
  * -PdevScene=far -PdevFarStore (M1a of the far-terrain work, research/lod/M1.md): the far store on for the run (not
- * saved; its cache -PdevFarStoreCache MB, 1536 by default, so nothing is dropped) and -PdevFarRender=N the render
+ * saved; its cache -PdevFarStoreCache MB, the config's by default since M1b) and -PdevFarRender=N the render
  * distance for the run (16 loads the whole 512-block square around the vantage at once). Instead of the M0 rounds it
  * waits at least a minute until the store has settled (FarStore.settledForChecks for 5 seconds), logging the main
  * thread's time per frame every second while sections wait; then writes the maps of levels 0 to 4 of the same 512-block
@@ -139,6 +139,14 @@ import org.lwjgl.opengl.GL33C;
  * Nether and back (the store must stop and start for each dimension). -PdevFarShapes floats thin test shapes at y 200
  * over the plains south of the vantage while the store fills (a one-block roof, a slab roof, a wall, a diagonal wall,
  * a glass wall, fence posts and a half-filled leaf canopy; FAR_SHAPES) and takes them away again at the end.
+ * <p>
+ * M1b (the store on disk, research/lod/M1.md): the store's cache is the config's unless -PdevFarStoreCache=N.
+ * -PdevFarRejoin: once the store has settled, logs its stats, leaves the world to the title screen, joins it again and
+ * waits until the store has settled again, logging what the second join stored (it should be nearly nothing new).
+ * -PdevFarImport=R: 2 seconds in, starts /shaderscompanion lod import R and waits for it, logging the status every 10
+ * seconds; once the store has settled writes the maps of levels 0 and 3 of the 512-block square
+ * (shaderscompanion-lod-import-L0.png, -L3.png) and of level 3 over Chunky's whole square (-L3-all.png), logs the stats
+ * and the compression measurement, then imports the same again (it should store nothing) and quits.
  * <p>
  * -PdevShadersLate=N: the world loads with Oculus's shaders off and they come on N ticks in (Distant Horizons first,
  * then shaders); the scene follows as usual.
@@ -257,6 +265,12 @@ public final class DevRun {
     private static final boolean FAR_SEARCH = Boolean.getBoolean("shaderscompanion.devFarSearch");
     /** -PdevFarStore: the far scene checks the far store (M1a) instead of timing Distant Horizons. */
     private static final boolean FAR_STORE = Boolean.getBoolean("shaderscompanion.devFarStore");
+    /** -PdevFarRejoin: the far store check leaves the world and joins it again (M1b). */
+    private static final boolean FAR_REJOIN = Boolean.getBoolean("shaderscompanion.devFarRejoin");
+    /** -PdevFarImport=R: the far store check imports the saved chunks within R chunks (M1b). */
+    private static final int FAR_IMPORT = Integer.getInteger("shaderscompanion.devFarImport", 0);
+    /** -PdevFarStoreCache=N: the far store's cache for the run in MB (0, the default: the config's). */
+    private static final int FAR_STORE_CACHE = Integer.getInteger("shaderscompanion.devFarStoreCache", 0);
     /** -PdevFarRender=N: the render distance for the run (restored at the end). */
     private static final int FAR_RENDER = Integer.getInteger("shaderscompanion.devFarRender", 0);
     private static int renderBefore = -1;
@@ -321,7 +335,9 @@ public final class DevRun {
         Minecraft mc = Minecraft.getInstance();
         if (FAR_STORE) {
             // On for this run only, before the world loads so the whole join is captured
-            FarStore.forceForChecks(true, Integer.getInteger("shaderscompanion.devFarStoreCache", 1536));
+            FarStore.forceForChecks(true, FAR_STORE_CACHE);
+            // -PdevFarDiff=N: what differs in the first N sections that change
+            FarStore.logChangesForChecks(Integer.getInteger("shaderscompanion.devFarDiff", 0));
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: far store on for the run, heap {} MB", Runtime.getRuntime().maxMemory() >> 20);
         }
         if (FAR_RENDER > 0) {
@@ -2722,9 +2738,13 @@ public final class DevRun {
         int t = ticks - phaseTick;
         double[] frame = FarStore.frameMicrosForChecks();
         if (phase == 1) {
-            phase = 10;
+            phase = FAR_IMPORT > 0 ? 40 : 10;
             phaseTick = ticks;
             storeSettledTicks = 0;
+            return;
+        }
+        if (phase >= 30) {
+            farStoreDisk(mc, t);
             return;
         }
         if (phase == 10) {
@@ -2736,6 +2756,13 @@ public final class DevRun {
             boolean timeUp = t >= Math.min(FAR_WAIT_TICKS, 6000);
             if (t >= 1200 && storeSettledTicks >= 100 || timeUp) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store {} after {} s: {}", timeUp ? "not settled" : "settled", t / 20, FarStore.status());
+                if (FAR_REJOIN) {
+                    storeMapsLeft = 1;
+                    logWhenDone(FarStore.stats());
+                    phase = 30;
+                    phaseTick = ticks;
+                    return;
+                }
                 storeMapsLeft = 7;
                 for (int level = 0; level <= 4; level++) {
                     logWhenDone(FarStore.map(level, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, STORE_MAP_SIZE, "shaderscompanion-lod-far-L" + level + ".png")
@@ -2750,14 +2777,14 @@ public final class DevRun {
         } else if (phase == 11) {
             if (storeMapsLeft == 0 || t >= 1200) {
                 // The switch off at runtime: capture stops and the store is let go
-                FarStore.forceForChecks(false, Integer.getInteger("shaderscompanion.devFarStoreCache", 1536));
+                FarStore.forceForChecks(false, FAR_STORE_CACHE);
                 phase = 12;
                 phaseTick = ticks;
             }
         } else if (phase == 12) {
             if (t == 40) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store turned off: {}", FarStore.status());
-                FarStore.forceForChecks(true, Integer.getInteger("shaderscompanion.devFarStoreCache", 1536));
+                FarStore.forceForChecks(true, FAR_STORE_CACHE);
             } else if (t == 80) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store on again: {}", FarStore.status());
                 if (FAR_RENDER > 0) {
@@ -2833,6 +2860,126 @@ public final class DevRun {
             }
         } else if (phase == 18 && t >= 40) {
             finish(mc);
+        }
+    }
+
+    private static String importBefore;
+    private static int storeJoins;
+
+    /**
+     * M1b's checks (research/lod/M1.md). -PdevFarRejoin: 30 waits for the stats, then leaves the world; 31 joins it again
+     * from the title screen; 32 waits for the player; 33 waits until the store has settled again and logs it.
+     * -PdevFarImport: 40 starts the import; 41 waits for it; 42 waits until the store has settled, then the maps, stats
+     * and compression measurement; 43 imports again; 44 waits for that and logs the stats; 45 quits.
+     */
+    private static void farStoreDisk(Minecraft mc, int t) {
+        if (phase == 30) {
+            if (storeMapsLeft <= 0 || t >= 600) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store: leaving the world (join {})", ++storeJoins);
+                // As the pause menu's button does, outside the tick (clearLevel ticks the client while the server stops)
+                phase = 31;
+                phaseTick = ticks;
+                mc.tell(() -> {
+                    mc.level.disconnect();
+                    mc.clearLevel(new net.minecraft.client.gui.screens.GenericDirtMessageScreen(net.minecraft.network.chat.Component.literal("Saving")));
+                    mc.setScreen(new TitleScreen());
+                });
+            }
+        } else if (phase == 31) {
+            if (t == 100) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store at the title screen: {}", FarStore.status());
+                mc.createWorldOpenFlows().loadLevel(new TitleScreen(), WORLD);
+                phase = 32;
+                phaseTick = ticks;
+            }
+        } else if (phase == 32) {
+            if (mc.player != null && mc.level != null) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store: joined again");
+                phase = 33;
+                phaseTick = ticks;
+                storeSettledTicks = 0;
+            }
+        } else if (phase == 33) {
+            if (mc.player != null) {
+                mc.player.setYRot(FAR_YAW);
+                mc.player.yRotO = FAR_YAW;
+                mc.player.setXRot(FAR_PITCH);
+                mc.player.xRotO = FAR_PITCH;
+            }
+            if (t % 100 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store second join {} s: {}", t / 20, FarStore.status());
+            }
+            storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+            if (t >= 1200 && storeSettledTicks >= 100 || t >= 6000) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store second join {} after {} s: {}", t >= 6000 ? "not settled" : "settled", t / 20,
+                        FarStore.status());
+                storeMapsLeft = 1;
+                logWhenDone(FarStore.stats());
+                phase = 34;
+                phaseTick = ticks;
+            }
+        } else if (phase == 34) {
+            if (storeMapsLeft <= 0 || t >= 600) {
+                finish(mc);
+            }
+        } else if (phase == 40) {
+            if (t == 40) {
+                importBefore = FarStore.importForChecks();
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store import: {}", FarStore.startImport(FAR_IMPORT));
+                phase = 41;
+                phaseTick = ticks;
+            }
+        } else if (phase == 41 || phase == 44) {
+            String state = FarStore.importForChecks();
+            if (t % 200 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store importing {} s: {}", t / 20, FarStore.status());
+            }
+            if (state != null && state.startsWith("Far store import") && !state.equals(importBefore)) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store import ended after {} s: {}", t / 20, state);
+                storeSettledTicks = 0;
+                if (phase == 44) {
+                    storeMapsLeft = 1;
+                    logWhenDone(FarStore.stats());
+                    phase = 45;
+                } else {
+                    phase = 42;
+                }
+                phaseTick = ticks;
+            }
+        } else if (phase == 42) {
+            storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+            if (t % 200 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store after the import {} s: {}", t / 20, FarStore.status());
+            }
+            if (storeSettledTicks >= 100 || t >= 12000) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store {} {} s after the import: {}", t >= 12000 ? "not settled" : "settled", t / 20,
+                        FarStore.status());
+                storeMapsLeft = 6;
+                logWhenDone(FarStore.map(0, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, STORE_MAP_SIZE, "shaderscompanion-lod-import-L0.png")
+                        .thenApply(line -> new String[]{line}));
+                logWhenDone(FarStore.map(3, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, STORE_MAP_SIZE, "shaderscompanion-lod-import-L3.png")
+                        .thenApply(line -> new String[]{line}));
+                int all = FAR_IMPORT * 16;
+                int x0 = Math.floorDiv((FAR_X >> 4) * 16 - all, 64) * 64;
+                int z0 = Math.floorDiv((FAR_Z >> 4) * 16 - all, 64) * 64;
+                logWhenDone(FarStore.map(3, x0, z0, 2 * all + 64, 2 * all + 64, "shaderscompanion-lod-import-L3-all.png").thenApply(line -> new String[]{line}));
+                logWhenDone(FarStore.mapAroundCamera(0, 4).thenApply(line -> new String[]{line}));
+                logWhenDone(FarStore.stats());
+                logWhenDone(FarStore.compressionForChecks());
+                phase = 43;
+                phaseTick = ticks;
+            }
+        } else if (phase == 43) {
+            if (storeMapsLeft <= 0 || t >= 6000) {
+                importBefore = FarStore.importForChecks();
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store import again: {}", FarStore.startImport(FAR_IMPORT));
+                phase = 44;
+                phaseTick = ticks;
+            }
+        } else if (phase == 45) {
+            if (storeMapsLeft <= 0 || t >= 600) {
+                finish(mc);
+            }
         }
     }
 

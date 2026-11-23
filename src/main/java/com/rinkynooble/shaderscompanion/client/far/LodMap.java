@@ -15,7 +15,7 @@ import net.minecraft.world.level.material.MapColor;
  * one pixel per voxel column, north up, coloured like a vanilla map by the top known voxel that isn't air (its map
  * colour, a stand-in for M2's colour table; see-through blocks such as glass are looked through), shaded by its height
  * against the pixel to the north, water by its depth, unknown columns dark grey. Built and written on the worker
- * thread, from the nodes in memory.
+ * thread, from the nodes in memory and, for the rest, from disk (read one node column at a time, not kept).
  */
 final class LodMap {
     private static final int UNKNOWN_COLOUR = 0x3A3A3A;
@@ -40,9 +40,11 @@ final class LodMap {
         int nodeBlocks = Node.SIZE << level;
         int nodeY0 = Math.floorDiv(nodes.minY, nodeBlocks);
         int nodeY1 = Math.floorDiv(nodes.maxY - 1, nodeBlocks);
-        // Per pixel: the top voxel's y (in voxels) and id, or MIN_VALUE when nothing known was found
+        // Per pixel: the top voxel's y (in voxels) and id, or MIN_VALUE when nothing known was found, and the depth of
+        // water there in voxels
         int[] top = new int[w * h];
         int[] topId = new int[w * h];
+        int[] depth = new int[w * h];
         boolean[] known = new boolean[w * h];
         Arrays.fill(top, Integer.MIN_VALUE);
         // Map colours by id (the worker assigns no ids while this runs)
@@ -53,11 +55,15 @@ final class LodMap {
         int nx1 = Math.floorDiv(vx0 + w - 1, Node.SIZE);
         int nz1 = Math.floorDiv(vz0 + h - 1, Node.SIZE);
         int columnsWithNodes = 0;
+        Node[] column = new Node[nodeY1 - nodeY0 + 1];
         for (int nz = nz0; nz <= nz1; nz++) {
             for (int nx = nx0; nx <= nx1; nx++) {
                 boolean any = false;
                 for (int ny = nodeY1; ny >= nodeY0; ny--) {
-                    Node node = nodes.peek(level, nx, ny, nz);
+                    column[ny - nodeY0] = nodes.read(level, nx, ny, nz);
+                }
+                for (int ny = nodeY1; ny >= nodeY0; ny--) {
+                    Node node = column[ny - nodeY0];
                     if (node == null || node.known == 0) {
                         continue;
                     }
@@ -73,7 +79,7 @@ final class LodMap {
                                 continue;
                             }
                             for (int ly = Node.SIZE - 1; ly >= 0; ly--) {
-                                int id = node.state[Node.index(lx, ly, lz)];
+                                int id = node.state(Node.index(lx, ly, lz));
                                 if (id == StateIds.UNKNOWN) {
                                     continue;
                                 }
@@ -83,6 +89,9 @@ final class LodMap {
                                 }
                                 top[px + w * pz] = ny * Node.SIZE + ly;
                                 topId[px + w * pz] = id;
+                                if ((nodes.flags(id) & FarNodes.WATER) != 0) {
+                                    depth[px + w * pz] = waterDepth(nodes, column, nodeY0, lx, ny * Node.SIZE + ly, lz, level);
+                                }
                                 break;
                             }
                         }
@@ -107,8 +116,8 @@ final class LodMap {
                         }
                     } else if ((nodes.flags(topId[i]) & FarNodes.WATER) != 0) {
                         water++;
-                        int depth = waterDepth(nodes, level, vx0 + px, top[i], vz0 + pz) * voxel;
-                        rgb = shade(colour(nodes, topId[i], colours), depth < 5 ? 255 : depth < 10 ? 220 : depth < 20 ? 180 : 135);
+                        int blocks = depth[i] * voxel;
+                        rgb = shade(colour(nodes, topId[i], colours), blocks < 5 ? 255 : blocks < 10 ? 220 : blocks < 20 ? 180 : 135);
                     } else {
                         int north = pz > 0 ? top[i - w] : Integer.MIN_VALUE;
                         int brightness = north == Integer.MIN_VALUE || north == top[i] ? 220 : top[i] > north ? 255 : 180;
@@ -121,18 +130,19 @@ final class LodMap {
             Files.createDirectories(file.getParent());
             image.writeToFile(file);
         }
-        return String.format("level %d: %d x %d voxels of %d blocks from %d, %d (%d node columns in memory): %d%% unknown, %d%% water",
+        return String.format("level %d: %d x %d voxels of %d blocks from %d, %d (%d node columns stored): %d%% unknown, %d%% water",
                 level, w, h, voxel, minX, minZ, columnsWithNodes, Math.round(100.0 * unknown / (w * h)), Math.round(100.0 * water / (w * h)));
     }
 
-    /** Water voxels from the top one down (at most 64 blocks' worth), in voxels. */
-    private static int waterDepth(FarNodes nodes, int level, int vx, int vy, int vz) {
+    /** Water voxels from the top one down (at most 64 blocks' worth) in one node column, in voxels. */
+    private static int waterDepth(FarNodes nodes, Node[] column, int nodeY0, int lx, int vy, int lz, int level) {
         int depth = 0;
         int limit = Math.max(2, 64 >> level);
         while (depth < limit) {
             int y = vy - depth;
-            Node node = nodes.peek(level, Math.floorDiv(vx, Node.SIZE), Math.floorDiv(y, Node.SIZE), Math.floorDiv(vz, Node.SIZE));
-            if (node == null || (nodes.flags(node.state[Node.index(Math.floorMod(vx, Node.SIZE), Math.floorMod(y, Node.SIZE), Math.floorMod(vz, Node.SIZE))]) & FarNodes.WATER) == 0) {
+            int ny = Math.floorDiv(y, Node.SIZE) - nodeY0;
+            Node node = ny >= 0 && ny < column.length ? column[ny] : null;
+            if (node == null || (nodes.flags(node.state(Node.index(lx, Math.floorMod(y, Node.SIZE), lz))) & FarNodes.WATER) == 0) {
                 break;
             }
             depth++;
