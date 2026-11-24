@@ -13,11 +13,14 @@ uniform mat4 u_InverseProjection; // the frame's projection, inverted: the scene
 uniform vec2 u_ScreenSize;
 uniform int u_Alone;
 uniform int u_UseScene;
+uniform vec3 u_SunDir;    // world space, towards the sun (below the horizon at night)
+uniform float u_Daylight; // 0 at night to 1 by day, from the level's sky brightness
+uniform float u_FarRange; // the far range in blocks
 
 out vec4 fragColor;
 
 const vec3 SKY = vec3(0.62, 0.76, 0.95);
-const vec3 SUN = vec3(0.37, 0.84, 0.39);
+const vec3 TORCH = vec3(1.0, 0.75, 0.45);
 
 vec3 octDecode(vec2 e) {
     e = e * 2.0 - 1.0;
@@ -55,7 +58,28 @@ void main() {
     vec3 normal = octDecode(vec2(float(n >> 8u), float(n & 255u)) / 255.0);
     float block = float(l >> 8u) / 255.0;
     float sky = float(l & 255u) / 255.0;
-    float sun = max(dot(normal, SUN), 0.0);
-    float light = max(sky * (0.5 + 0.5 * sun), block * 0.85);
-    fragColor = vec4(albedo.rgb * (0.08 + 0.92 * light), 1.0);
+    // The sun by day (none once it is below the horizon), sky light that faces up see more of, torch light that shows
+    // more at night: a stand-in for the pack's lighting until ABZA merges the far layer itself (M3)
+    vec3 sunDir = normalize(u_SunDir);
+    float direct = max(dot(normal, sunDir), 0.0) * smoothstep(-0.05, 0.15, sunDir.y);
+    float ambient = sky * mix(0.16, 0.55, u_Daylight) * (0.75 + 0.25 * max(normal.y, 0.0));
+    float sunLight = sky * u_Daylight * 0.7 * direct;
+    vec3 lit = albedo.rgb * (0.03 + ambient + sunLight) + albedo.rgb * TORCH * block * 0.9 * (1.0 - 0.6 * u_Daylight * sky);
+    // Haze by distance, and a fade over the last 15% of the range so its edge doesn't show: over the frame, blended
+    // into the sky the pack drew behind it
+    float x = distance / max(u_FarRange, 1.0);
+    float fog = max(clamp(1.0 - exp(-2.2 * x * x), 0.0, 1.0) * 0.7, smoothstep(0.85, 1.0, x));
+    // Water and glass (the translucent pass leaves alpha under 1): a dark body that mostly shows the sky behind it,
+    // which is what far water reflects at these grazing angles
+    float body = 1.0;
+    if (albedo.a < 0.999) {
+        lit *= 0.45;
+        body = 0.4;
+    }
+    if (u_Alone != 0) {
+        vec3 sky = SKY * mix(0.15, 1.0, u_Daylight);
+        fragColor = vec4(mix(mix(sky, lit, body), sky, fog), 1.0);
+    } else {
+        fragColor = vec4(lit, (1.0 - fog) * body);
+    }
 }

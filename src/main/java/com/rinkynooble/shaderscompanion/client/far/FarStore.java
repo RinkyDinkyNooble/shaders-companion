@@ -301,6 +301,20 @@ public final class FarStore {
         return on ? "Far terrain meshing on (needs farStore on; /shaderscompanion far show draws it)" : "Far terrain meshing off (the debug view still meshes while it is on)";
     }
 
+    /**
+     * The {@code far on} and {@code far off} commands (for testing the far terrain in a real game): the store and the
+     * debug view over the frame together, both saved in the config.
+     */
+    public static String setFarTerrain(boolean on) {
+        Config.FAR_STORE.set(on);
+        Config.FAR_STORE.save();
+        Config.FAR_TERRAIN_DEBUG.set(on);
+        Config.FAR_TERRAIN_DEBUG.save();
+        FarRenderer.alone = false;
+        return on ? "Far terrain on: the store fills from the chunks you load (in singleplayer, /shaderscompanion lod import adds the world's saved chunks)"
+                : "Far terrain off (what is stored stays on disk)";
+    }
+
     /** The {@code far show [alone]} and {@code far hide} commands: the debug view on (saved in the config) or off. */
     public static String setDebugView(boolean show, boolean alone) {
         Config.FAR_TERRAIN_DEBUG.set(show);

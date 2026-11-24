@@ -4,6 +4,7 @@ import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
+import com.rinkynooble.shaderscompanion.client.Config;
 import com.rinkynooble.shaderscompanion.client.Gl;
 import com.rinkynooble.shaderscompanion.client.GlState;
 import java.io.IOException;
@@ -95,13 +96,15 @@ public final class FarRenderer {
             "u_Region", "u_OneQuad"};
     private static final String[] TERRAIN_UNIFORMS = {"u_ViewProjection", "u_CameraBlock", "u_CameraFrac", "u_StateCount", "u_BiomeCount", "u_Translucent",
             "u_ChunkRadius", "u_LogDepth", "u_Near"};
-    private static final String[] OVERLAY_UNIFORMS = {"u_InverseProjection", "u_ScreenSize", "u_Alone", "u_UseScene"};
+    private static final String[] OVERLAY_UNIFORMS = {"u_InverseProjection", "u_ScreenSize", "u_Alone", "u_UseScene", "u_SunDir", "u_Daylight", "u_FarRange"};
 
     private static FarGpuBuffers buffers;
     private static int vao;
     /** The instance id buffer generation the vertex array points at, plus one (0: none yet). */
     private static int vaoInstanceIds;
     private static int overlayVao;
+    /** The blend function before the overlay (source and destination, colour and alpha), put back after it. */
+    private static final int[] blendBefore = new int[4];
     private static int sampler;
     private static int indices;
     private static int commands;
@@ -742,7 +745,17 @@ public final class FarRenderer {
             GlStateManager._disableDepthTest();
             GlStateManager._depthMask(false);
             GlStateManager._disableCull();
-            GlStateManager._disableBlend();
+            // Over the frame the far terrain's haze blends into the sky the pack drew (the blend function is put back below)
+            blendBefore[0] = GL11C.glGetInteger(GL14C.GL_BLEND_SRC_RGB);
+            blendBefore[1] = GL11C.glGetInteger(GL14C.GL_BLEND_DST_RGB);
+            blendBefore[2] = GL11C.glGetInteger(GL14C.GL_BLEND_SRC_ALPHA);
+            blendBefore[3] = GL11C.glGetInteger(GL14C.GL_BLEND_DST_ALPHA);
+            if (alone) {
+                GlStateManager._disableBlend();
+            } else {
+                GlStateManager._enableBlend();
+                GlStateManager._blendFuncSeparate(GL11C.GL_SRC_ALPHA, GL11C.GL_ONE_MINUS_SRC_ALPHA, GL11C.GL_ZERO, GL11C.GL_ONE);
+            }
             GL11C.glDisable(GL11C.GL_STENCIL_TEST);
             GlStateManager._colorMask(true, true, true, true);
             Gl.useProgram(overlayProgram);
@@ -751,6 +764,13 @@ public final class FarRenderer {
             GL20C.glUniform2f(u[1], main.width, main.height);
             GL20C.glUniform1i(u[2], alone ? 1 : 0);
             GL20C.glUniform1i(u[3], sceneDepth != 0 ? 1 : 0);
+            // The sun moves in the x-y plane: up at noon, east (+x) at sunrise
+            float partial = mc.getFrameTime();
+            float sunAngle = mc.level == null ? 0.0f : mc.level.getSunAngle(partial);
+            GL20C.glUniform3f(u[4], -Mth.sin(sunAngle), Mth.cos(sunAngle), 0.0f);
+            float daylight = mc.level == null ? 1.0f : Mth.clamp((mc.level.getSkyDarken(partial) - 0.2f) / 0.8f, 0.0f, 1.0f);
+            GL20C.glUniform1f(u[5], daylight);
+            GL20C.glUniform1f(u[6], Config.FAR_RANGE.get());
             GlStateManager._glBindVertexArray(overlayVao);
             GL11C.glDrawArrays(GL11C.GL_TRIANGLES, 0, 3);
             if (s >= 0) {
@@ -765,6 +785,7 @@ public final class FarRenderer {
                     Gl.bindTextureIfAlive(textures[unit]);
                 }
             }
+            GlStateManager._blendFuncSeparate(blendBefore[0], blendBefore[1], blendBefore[2], blendBefore[3]);
             saved.restore();
             GlStateManager._glBindVertexArray(vaoBefore != 0 && GL30C.glIsVertexArray(vaoBefore) ? vaoBefore : 0);
         }

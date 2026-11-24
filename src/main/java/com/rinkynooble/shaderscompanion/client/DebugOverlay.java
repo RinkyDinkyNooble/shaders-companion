@@ -78,6 +78,8 @@ public final class DebugOverlay {
                                 .then(Commands.argument("radius", IntegerArgumentType.integer(1, 2048))
                                         .executes(context -> say(context.getSource(), FarStore.startImport(IntegerArgumentType.getInteger(context, "radius")))))))
                 .then(Commands.literal("far")
+                        .then(Commands.literal("on").executes(context -> say(context.getSource(), FarStore.setFarTerrain(true))))
+                        .then(Commands.literal("off").executes(context -> say(context.getSource(), FarStore.setFarTerrain(false))))
                         .then(Commands.literal("show")
                                 .executes(context -> say(context.getSource(), FarStore.setDebugView(true, false)))
                                 .then(Commands.literal("alone").executes(context -> say(context.getSource(), FarStore.setDebugView(true, true)))))
