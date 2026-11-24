@@ -18,7 +18,9 @@ import net.minecraftforge.client.gui.overlay.ForgeGui;
  * the views as pictures, and {@code on} and {@code off} start and stop all drawing. {@code lod map <level> [radius]}
  * saves a map of the far store's level around you, {@code lod stats} prints its sizes and {@code lod import [radius]}
  * (singleplayer) adds the world's saved chunks within that many chunks of you to it, {@code lod import stop} stops
- * that (all in development).
+ * that (all in development). {@code far show} draws the far terrain in a debug view where the screen shows sky,
+ * {@code far show alone} draws it alone, {@code far hide} stops it; {@code far mesh on|off}, {@code far stats} and
+ * {@code far meshmap <level> [radius]} are M2a's checks.
  */
 public final class DebugOverlay {
     /** {@code lod import} without a radius: 256 chunks (4,096 blocks) each way. */
@@ -76,6 +78,10 @@ public final class DebugOverlay {
                                 .then(Commands.argument("radius", IntegerArgumentType.integer(1, 2048))
                                         .executes(context -> say(context.getSource(), FarStore.startImport(IntegerArgumentType.getInteger(context, "radius")))))))
                 .then(Commands.literal("far")
+                        .then(Commands.literal("show")
+                                .executes(context -> say(context.getSource(), FarStore.setDebugView(true, false)))
+                                .then(Commands.literal("alone").executes(context -> say(context.getSource(), FarStore.setDebugView(true, true)))))
+                        .then(Commands.literal("hide").executes(context -> say(context.getSource(), FarStore.setDebugView(false, false))))
                         .then(Commands.literal("mesh")
                                 .then(Commands.literal("on").executes(context -> say(context.getSource(), FarStore.setMeshing(true))))
                                 .then(Commands.literal("off").executes(context -> say(context.getSource(), FarStore.setMeshing(false)))))

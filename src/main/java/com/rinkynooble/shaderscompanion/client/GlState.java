@@ -13,10 +13,10 @@ import org.lwjgl.system.MemoryStack;
  * The GL state the mod's drawing changes, read from GL before drawing and put back afterwards, in GL and in
  * Minecraft's record alike (see {@link Gl}). From capture to restore texture unit 0 is the active one.
  */
-record GlState(int drawFramebuffer, int readFramebuffer, int[] viewport, int[] scissorBox, int program, int activeTexture,
+public record GlState(int drawFramebuffer, int readFramebuffer, int[] viewport, int[] scissorBox, int program, int activeTexture,
                int texture0, boolean depthTest, boolean cull, boolean blend, boolean scissor, int depthFunc, boolean depthMask,
                boolean[] colorMask, boolean stencilTest, int[] stencil) {
-    static GlState capture() {
+    public static GlState capture() {
         int[] viewport = new int[4];
         GL11C.glGetIntegerv(GL11C.GL_VIEWPORT, viewport);
         int[] scissorBox = new int[4];
@@ -52,7 +52,7 @@ record GlState(int drawFramebuffer, int readFramebuffer, int[] viewport, int[] s
                         GL11C.glGetInteger(GL11C.GL_STENCIL_PASS_DEPTH_PASS), GL11C.glGetInteger(GL11C.GL_STENCIL_WRITEMASK)});
     }
 
-    void restore() {
+    public void restore() {
         GlStateManager._glBindVertexArray(0);
         BufferUploader.invalidate();
         GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, 0);

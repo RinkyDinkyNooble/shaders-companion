@@ -23,11 +23,17 @@ import net.minecraft.util.Mth;
  * range, and every ring stops at the far range ({@code farRange}). Distances are 3D, from the camera to the nearest
  * (or farthest) point of the node's box.
  * <p>
- * A node is <b>resident</b> at level L when its box overlaps ring L widened by half a node at each edge and it isn't
- * entirely inside the chunk terrain (the render distance's square less one chunk); it <b>leaves</b> only once it is a
- * whole node further out than that, or inside the square less two chunks (hysteresis; a change of the settings the
- * rings come from takes the set afresh). The set is worked out again when the camera has moved 8 blocks since (the main
- * thread posts it at most 4 times a second, and at once on a jump).
+ * The rings are drawn as an <b>octree cut</b> (M2b, the GPU's selection in {@code far_select.csh}): a node of level L
+ * (L at least 1) is split into its children while the camera is nearer to its box than {@code K * 2^L}; a node is
+ * drawn when it isn't split and its parent is (or it is at the top level, the last whose {@code K * 2^L} is within the
+ * far range), within the far range. That tiles space with no overlap and no gap, so level seams line up. A node is
+ * <b>resident</b> at level L when that rule holds with every distance test widened by a margin (half a node, at least
+ * 16 blocks) and it isn't entirely inside the chunk terrain (Embeddium's cylinder of the render distance around the
+ * camera, less one chunk); it
+ * <b>leaves</b> only once the rule fails by a whole node more, or it is inside the cylinder less two chunks (hysteresis;
+ * a change of the settings the rings come from takes the set afresh). The set is worked out again when the camera has
+ * moved 8 blocks since (the main thread posts it at most 4 times a second, and at once on a jump), so the GPU's exact
+ * rule always finds a resident node within the margin.
  * <p>
  * <b>Meshing</b>: nearest first, coarser levels first at the same distance, at most {@link #MAX_IN_FLIGHT} jobs at the
  * mesher at a time (so the worker makes a job only when the mesher is about to need one). A node whose voxels change
@@ -43,6 +49,11 @@ final class FarResidency {
     private static final double JUMP_BLOCKS = 256;
     /** Most worker time a pump spends on nodes that need no job (not stored, uniform air). */
     private static final long PUMP_NANOS = 2_000_000L;
+    /**
+     * Each residency's versions and change stamps start at its own base, so a stamp is never reused by a later residency
+     * (the mesher's layer cache outlives residencies and goes by stamp).
+     */
+    private static final java.util.concurrent.atomic.AtomicLong BASES = new java.util.concurrent.atomic.AtomicLong(1L << 40);
 
     /** The camera and the settings the rings come from (posted by the main thread). */
     record View(double x, double y, double z, int renderDistance, int windowHeight, double fovDegrees, int pixelsPerVoxel, int farRange) {
@@ -161,6 +172,9 @@ final class FarResidency {
         this.store = store;
         this.mesher = mesher;
         this.wake = wake;
+        this.counter = BASES.getAndAdd(1L << 40);
+        // Nodes that haven't changed in this residency have its base as their stamp
+        this.stamps.defaultReturnValue(this.counter);
         store.changeListener = this::changed;
     }
 
@@ -197,64 +211,68 @@ final class FarResidency {
         pass++;
         double k = v.k();
         double far = v.farRange;
-        int cameraChunkX = Mth.floor(v.x) >> 4;
-        int cameraChunkZ = Mth.floor(v.z) >> 4;
-        int rd = v.renderDistance;
-        // The chunk terrain: the render distance's square less one chunk (entering), less two (leaving)
-        int enterX0 = (cameraChunkX - rd + 1) * 16;
-        int enterX1 = (cameraChunkX + rd) * 16;
-        int enterZ0 = (cameraChunkZ - rd + 1) * 16;
-        int enterZ1 = (cameraChunkZ + rd) * 16;
-        for (int level = 0; level < Node.LEVELS; level++) {
-            double inner = level == 0 ? 0 : k * (1 << level);
-            if (inner >= far) {
-                break;
+        int top = 0;
+        for (int level = 1; level < Node.LEVELS; level++) {
+            if (k * (1 << level) < far) {
+                top = level;
             }
-            double outer = level == Node.LEVELS - 1 ? far : Math.min(k * (2 << level), far);
+        }
+        // The chunk terrain: Embeddium's cylinder of the render distance around the camera less one chunk (entering), less
+        // two (leaving), as FarRenderer.chunkRadius
+        double enterRadius = FarRenderer.chunkRadius(v.renderDistance);
+        double leaveRadius = Math.max(0, enterRadius - 16);
+        for (int level = 0; level <= top; level++) {
             int size = Node.SIZE << level;
-            double half = size / 2.0;
-            double enterOuter = outer + half;
-            double enterInner = level == 0 ? 0 : inner - half;
-            double stayOuter = enterOuter + size;
-            double stayInner = level == 0 ? 0 : enterInner - size;
-            double enterOuter2 = enterOuter * enterOuter;
-            double stayOuter2 = stayOuter * stayOuter;
-            double enterInner2 = enterInner > 0 ? enterInner * enterInner : -1;
-            double stayInner2 = stayInner > 0 ? stayInner * stayInner : -1;
+            double enterMargin = Math.max(16.0, size / 2.0);
+            double stayMargin = enterMargin + size;
+            // Split below this distance (the node's own level), and the parent split below that one
+            double split = level == 0 ? 0 : k * (1 << level);
+            double parentSplit = k * (2 << level);
+            double enterFar = far + enterMargin;
+            double stayFar = far + stayMargin;
+            double reach = level == top ? stayFar : Math.min(stayFar, parentSplit + stayMargin + 2.0 * size * Math.sqrt(3.0));
+            double reach2 = reach * reach;
             int y0 = Math.floorDiv(store.minY, size);
             int y1 = Math.floorDiv(store.maxY - 1, size);
-            int nx0 = Math.floorDiv(Mth.floor(v.x - stayOuter), size);
-            int nx1 = Math.floorDiv(Mth.floor(v.x + stayOuter), size);
-            int nz0 = Math.floorDiv(Mth.floor(v.z - stayOuter), size);
-            int nz1 = Math.floorDiv(Mth.floor(v.z + stayOuter), size);
+            int nx0 = Math.floorDiv(Mth.floor(v.x - reach), size);
+            int nx1 = Math.floorDiv(Mth.floor(v.x + reach), size);
+            int nz0 = Math.floorDiv(Mth.floor(v.z - reach), size);
+            int nz1 = Math.floorDiv(Mth.floor(v.z + reach), size);
             for (int nz = nz0; nz <= nz1; nz++) {
                 double bz0 = (double) nz * size;
                 double bz1 = bz0 + size;
                 double dz = Math.max(0, Math.max(bz0 - v.z, v.z - bz1));
+                double pz0 = (double) Math.floorDiv(nz, 2) * size * 2;
+                double pdz = Math.max(0, Math.max(pz0 - v.z, v.z - pz0 - size * 2));
                 double fz = Math.max(Math.abs(v.z - bz0), Math.abs(v.z - bz1));
                 for (int nx = nx0; nx <= nx1; nx++) {
                     double bx0 = (double) nx * size;
                     double bx1 = bx0 + size;
                     double dx = Math.max(0, Math.max(bx0 - v.x, v.x - bx1));
-                    double fx = Math.max(Math.abs(v.x - bx0), Math.abs(v.x - bx1));
                     double horizontal2 = dx * dx + dz * dz;
-                    if (horizontal2 > stayOuter2) {
+                    if (horizontal2 > reach2) {
                         continue;
                     }
-                    boolean insideEnter = bx0 >= enterX0 && bx1 <= enterX1 && bz0 >= enterZ0 && bz1 <= enterZ1;
-                    boolean insideLeave = bx0 >= enterX0 + 16 && bx1 <= enterX1 - 16 && bz0 >= enterZ0 + 16 && bz1 <= enterZ1 - 16;
+                    double px0 = (double) Math.floorDiv(nx, 2) * size * 2;
+                    double pdx = Math.max(0, Math.max(px0 - v.x, v.x - px0 - size * 2));
+                    double fx = Math.max(Math.abs(v.x - bx0), Math.abs(v.x - bx1));
+                    double far2 = fx * fx + fz * fz;
                     for (int ny = y0; ny <= y1; ny++) {
                         double by0 = (double) ny * size;
                         double by1 = by0 + size;
                         double dy = Math.max(0, Math.max(by0 - v.y, v.y - by1));
-                        double fy = Math.max(Math.abs(v.y - by0), Math.abs(v.y - by1));
                         double min2 = horizontal2 + dy * dy;
-                        double max2 = fx * fx + fy * fy + fz * fz;
+                        double min = Math.sqrt(min2);
+                        double py0 = (double) Math.floorDiv(ny, 2) * size * 2;
+                        double pdy = Math.max(0, Math.max(py0 - v.y, v.y - py0 - size * 2));
+                        double parentMin = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz);
+                        boolean insideEnter = far2 < enterRadius * enterRadius && by0 > v.y - enterRadius && by1 < v.y + enterRadius;
+                        boolean insideLeave = far2 < leaveRadius * leaveRadius && by0 > v.y - leaveRadius && by1 < v.y + leaveRadius;
                         long key = Node.key(level, nx, ny, nz);
                         Entry e = resident.get(key);
-                        boolean keep = e != null && !fresh
-                                ? min2 <= stayOuter2 && max2 >= stayInner2 && !insideLeave
-                                : min2 <= enterOuter2 && max2 >= enterInner2 && !insideEnter;
+                        double margin = e != null && !fresh ? stayMargin : enterMargin;
+                        boolean keep = (level == top || parentMin < parentSplit + margin) && (level == 0 || min >= split - margin)
+                                && min < (e != null && !fresh ? stayFar : enterFar) && !(e != null && !fresh ? insideLeave : insideEnter);
                         if (!keep) {
                             continue;
                         }
@@ -266,7 +284,7 @@ final class FarResidency {
                             statusCount[level * 4 + WAITING]++;
                         }
                         e.pass = pass;
-                        e.distance = Math.sqrt(min2);
+                        e.distance = min;
                     }
                 }
             }

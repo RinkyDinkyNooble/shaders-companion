@@ -34,6 +34,8 @@ public final class Config {
     public static final ForgeConfigSpec.IntValue FAR_STORE_DISK_MB;
     public static final ForgeConfigSpec.IntValue FAR_RANGE;
     public static final ForgeConfigSpec.IntValue FAR_PIXELS_PER_VOXEL;
+    public static final ForgeConfigSpec.BooleanValue FAR_TERRAIN_DEBUG;
+    public static final ForgeConfigSpec.IntValue FAR_GPU_MB;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -107,7 +109,7 @@ public final class Config {
                 .comment("Give blocks without their own PBR maps material values (how smooth, how reflective, whether metal) for a shader pack that reads them: vanilla blocks and some tech mods' machines from the mod's own tables, other modded blocks from their sound, tags and name, and any block from config/shaderscompanion-materials.json. A resource pack's own PBR maps win. Takes effect when the shader pack is next loaded.")
                 .define("materials", true);
         FAR_STORE = builder
-                .comment("Keep the mod's own copy of the world for far terrain (in development; nothing is drawn from it yet).")
+                .comment("Keep the mod's own copy of the world for far terrain (in development; drawn only in a debug view, farTerrainDebug).")
                 .define("farStore", false);
         FAR_STORE_BUDGET = builder
                 .comment("Most processor time per frame spent copying the world for far terrain, in microseconds. It is used up only while sections wait to be copied: on joining a world, after a teleport or while flying fast.")
@@ -119,11 +121,17 @@ public final class Config {
                 .comment("Most disk space for far terrain, in MB, per world.")
                 .defineInRange("farStoreDiskMb", 4096, 256, 1048576);
         FAR_RANGE = builder
-                .comment("How far the far terrain reaches, in blocks (in development; nothing is drawn from it yet).")
+                .comment("How far the far terrain reaches, in blocks (in development).")
                 .defineInRange("farRange", 1024, 64, 32768);
         FAR_PIXELS_PER_VOXEL = builder
                 .comment("Far terrain detail: the most pixels one of its voxels may cover before a finer level is used. Lower is sharper and costs more.")
                 .defineInRange("farPixelsPerVoxel", 2, 1, 8);
+        FAR_TERRAIN_DEBUG = builder
+                .comment("Draw the far terrain in a debug view where the screen shows sky (in development; needs farStore). /shaderscompanion far show, far show alone and far hide change this in game.")
+                .define("farTerrainDebug", false);
+        FAR_GPU_MB = builder
+                .comment("Most video memory for the far terrain's geometry, in MB. The buffer grows to this as terrain is meshed.")
+                .defineInRange("farGpuMb", 256, 32, 4096);
         SPEC = builder.build();
     }
 

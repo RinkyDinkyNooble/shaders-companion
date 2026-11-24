@@ -5,6 +5,7 @@ import com.rinkynooble.shaderscompanion.client.Config;
 import com.rinkynooble.shaderscompanion.client.CubeDump;
 import com.rinkynooble.shaderscompanion.client.CubeView;
 import com.rinkynooble.shaderscompanion.client.DebugOverlay;
+import com.rinkynooble.shaderscompanion.client.far.FarRenderer;
 import com.rinkynooble.shaderscompanion.client.far.FarStore;
 import net.irisshaders.iris.Iris;
 import net.minecraft.client.Minecraft;
@@ -357,9 +358,13 @@ public final class DevRun {
             FarStore.diskBordersForChecks(!Boolean.getBoolean("shaderscompanion.devFarMemoryBorders"));
             // -PdevFarNoStale: sections next to an opened voxel are not marked stale (the tunnel check's negative control)
             FarStore.markStaleForChecks(!Boolean.getBoolean("shaderscompanion.devFarNoStale"));
-            if (FAR_MESH) {
+            if (FAR_DRAW) {
+                // M2b: the debug view on for the run (meshing follows it)
+                FarStore.drawForChecks(true);
+            }
+            if (FAR_MESH || FAR_DRAW) {
                 // M2a: the far terrain meshed for the run, at -PdevFarRange (the config's by default), corner shading with -PdevFarCornerShading
-                FarStore.meshingForChecks(true);
+                FarStore.meshingForChecks(FAR_MESH);
                 FarStore.farRangeForChecks(MESH_RANGE);
                 FarStore.cornerShadingForChecks(Boolean.getBoolean("shaderscompanion.devFarCornerShading"));
                 // -PdevFarFillFrom=0: dark air filled from level 0 (the plan keeps level 0's caves)
@@ -1663,6 +1668,19 @@ public final class DevRun {
             // -PdevFarSearch: the search runs on the server and quits
         } else if ((phase == 1 || phase >= 10) && far && FAR_STORE) {
             farStoreCheck(mc);
+        } else if (phase == 1 && far && FAR_DH_SHOT) {
+            // -PdevFarDhShot: one shot once Distant Horizons has settled, for comparing with the far terrain's (M2b)
+            if (farSettled(mc)) {
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-" + System.getProperty("shaderscompanion.devTag", "run") + "-dh.png",
+                        mc.getMainRenderTarget(), message -> { });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene: Distant Horizons shot taken | {} | {}", vram(), farProbe(mc, true));
+                phase = 2000;
+                phaseTick = ticks;
+            }
+        } else if (phase == 2000) {
+            if (ticks - phaseTick >= 40) {
+                finish(mc);
+            }
         } else if (phase == 1 && far && !farSettled(mc)) {
             // The far scene waits until Distant Horizons' LODs (and Chunky's chunks) have settled, at most -PdevWait ticks
         } else if (phase == 7) {
@@ -2777,9 +2795,13 @@ public final class DevRun {
         int t = ticks - phaseTick;
         double[] frame = FarStore.frameMicrosForChecks();
         if (phase == 1) {
-            phase = FAR_IMPORT > 0 ? 40 : FAR_FLIGHT ? 50 : FAR_MESH ? 60 : 10;
+            phase = FAR_IMPORT > 0 ? 40 : FAR_FLIGHT ? 50 : FAR_DRAW ? 80 : FAR_MESH ? 60 : 10;
             phaseTick = ticks;
             storeSettledTicks = 0;
+            return;
+        }
+        if (phase >= 80) {
+            farDrawCheck(mc, t);
             return;
         }
         if (phase >= 60) {
@@ -3382,6 +3404,121 @@ public final class DevRun {
         long jobNanos = n[at + 4] - a[at + 4];
         return String.format("%d meshes (%.0f us each), %d jobs (%.0f us of the worker each)", meshes, meshes == 0 ? 0.0 : nanos / 1.0e3 / meshes, jobs,
                 jobs == 0 ? 0.0 : jobNanos / 1.0e3 / jobs);
+    }
+
+    // The far terrain's debug view (-PdevScene=far -PdevFarStore -PdevFarDraw: M2b, research/lod/M2.md)
+
+    /** -PdevFarDraw: the far store check draws the far terrain in its debug view (M2b). */
+    private static final boolean FAR_DRAW = Boolean.getBoolean("shaderscompanion.devFarDraw");
+    /** -PdevFarDhShot: the far scene with Distant Horizons takes one shot once it has settled, and quits. */
+    private static final boolean FAR_DH_SHOT = Boolean.getBoolean("shaderscompanion.devFarDhShot");
+    private static String drawTag() {
+        return phase < 84 ? "caves" : "filled";
+    }
+
+    /**
+     * -PdevFarDraw (with -PdevFarStore): 80 waits after joining at the vantage until the resident set is meshed and on
+     * the GPU and the store has settled, and logs the fill and the uploads; 81 takes the shots (the debug view alone,
+     * then over the frame); 82 times 10 seconds with the far terrain drawn (its selection and draw on the GPU, nodes and
+     * quads drawn, its render-thread time, the frame) and 10 seconds with its drawing paused; then the caves are filled
+     * at level 0 too and everything meshed again, and 84 to 86 do the same; 87 hides the debug view and quits.
+     */
+    private static void farDrawCheck(Minecraft mc, int t) {
+        storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+        if (t % 20 == 0) {
+            FarStore.terrainNumbersForChecks().whenComplete((n, e) -> meshNumbers = n);
+        }
+        long[] n = meshNumbers;
+        int at = n == null ? 0 : n.length - 11;
+        long fills = n == null ? 0 : n[at + 7];
+        boolean filledSince = n != null && n[at + 5] == 0 && fills > meshFillsBefore;
+        if (phase == 80 || phase == 84) {
+            long[] gpu = FarStore.gpuNumbersForChecks(false);
+            if (t % 40 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain drawn {} s (phase {}): {} waiting to upload | Far terrain: {}", t / 20, phase, gpu[0],
+                        FarStore.terrainStatus());
+            }
+            boolean done = filledSince && gpu[0] == 0 && storeSettledTicks >= 60 && t >= 200;
+            if (done || t >= 4800) {
+                double seconds = gpu[4] > gpu[3] ? (gpu[4] - gpu[3]) / 1.0e9 : 0.0;
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain drawn, {}: {}; {}; uploads: {} meshes on the GPU, {} MB uploaded in {} s from the first "
+                                + "upload to the last ({} MB a second), {} meshes didn't fit; the uploads' render-thread time {} us a frame on average over {} frames, at most {} us",
+                        phase == 80 ? "the join at the vantage, caves kept at level 0" : "everything meshed again with level 0's caves filled",
+                        done ? "meshed, uploaded and settled" : "NOT settled after 240 s", fillSummary(n), gpu[1], String.format("%.1f", gpu[2] / 1048576.0),
+                        String.format("%.1f", seconds), String.format("%.1f", seconds > 0 ? gpu[2] / 1048576.0 / seconds : 0.0), gpu[5],
+                        String.format("%.0f", gpu[7] == 0 ? 0.0 : gpu[6] / 1.0e3 / gpu[7]), gpu[7], gpu[8] / 1000);
+                logWhenDone(FarStore.terrainStats());
+                phase++;
+                phaseTick = ticks;
+            }
+        } else if (phase == 81 || phase == 85) {
+            if (t == 1) {
+                FarRenderer.aloneForChecks(true);
+            } else if (t == 30) {
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-" + drawTag() + "-alone.png", mc.getMainRenderTarget(), message -> { });
+                FarRenderer.aloneForChecks(false);
+            } else if (t == 60) {
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-" + drawTag() + "-over.png", mc.getMainRenderTarget(), message -> { });
+            } else if (t >= 80) {
+                phase++;
+                phaseTick = ticks;
+            }
+        } else if (phase == 82 || phase == 86) {
+            if (t == 1) {
+                FarRenderer.historyForChecks();
+            } else if (t == 200) {
+                long[] h = FarRenderer.historyForChecks();
+                long[] memory = FarRenderer.memoryForChecks();
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain timing ({}, render distance {}): over {} frames, the far terrain's GPU time: selection {} ms "
+                                + "(max {}), draw {} ms (max {}), together {} ms; overlay {} ms; {} nodes and {} quads drawn (medians; max {} quads); its render-thread time: "
+                                + "the draw {} us (max {}), the far store's frame part with uploads {} us (max {}); video memory: geometry {} MB allocated, {} MB used, "
+                                + "all its buffers and the far layer {} MB | {} | {}",
+                        drawTag(), mc.options.getEffectiveRenderDistance(), h[14], ms(h[0]), ms(h[1]), ms(h[2]), ms(h[3]), ms(h[0] + h[2]), ms(h[4]), h[6], h[8], h[9],
+                        h[10] / 1000, h[11] / 1000, h[12] / 1000, h[13] / 1000, memory[0] >> 20, memory[1] >> 20, memory[2] >> 20, vram(), frameTiming());
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain status: {}", FarStore.terrainStatus());
+                FarRenderer.pauseForChecks(true);
+            } else if (t == 400) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain timing ({}), its drawing paused: {}", drawTag(), frameTiming());
+                FarRenderer.pauseForChecks(false);
+                // Where the draw's time goes: the rasterizer off (vertices and commands only), then one quad per command
+                FarRenderer.probeForChecks(1);
+                FarRenderer.historyForChecks();
+            } else if (t == 600 || t == 800) {
+                long[] h = FarRenderer.historyForChecks();
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain timing ({}), {}: selection {} ms, draw {} ms (medians of {} frames), {} quads",
+                        drawTag(), t == 600 ? "the rasterizer off (vertices and commands only)" : "one quad per draw command (the commands' own cost)",
+                        ms(h[0]), ms(h[2]), h[14], h[8]);
+                FarRenderer.probeForChecks(t == 600 ? 2 : 0);
+            } else if (t >= 840) {
+                if (phase == 82) {
+                    // The same with level 0's caves filled: everything meshed again
+                    FarStore.caveFillFromForChecks(0);
+                    // A new residency counts its fills from 0
+                    meshFillsBefore = 0;
+                    meshNumbers = null;
+                    FarStore.restartMeshingForChecks();
+                    FarStore.gpuNumbersForChecks(true);
+                    phase = 84;
+                } else {
+                    FarStore.drawForChecks(false);
+                    phase = 87;
+                }
+                phaseTick = ticks;
+            }
+        } else if (phase == 87) {
+            if (t == 60) {
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-off.png", mc.getMainRenderTarget(), message -> { });
+                long[] memory = FarRenderer.memoryForChecks();
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain debug view off: its buffers {} MB | Far terrain: {} | {}", memory[2] >> 20,
+                        FarStore.terrainStatus(), frameTiming());
+            } else if (t >= 100) {
+                finish(mc);
+            }
+        }
+    }
+
+    private static String ms(long nanos) {
+        return String.format("%.3f", nanos / 1.0e6);
     }
 
     /** Keeps the player at a spot in the air at the flight's height (client side, as the other flights do). */

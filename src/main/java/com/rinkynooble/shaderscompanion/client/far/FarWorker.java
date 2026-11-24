@@ -260,6 +260,17 @@ final class FarWorker {
         });
     }
 
+    /**
+     * Closes the residency so the next {@link #syncResidency} starts a new one, which meshes every node again (worker
+     * thread; the render thread drops the old meshes when it sees the new residency).
+     */
+    void restartResidency() {
+        if (residency != null) {
+            residency.close();
+            residency = null;
+        }
+    }
+
     /** Starts or stops the residency to match the store and {@link #meshingWanted} (worker thread). */
     private void syncResidency() {
         boolean want = meshingWanted && store != null;

@@ -85,6 +85,19 @@ public final class NodeMesh {
         return quadCount == 0;
     }
 
+    /**
+     * This mesh without its quads, for the render thread once they are on the GPU ({@link FarGpuBuffers}): the counts,
+     * ranges, palette and box stay, {@link #quads} is null.
+     */
+    NodeMesh stub() {
+        return new NodeMesh(key, version, null, quadCount, rangeStart, rangeCount, rangeOpaque, palette, box, nanos, darkQuads);
+    }
+
+    /** The quads went to the GPU and aren't held here any more ({@link #stub}). */
+    boolean stubbed() {
+        return quads == null && quadCount > 0;
+    }
+
     /** Bytes of quads and palette (what the GPU buffers will hold for it, without its record). */
     public long bytes() {
         return quadCount * 8L + palette.length * 4L;

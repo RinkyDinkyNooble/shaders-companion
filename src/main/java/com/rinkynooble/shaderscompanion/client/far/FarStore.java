@@ -30,10 +30,12 @@ import net.minecraft.world.level.storage.LevelResource;
  * end waits for that. In singleplayer, {@code /shaderscompanion lod import} adds the chunks the world has saved
  * ({@link FarImport}).
  * <p>
- * Far terrain (M2): while meshing is on ({@code /shaderscompanion far mesh on}, not saved, or the dev checks; off by
- * default until M2b draws something), the worker keeps the resident set ({@link FarResidency}) from the camera posted
- * here at most 4 times a second, the mesher thread meshes it ({@link FarMesher}), this frame hook works out the colour
- * table ({@link StateColors}) and takes the finished meshes (for now only held and counted; M2b uploads them here).
+ * Far terrain (M2): while meshing is on (the debug view {@code farTerrainDebug}, {@code /shaderscompanion far show};
+ * or {@code far mesh on}, not saved; or the dev checks), the worker keeps the resident set ({@link FarResidency}) from
+ * the camera posted here at most 4 times a second, the mesher thread meshes it ({@link FarMesher}), this frame hook
+ * works out the colour table ({@link StateColors}) and takes the finished meshes. While the debug view is on they go to
+ * the GPU ({@link FarGpuBuffers}, within a byte budget a frame; the render thread then keeps only their counts) and
+ * {@link FarRenderer} draws them; with meshing alone they are only held and counted (M2a).
  */
 public final class FarStore {
     /** Capturing for {@link #capture}'s level (main thread). The hooks check only this. */
@@ -62,6 +64,12 @@ public final class FarStore {
     private static long meshFrameNanos;
     private static long meshFrameMaxNanos;
     private static long meshFrames;
+    private static long lastTerrainNanos;
+
+    // Far terrain on the GPU (M2b): the debug view forced on by the dev checks, whether meshes go to the GPU, the frame's view
+    private static boolean forcedDebug;
+    private static boolean gpuOn;
+    private static FarResidency.View frameView;
 
     private FarStore() {
     }
@@ -114,20 +122,80 @@ public final class FarStore {
         }
     }
 
+    /** The debug view is wanted: {@code farTerrainDebug} (or the dev checks), the store running, the mod's drawing on. */
+    public static boolean drawWanted() {
+        return active && failure == null && (forcedDebug || Config.FAR_TERRAIN_DEBUG.get()) && Config.ENABLED.get();
+    }
+
+    /** Meshing runs: the debug view (unless it can't draw here) or {@code far mesh on}. */
+    private static boolean meshingOn() {
+        return meshing || drawWanted() && FarRenderer.problem() == null;
+    }
+
+    /** Meshes go to the GPU and the debug view draws them (render thread). */
+    static boolean gpuOn() {
+        return gpuOn;
+    }
+
+    /** This frame's camera and ring settings (render thread; null while nothing meshes). */
+    static FarResidency.View frameView() {
+        return frameView;
+    }
+
+    /** The render thread's far terrain part of the last frame (camera post, colour table, meshes, uploads), nanoseconds. */
+    static long terrainFrameNanos() {
+        return lastTerrainNanos;
+    }
+
+    /**
+     * Turns the GPU path on or off (render thread). On: every mesh the render thread holds whole is marked for upload.
+     * Off: the GPU's buffers are freed; meshes already uploaded are held only as counts, so a residency that keeps
+     * meshing (far mesh on) starts again.
+     */
+    private static void setGpu(boolean on) {
+        if (on == gpuOn) {
+            return;
+        }
+        gpuOn = on;
+        if (on) {
+            FarGpuBuffers b = FarRenderer.buffers();
+            for (NodeMesh mesh : meshes.values()) {
+                if (!mesh.stubbed()) {
+                    b.markDirty(mesh.key);
+                }
+            }
+            b.resetUploadClock();
+            return;
+        }
+        FarRenderer.release();
+        boolean stubs = false;
+        for (NodeMesh mesh : meshes.values()) {
+            stubs |= mesh.stubbed();
+        }
+        if (stubs && worker != null) {
+            worker.post(FarWorker::restartResidency);
+        }
+    }
+
     /** The far terrain's part of the frame: the switch, the camera for the residency, the colour table, the finished meshes. */
     private static void terrainFrame(Minecraft mc, Camera camera) {
         FarWorker w = worker;
-        if (w.meshingWanted != meshing) {
-            w.meshingWanted = meshing;
+        boolean on = meshingOn();
+        if (w.meshingWanted != on) {
+            w.meshingWanted = on;
             postedView = null;
         }
-        if (!meshing) {
+        if (!on) {
+            setGpu(false);
             takeMeshes(null);
+            frameView = null;
+            lastTerrainNanos = 0;
             return;
         }
         long start = System.nanoTime();
         FarResidency.View view = new FarResidency.View(camera.getPosition().x, camera.getPosition().y, camera.getPosition().z, mc.options.getEffectiveRenderDistance(),
                 mc.getWindow().getHeight(), mc.options.fov().get(), Config.FAR_PIXELS_PER_VOXEL.get(), farRange());
+        frameView = view;
         if (postedView == null || !view.sameRings(postedView) || view.distance(postedView) >= 32
                 || start - postedAt >= 250_000_000L && view.distance(postedView) >= 1) {
             postedView = view;
@@ -139,8 +207,15 @@ public final class FarStore {
         if (states != null && biomes != null && mc.level != null) {
             StateColors.frame(states, biomes, mc.level);
         }
+        setGpu(drawWanted() && FarRenderer.available());
         takeMeshes(w.residency);
+        if (gpuOn) {
+            FarGpuBuffers b = FarRenderer.buffers();
+            b.syncColours();
+            b.upload(meshes);
+        }
         long nanos = System.nanoTime() - start;
+        lastTerrainNanos = nanos;
         meshFrameNanos += nanos;
         meshFrameMaxNanos = Math.max(meshFrameMaxNanos, nanos);
         meshFrames++;
@@ -151,8 +226,8 @@ public final class FarStore {
 
     /**
      * The render thread's side of the meshes: takes the residency's outbox in order (a mesh replaces the node's last
-     * one, a drop removes it), within {@link #TAKE_NANOS} a frame. M2b uploads here, within a byte budget a frame; M2a
-     * only holds and counts them.
+     * one, a drop removes it), within {@link #TAKE_NANOS} a frame, and marks the nodes for the GPU's uploads while the
+     * debug view is on (FarGpuBuffers.upload, after this, within its byte budget).
      */
     private static void takeMeshes(FarResidency r) {
         if (r != outboxOf) {
@@ -160,6 +235,9 @@ public final class FarStore {
             meshQuads = 0;
             meshBytes = 0;
             outboxOf = r;
+            if (gpuOn && FarRenderer.hasBuffers()) {
+                FarRenderer.buffers().clearAll();
+            }
         }
         if (r == null) {
             return;
@@ -173,16 +251,22 @@ public final class FarStore {
                 break;
             }
             NodeMesh old;
+            long key;
             if (item instanceof NodeMesh mesh) {
-                old = meshes.put(mesh.key, mesh);
+                key = mesh.key;
+                old = meshes.put(key, mesh);
                 meshQuads += mesh.quadCount;
                 meshBytes += mesh.bytes();
             } else {
-                old = meshes.remove(((FarResidency.Drop) item).key());
+                key = ((FarResidency.Drop) item).key();
+                old = meshes.remove(key);
             }
             if (old != null) {
                 meshQuads -= old.quadCount;
                 meshBytes -= old.bytes();
+            }
+            if (gpuOn) {
+                FarRenderer.buffers().markDirty(key);
             }
         }
     }
@@ -193,19 +277,40 @@ public final class FarStore {
 
     /** The far terrain's status line ("Far terrain: ..."). */
     public static String terrainStatus() {
-        if (!meshing) {
-            return "off (/shaderscompanion far mesh on meshes it; nothing is drawn before M2b)";
+        boolean debug = forcedDebug || Config.FAR_TERRAIN_DEBUG.get();
+        if (!meshing && !debug) {
+            return "off (/shaderscompanion far show draws it in a debug view; needs farStore)";
         }
         FarWorker w = worker;
-        String residency = !active || w == null || w.meshStatus == null ? "waiting for the far store (farStore)" : w.meshStatus;
-        return String.format("%s; the render thread holds %d meshes (%d quads, %.1f MB), %.0f us a frame (max %.0f); %s", residency, meshes.size(), meshQuads,
-                meshBytes / 1048576.0, meshFrames == 0 ? 0.0 : meshFrameNanos / 1.0e3 / meshFrames, meshFrameMaxNanos / 1.0e3, StateColors.status());
+        if (!active || w == null) {
+            return "waiting for the far store (farStore)";
+        }
+        if (!meshingOn()) {
+            return !Config.ENABLED.get() ? "off with the rest of the mod's drawing (/shaderscompanion on)" : "off: " + FarRenderer.problem();
+        }
+        String residency = w.meshStatus == null ? "starting" : w.meshStatus;
+        String held = gpuOn ? FarRenderer.status() : String.format("the render thread holds %d meshes (%d quads, %.1f MB)%s", meshes.size(), meshQuads,
+                meshBytes / 1048576.0, debug && FarRenderer.problem() != null ? "; the debug view can't draw: " + FarRenderer.problem() : "");
+        return String.format("%s; %s; the far store's frame part %.0f us a frame (max %.0f); %s", residency, held,
+                meshFrames == 0 ? 0.0 : meshFrameNanos / 1.0e3 / meshFrames, meshFrameMaxNanos / 1.0e3, StateColors.status());
     }
 
     /** The {@code far mesh on|off} command: meshing on or off for this session. */
     public static String setMeshing(boolean on) {
         meshing = on;
-        return on ? "Far terrain meshing on (needs farStore on; nothing is drawn yet)" : "Far terrain meshing off";
+        return on ? "Far terrain meshing on (needs farStore on; /shaderscompanion far show draws it)" : "Far terrain meshing off (the debug view still meshes while it is on)";
+    }
+
+    /** The {@code far show [alone]} and {@code far hide} commands: the debug view on (saved in the config) or off. */
+    public static String setDebugView(boolean show, boolean alone) {
+        Config.FAR_TERRAIN_DEBUG.set(show);
+        Config.FAR_TERRAIN_DEBUG.save();
+        FarRenderer.alone = alone;
+        if (!show) {
+            return "Far terrain debug view off (its video memory is freed)";
+        }
+        String needs = !(forcedOn || Config.FAR_STORE.get()) ? "; it needs farStore on in config/shaderscompanion-client.toml" : "";
+        return (alone ? "Far terrain debug view on, alone (only the far terrain, over a plain sky)" : "Far terrain debug view on (far terrain where the screen shows sky)") + needs;
     }
 
     /** The {@code far stats} lines, from the worker. */
@@ -263,7 +368,39 @@ public final class FarStore {
         return meshMap(level, (nx - radius) * nodeBlocks, (nz - radius) * nodeBlocks, (2 * radius + 1) * nodeBlocks, "shaderscompanion");
     }
 
-    // Far terrain dev checks (M2a)
+    // Far terrain dev checks (M2a, M2b)
+
+    /** Dev checks (M2b): the debug view on for the run, without the config file (meshing follows it). */
+    public static void drawForChecks(boolean on) {
+        forcedDebug = on;
+    }
+
+    /** Dev checks (M2b): every node meshed again from scratch (a new residency), e.g. after the cave filling changed. */
+    public static void restartMeshingForChecks() {
+        if (worker != null) {
+            worker.post(FarWorker::restartResidency);
+        }
+    }
+
+    /**
+     * Dev checks (M2b): the GPU's side: meshes waiting to upload (-1 while the GPU path is off), meshes on the GPU,
+     * bytes uploaded since the clock was reset, the first and last upload's time since then (System.nanoTime), meshes
+     * that didn't fit; uploads' render-thread nanos, frames with uploads and the most in one frame.
+     */
+    public static long[] gpuNumbersForChecks(boolean resetClock) {
+        if (!gpuOn || !FarRenderer.hasBuffers()) {
+            return new long[]{-1, 0, 0, 0, 0, 0, 0, 0, 0};
+        }
+        FarGpuBuffers b = FarRenderer.buffers();
+        long[] out = {b.dirtyCount(), b.meshesOnGpu(), b.bytesSinceClock, b.firstUploadAt, b.lastUploadAt, b.noRoom, b.uploadNanos, b.uploadFrames, b.uploadMaxNanos};
+        if (resetClock) {
+            b.resetUploadClock();
+            b.uploadNanos = 0;
+            b.uploadFrames = 0;
+            b.uploadMaxNanos = 0;
+        }
+        return out;
+    }
 
     /** Dev checks: meshing on or off for the run. */
     public static void meshingForChecks(boolean on) {
@@ -358,7 +495,9 @@ public final class FarStore {
      * worker: nothing waits here).
      */
     private static void stop() {
+        setGpu(false);
         takeMeshes(null);
+        frameView = null;
         if (!active && capture == null) {
             return;
         }

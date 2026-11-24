@@ -18,7 +18,7 @@ import org.lwjgl.opengl.GL30C;
  * bound where the game expects its own. Each bind here goes through GlStateManager, which keeps its record right, and
  * then to GL itself.
  */
-final class Gl {
+public final class Gl {
     private static Object[] textureRecords;
     private static Field recordedBinding;
     private static boolean recordsLookedUp;
@@ -31,27 +31,27 @@ final class Gl {
     }
 
     /** Binds a 2D texture on the active unit. */
-    static void bindTexture(int id) {
+    public static void bindTexture(int id) {
         GlStateManager._bindTexture(id);
         GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, id);
     }
 
     /** Binds a 2D texture if it still exists (a mod may have deleted it since it was read), else none. */
-    static void bindTextureIfAlive(int id) {
+    public static void bindTextureIfAlive(int id) {
         bindTexture(id != 0 && GL11C.glIsTexture(id) ? id : 0);
     }
 
-    static void activeTexture(int unit) {
+    public static void activeTexture(int unit) {
         GlStateManager._activeTexture(unit);
         GL13C.glActiveTexture(unit);
     }
 
-    static void useProgram(int id) {
+    public static void useProgram(int id) {
         GlStateManager._glUseProgram(id);
         GL20C.glUseProgram(id);
     }
 
-    static void bindFramebuffer(int target, int id) {
+    public static void bindFramebuffer(int target, int id) {
         GlStateManager._glBindFramebuffer(target, id);
         GL30C.glBindFramebuffer(target, id);
     }
