@@ -59,7 +59,7 @@ final class FarMeshMap {
         byte[] classes = store.meshClasses();
         int classCount = store.states.size();
         int waterId = store.waterId();
-        boolean fill = level >= FarMesher.fillFromLevel;
+        boolean fill = store.caveFill && level >= FarMesher.fillFromLevel;
         int[] mapColours = new int[classCount + 16];
         Arrays.fill(mapColours, -1);
         int nx0 = Math.floorDiv(vx0, Node.SIZE);

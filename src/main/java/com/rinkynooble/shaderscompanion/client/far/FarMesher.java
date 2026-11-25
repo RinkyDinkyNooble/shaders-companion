@@ -25,7 +25,10 @@ import java.util.zip.DataFormatException;
  * <li>{@link #SOLID}: everything else that isn't air (opaque blocks, slabs, stairs, snow layers, lava): faces against
  * air, water and see-through solids; hides everything.</li>
  * <li>{@link #FILL}: from level 1 up ({@link #fillFromLevel}), air with sky light 0 (caves, closed rooms) is solid: it hides the cave's walls and
- * draws stone-coloured faces where it meets lit air, so a cave mouth is closed rather than a hole.</li>
+ * draws stone-coloured faces where it meets lit air, so a cave mouth is closed rather than a hole. Only in a dimension
+ * with sky light and no ceiling ({@link FarNodes#caveFill}): in the Nether and the End all air is dark, so their far
+ * terrain keeps its caves and open spaces at every level, the Nether's roof included (seen from below as the ceiling it
+ * is, fogged as the chunk terrain's roof is).</li>
  * <li>{@link #UNKNOWN} (no data, inside a node or a whole neighbour node not stored): never drawn and hides every face,
  * at every level, so the edge of explored terrain and a node beside a missing one grow no walls into the void (they
  * would face away from anyone inside the explored area anyway). The world's top counts as open sky, its bottom as

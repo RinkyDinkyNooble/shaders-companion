@@ -44,6 +44,8 @@ final class MeshJob {
     int classCount;
     int waterId;
     int stoneId;
+    /** Whether dark air is filled at this node ({@link FarMesher#FILL}: the store's dimension and the node's level). */
+    boolean fill;
     /** Where the result goes (a residency; null for the mesh map, which meshes inline). */
     FarResidency sink;
 
@@ -54,7 +56,7 @@ final class MeshJob {
     }
 
     boolean caveFill() {
-        return level >= FarMesher.fillFromLevel;
+        return fill;
     }
 
     /**
@@ -72,7 +74,8 @@ final class MeshJob {
         byte[] classes = store.meshClasses();
         int classCount = store.states.size();
         MeshJob job = new MeshJob(key, version);
-        boolean fill = job.caveFill();
+        boolean fill = store.caveFill && level >= FarMesher.fillFromLevel;
+        job.fill = fill;
         Node node = store.peek(key);
         if (node != null) {
             if (node.known == 0) {

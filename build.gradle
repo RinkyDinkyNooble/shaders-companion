@@ -321,14 +321,19 @@ minecraft {
             // binds the far textures, else the debug view); -PdevFarOverlay forces the debug view (comparison shots);
             // -PdevFarShort skips the round with level 0's caves filled; -PdevFarDim (with -PdevFarDraw) ends with a trip to the
             // Nether and back (no sky light: nothing drawn).
-            ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort', 'devFarDraw', 'devFarDhShot', 'devFarOverlay', 'devFarShort'].each { name ->
+            // gpu-lods fix round 1 (research/lod/M3.md, "Fix round 1"): -PdevFarShift=16 (after the far draw check's shots, the
+            // camera held at -PdevFarShiftX/Y/Z, -PdevYaw, -PdevPitch: shots a, b 16 blocks to the right, c back, m0-m7 moving,
+            // d), -PdevFarDims with -PdevChunky (the Nether and the End: Chunky generates -PdevFarDimsRadius blocks around a
+            // spot, the far store imports it, shots from several views).
+            ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort', 'devFarDraw', 'devFarDhShot', 'devFarOverlay', 'devFarShort', 'devFarDims'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", 'true'
                 }
             }
             // -PdevFarDiff=200: the log says what differs in the first 200 stored sections that change.
             // -PdevFov=90: the field of view for the run (restored; the dev client's default is 70, the user's 90).
-            ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache', 'devFarImport', 'devFarDiff', 'devFarRawStore', 'devFarRange', 'devFov', 'devFarFillFrom'].each { name ->
+            ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache', 'devFarImport', 'devFarDiff', 'devFarRawStore', 'devFarRange', 'devFov', 'devFarFillFrom',
+             'devFarShift', 'devFarShiftX', 'devFarShiftY', 'devFarShiftZ', 'devFarDimsRadius'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }

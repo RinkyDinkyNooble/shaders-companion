@@ -296,7 +296,9 @@ All layer textures use nearest filtering; read them with `texelFetch` at the pix
 
 **The chunk edge.** Nothing is drawn within the chunk terrain radius of the camera, horizontally (a cylinder, as Embeddium culls sections) and vertically. Embeddium's chunks reach about a chunk farther, so the two overlap by about a chunk; show far terrain only where the chunk terrain drew nothing (its solid depth is 1), as with Distant Horizons. Chunks Embeddium hasn't built yet inside that radius aren't covered in protocol 1. In the overlap the far terrain holds thin blocks (snow layers, slabs, fence gaps) as whole voxels, so its depth there can lie up to about a block in front of the chunk terrain's: never compare the two depths to choose between them.
 
-**Not drawn:** in dimensions without sky light (the Nether, the End), without OpenGL 4.3, while Distant Horizons draws far terrain or a Voxy mod is loaded (unless the player sets `farTerrain = companion`), and while the player's far terrain is off (`farStore`, `farTerrain`).
+**Dimensions** (3.0.0-dev4): drawn in every dimension. Where the dimension has sky light and no ceiling (the overworld), caves and closed rooms are left out from the second detail level on (air the sky doesn't reach counts as solid there, so a cave mouth is closed); in the Nether and the End every air voxel is dark, so their far terrain keeps its caves and open spaces at every level, the Nether's roof included (its underside from below, its top from above). Far texels there carry sky light 0, as the chunk terrain's do: light them as the dimension's chunk terrain.
+
+**Not drawn:** without OpenGL 4.3, while Distant Horizons draws far terrain or a Voxy mod is loaded (unless the player sets `farTerrain = companion`), and while the player's far terrain is off (`farStore`, `farTerrain`).
 
 ## Versions
 

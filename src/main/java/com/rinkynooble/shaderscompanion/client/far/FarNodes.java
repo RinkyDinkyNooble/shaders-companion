@@ -52,6 +52,12 @@ final class FarNodes {
     /** The dimension's build height, in blocks (the map scans nodes in it). */
     final int minY;
     final int maxY;
+    /**
+     * Whether the mesher fills dark air here ({@link FarMesher#FILL}): only in a dimension with sky light and no ceiling,
+     * where air without sky light is a cave or a closed room. Without sky light (the Nether, the End) every air voxel is
+     * dark, and under a ceiling the open space is too.
+     */
+    final boolean caveFill;
     final StateIds states = new StateIds();
     final BiomeIds biomes = new BiomeIds();
     /** The store's folder, or null when it couldn't be opened (then what leaves the cache is lost, as in M1a). */
@@ -158,12 +164,13 @@ final class FarNodes {
     private final short[] sectionBiomes = new short[64];
 
     /** Opens the store; {@code folder} null keeps it in memory only. */
-    FarNodes(int generation, String world, String dimension, int minY, int maxY, int cacheMb, Path folder) {
+    FarNodes(int generation, String world, String dimension, int minY, int maxY, boolean caveFill, int cacheMb, Path folder) {
         this.generation = generation;
         this.world = world;
         this.dimension = dimension;
         this.minY = minY;
         this.maxY = maxY;
+        this.caveFill = caveFill;
         setCacheMb(cacheMb);
         flags[StateIds.AIR] = OPEN;
         meshClasses[StateIds.UNKNOWN] = FarMesher.UNKNOWN;

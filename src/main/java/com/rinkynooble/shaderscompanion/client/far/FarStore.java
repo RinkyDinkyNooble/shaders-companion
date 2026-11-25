@@ -39,7 +39,8 @@ import net.minecraft.world.level.storage.LevelResource;
  * table ({@link StateColors}) and takes the finished meshes. While it is drawn they go to the GPU ({@link FarGpuBuffers},
  * within a byte budget a frame; the render thread then keeps only their counts) and {@link FarRenderer} draws them; with
  * meshing alone they are only held and counted (M2a). It is drawn with the store running, {@code farTerrain} not off and,
- * with {@code auto}, neither Distant Horizons drawing far terrain nor a Voxy mod loaded, in a dimension with sky light.
+ * with {@code auto}, neither Distant Horizons drawing far terrain nor a Voxy mod loaded, in every dimension (caves are
+ * filled only where the dimension has sky light and no ceiling: {@link FarNodes#caveFill}).
  */
 public final class FarStore {
     /** Capturing for {@link #capture}'s level (main thread). The hooks check only this. */
@@ -85,7 +86,7 @@ public final class FarStore {
     /** For the debug view over the frame (the pack doesn't read the far terrain), or alone. */
     public static final int MODE_OVERLAY = 3;
     private static int drawMode;
-    /** Why far terrain isn't drawn here (farTerrain off, Distant Horizons, Voxy, no sky light), or null. */
+    /** Why far terrain isn't drawn here (farTerrain off, Distant Horizons, Voxy), or null. */
     private static String blocked;
     /** Distant Horizons' rendering, asked through its API every 30 frames. */
     private static boolean dhDrawing;
@@ -183,9 +184,6 @@ public final class FarStore {
         String setting = farTerrainSetting();
         if (setting.equals("off")) {
             return "farTerrain is off (/shaderscompanion far on, or far mode auto)";
-        }
-        if (mc.level != null && !mc.level.dimensionType().hasSkyLight()) {
-            return "no sky light in this dimension";
         }
         if (setting.equals("auto")) {
             if (--dhCheckIn <= 0) {
@@ -598,11 +596,12 @@ public final class FarStore {
         String dimension = level.dimension().location().getNamespace() + "_" + level.dimension().location().getPath();
         int minY = level.getMinBuildHeight();
         int maxY = level.getMaxBuildHeight();
+        boolean caveFill = level.dimensionType().hasSkyLight() && !level.dimensionType().hasCeiling();
         int mb = cacheMb;
         Path folder = mc.gameDirectory.toPath().resolve("shaderscompanion").resolve("lod").resolve(world).resolve(dimension);
         // Sections of the store before are let go by their generation; the old store closes first (the queue's order)
         worker.messages.clear();
-        worker.post(w -> w.replaceStore(() -> new FarNodes(gen, world, dimension, minY, maxY, mb, folder)));
+        worker.post(w -> w.replaceStore(() -> new FarNodes(gen, world, dimension, minY, maxY, caveFill, mb, folder)));
         FarWorker sink = worker;
         capture = new FarCapture(level, gen, sink::post);
         active = true;

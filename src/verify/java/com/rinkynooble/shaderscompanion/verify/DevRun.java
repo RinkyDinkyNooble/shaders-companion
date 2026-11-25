@@ -3655,7 +3655,11 @@ public final class DevRun {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain info texture: {}", infoLine());
                 }
             } else if (t >= 80) {
-                if (!TOGGLE.isEmpty()) {
+                if (FAR_SHIFT > 0 || FAR_DIMS) {
+                    // Fix round 1: the shift check, then (or only) the trip to the Nether and the End
+                    phase = FAR_SHIFT > 0 ? 92 : 100;
+                    storeSettledTicks = 0;
+                } else if (!TOGGLE.isEmpty()) {
                     // M3b: -PdevToggle rounds (with -PdevBurst and -PdevProfile) at the vantage after the shots, then quits:
                     // shots shaderscompanion-far-<tag>-<toggle>-<off|on><round>[-bNNN].png
                     prefix = "shaderscompanion-far-" + System.getProperty("shaderscompanion.devTag", "run");
@@ -3721,6 +3725,10 @@ public final class DevRun {
                 }
                 phaseTick = ticks;
             }
+        } else if (phase >= 92 && phase <= 99) {
+            farShiftCheck(mc, t);
+        } else if (phase >= 100 && phase <= 119) {
+            farDimsCheck(mc, t);
         } else if (phase == 88) {
             // M3a: the Nether has no sky light, so the far terrain draws nothing there and the hook makes no GL call
             if (t == 1) {
@@ -3756,6 +3764,329 @@ public final class DevRun {
                         FarStore.terrainStatus(), frameTiming());
             } else if (t >= 100) {
                 finish(mc);
+            }
+        }
+    }
+
+    // Fix round 1 (research/lod/M3.md, "Fix round 1"): the shift check and the trip to the Nether and the End
+
+    /** -PdevFarShift=N: far terrain shot from a camera held still, then N blocks to the side, then back, then moving. */
+    private static final int FAR_SHIFT = Integer.getInteger("shaderscompanion.devFarShift", 0);
+    /** -PdevFarShiftY: the shift check's camera height (the flights' 230 by default); -PdevYaw its heading (east). */
+    private static final int FAR_SHIFT_Y = Integer.getInteger("shaderscompanion.devFarShiftY", 230);
+    private static final float FAR_SHIFT_YAW = Integer.getInteger("shaderscompanion.devYaw", (int) FAR_YAW);
+    /** -PdevFarShiftX, -PdevFarShiftZ: the shift check's spot (the vantage's by default). */
+    private static final int FAR_SHIFT_X = Integer.getInteger("shaderscompanion.devFarShiftX", FAR_X);
+    private static final int FAR_SHIFT_Z = Integer.getInteger("shaderscompanion.devFarShiftZ", FAR_Z);
+    /** The shift check's ticks at each spot before its shot (TAA and the far terrain's history settle). */
+    private static final int SHIFT_HOLD_TICKS = 120;
+    /** -PdevFarDims (with -PdevChunky): the far draw check visits the Nether and the End, generating and importing terrain there. */
+    private static final boolean FAR_DIMS = Boolean.getBoolean("shaderscompanion.devFarDims");
+    /** -PdevFarDimsRadius: the square Chunky generates around each visit's spot, in blocks (320 by default). */
+    private static final int FAR_DIMS_RADIUS = Integer.getInteger("shaderscompanion.devFarDimsRadius", 320);
+    /** The visits: dimension, the spot Chunky generates around (x, z), and per view the camera (y, yaw, pitch); y is searched for open air. */
+    private static final String[] DIM_IDS = {"minecraft:the_nether", "minecraft:the_end"};
+    private static final int[][] DIM_CENTRES = {{0, 0}, {1300, 0}};
+    private static final float[][][] DIM_VIEWS = {
+            {{40, 0, 5}, {40, 180, 5}, {45, 90, -25}, {100, 270, 20}, {150, 0, 40}},
+            {{80, 0, 10}, {80, 180, 10}, {80, 270, 25}, {170, 90, 45}}};
+    private static final String[] DIM_TAGS = {"nether", "end"};
+    private static int dimIndex;
+    private static int dimView;
+    private static double holdX;
+    private static double holdY;
+    private static double holdZ;
+    private static float holdYaw;
+    private static float holdPitch;
+    private static long dimGlFrom;
+    private static String dimImportBefore;
+
+    private static void hold(Minecraft mc) {
+        mc.player.setDeltaMovement(0.0, 0.0, 0.0);
+        mc.player.setPos(holdX, holdY, holdZ);
+        mc.player.setYRot(holdYaw);
+        mc.player.yRotO = holdYaw;
+        mc.player.setXRot(holdPitch);
+        mc.player.xRotO = holdPitch;
+    }
+
+    private static void holdAt(Minecraft mc, double x, double y, double z, float yaw, float pitch) {
+        holdX = x;
+        holdY = y;
+        holdZ = z;
+        holdYaw = yaw;
+        holdPitch = pitch;
+        hold(mc);
+    }
+
+    /** The far terrain meshed and on the GPU, and the store settled, for this many ticks in a row (counted in storeSettledTicks). */
+    private static boolean farReady(int t) {
+        if (t % 20 == 0) {
+            FarStore.terrainNumbersForChecks().whenComplete((n, e) -> meshNumbers = n);
+        }
+        long[] n = meshNumbers;
+        boolean ready = FarStore.settledForChecks() && n != null && n[n.length - 11 + 5] == 0 && FarStore.gpuNumbersForChecks(false)[0] == 0;
+        storeSettledTicks = ready ? storeSettledTicks + 1 : 0;
+        return storeSettledTicks >= 100;
+    }
+
+    private static void shiftShot(Minecraft mc, String name) {
+        String tag = System.getProperty("shaderscompanion.devTag", "run");
+        Screenshot.grab(mc.gameDirectory, "shaderscompanion-farshift-" + tag + "-" + name + ".png", mc.getMainRenderTarget(), message -> { });
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run, far shift shot {} at {} {} {} (yaw {}, pitch {}): Far terrain: {}", name, String.format("%.2f", holdX),
+                String.format("%.2f", holdY), String.format("%.2f", holdZ), holdYaw, holdPitch, FarStore.terrainStatus());
+    }
+
+    /**
+     * -PdevFarShift=N: 92 holds the camera at the spot (-PdevFarShiftX/Y/Z, -PdevYaw, -PdevPitch) until the far terrain
+     * is meshed and on the GPU and takes shot "a"; 93 holds it N blocks to the right and takes "b"; 94 back at the spot,
+     * "c"; 95 moves right at 15 blocks a second from the spot and takes a shot every tick ("m0" to "m7"); 96 holds at the
+     * spot again for "d", then quits or goes on to -PdevFarDims. Shots shaderscompanion-farshift-<tag>-<name>.png.
+     */
+    private static void farShiftCheck(Minecraft mc, int t) {
+        double x = FAR_SHIFT_X + 0.5;
+        double z = FAR_SHIFT_Z + 0.5;
+        double yawRad = Math.toRadians(FAR_SHIFT_YAW);
+        // Minecraft's look vector is (-sin yaw, cos yaw); its right is (-cos yaw, -sin yaw)
+        double rightX = -Math.cos(yawRad);
+        double rightZ = -Math.sin(yawRad);
+        if (phase == 92) {
+            if (t == 1) {
+                mc.player.connection.sendCommand("tp @s " + x + " " + FAR_SHIFT_Y + " " + z + " " + FAR_SHIFT_YAW + " " + FAR_PITCH);
+            }
+            if (t > 2) {
+                holdAt(mc, x, FAR_SHIFT_Y, z, FAR_SHIFT_YAW, FAR_PITCH);
+            }
+            if (t % 200 == 0) {
+                long[] n = meshNumbers;
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far shift waiting {} s: store settled {}, filling {}, meshes waiting to upload {} | Far terrain: {}", t / 20,
+                        FarStore.settledForChecks(), n == null ? -1 : n[n.length - 11 + 5], FarStore.gpuNumbersForChecks(false)[0], FarStore.terrainStatus());
+            }
+            if ((farReady(t) && t >= 300) || t >= 900) {
+                shiftShot(mc, "a");
+                phase = 93;
+                phaseTick = ticks;
+            }
+        } else if (phase == 93) {
+            holdAt(mc, x + rightX * FAR_SHIFT, FAR_SHIFT_Y, z + rightZ * FAR_SHIFT, FAR_SHIFT_YAW, FAR_PITCH);
+            if (t >= SHIFT_HOLD_TICKS) {
+                shiftShot(mc, "b");
+                phase = 94;
+                phaseTick = ticks;
+            }
+        } else if (phase == 94) {
+            holdAt(mc, x, FAR_SHIFT_Y, z, FAR_SHIFT_YAW, FAR_PITCH);
+            if (t >= SHIFT_HOLD_TICKS) {
+                shiftShot(mc, "c");
+                phase = 95;
+                phaseTick = ticks;
+            }
+        } else if (phase == 95) {
+            // 15 blocks a second to the right, a shot every tick (the frame drawn at that tick's position)
+            double d = Math.max(0, t - 1) * 0.75;
+            holdAt(mc, x + rightX * d, FAR_SHIFT_Y, z + rightZ * d, FAR_SHIFT_YAW, FAR_PITCH);
+            if (t >= 1 && t <= 8) {
+                shiftShot(mc, "m" + (t - 1));
+            }
+            if (t >= 8) {
+                phase = 96;
+                phaseTick = ticks;
+            }
+        } else if (phase == 96) {
+            holdAt(mc, x, FAR_SHIFT_Y, z, FAR_SHIFT_YAW, FAR_PITCH);
+            if (t >= SHIFT_HOLD_TICKS) {
+                shiftShot(mc, "d");
+                if (FAR_DIMS) {
+                    phase = 100;
+                    storeSettledTicks = 0;
+                } else {
+                    mc.player.connection.sendCommand("tp @s " + FAR_X + ".5 " + farY + " " + FAR_Z + ".5 " + FAR_YAW + " " + FAR_PITCH);
+                    FarStore.drawForChecks(false);
+                    phase = 87;
+                }
+                phaseTick = ticks;
+            }
+        }
+    }
+
+    /** Chunky (-PdevChunky) generates a square of the radius around a spot in a dimension. */
+    private static void chunkyGenerate(String dimension, int x, int z, int radius) {
+        try {
+            Object chunky = Class.forName("org.popcraft.chunky.ChunkyProvider").getMethod("get").invoke(null);
+            Object api = chunky.getClass().getMethod("getApi").invoke(chunky);
+            Class<?> apiClass = Class.forName("org.popcraft.chunky.api.ChunkyAPI");
+            boolean started = (boolean) apiClass.getMethod("startTask", String.class, String.class, double.class, double.class, double.class, double.class, String.class)
+                    .invoke(api, dimension, "square", x + 0.5, z + 0.5, (double) radius, (double) radius, "concentric");
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run: Chunky task in {} around {} {} radius {}: {}", dimension, x, z, radius, started ? "started" : "not started");
+        } catch (ReflectiveOperationException | LinkageError e) {
+            ShadersCompanion.LOGGER.error("Shaders Companion dev run: Chunky failed (needs -PdevChunky)", e);
+        }
+    }
+
+    private static boolean chunkyRunning(String dimension) {
+        try {
+            Object chunky = Class.forName("org.popcraft.chunky.ChunkyProvider").getMethod("get").invoke(null);
+            Object api = chunky.getClass().getMethod("getApi").invoke(chunky);
+            return (boolean) Class.forName("org.popcraft.chunky.api.ChunkyAPI").getMethod("isRunning", String.class).invoke(api, dimension);
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * The nearest height to y (within 40 blocks, the given column first, then columns around it, out to 96 blocks) with
+     * 5 x 5 x 5 blocks of air around the camera and 48 blocks of air along the view.
+     */
+    private static double[] openAir(Minecraft mc, double x, double y, double z, float yaw, float pitch) {
+        double lookX = -Math.sin(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch));
+        double lookY = -Math.sin(Math.toRadians(pitch));
+        double lookZ = Math.cos(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch));
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int r = 0; r <= 96; r += 8) {
+            for (int dx = -r; dx <= r; dx += 8) {
+                for (int dz = -r; dz <= r; dz += 8) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {
+                        continue;
+                    }
+                    for (int dy = 0; dy <= 40; dy++) {
+                        for (int sign = -1; sign <= 1; sign += 2) {
+                            int cy = (int) Math.floor(y) + sign * dy;
+                            boolean open = true;
+                            for (int ox = -2; ox <= 2 && open; ox++) {
+                                for (int oy = -2; oy <= 2 && open; oy++) {
+                                    for (int oz = -2; oz <= 2 && open; oz++) {
+                                        open = mc.level.getBlockState(pos.set((int) Math.floor(x) + dx + ox, cy + oy, (int) Math.floor(z) + dz + oz)).isAir();
+                                    }
+                                }
+                            }
+                            for (int step = 3; step <= 48 && open; step++) {
+                                open = mc.level.getBlockState(pos.set((int) Math.floor(Math.floor(x) + dx + 0.5 + lookX * step), (int) Math.floor(cy + 0.2 + lookY * step),
+                                        (int) Math.floor(Math.floor(z) + dz + 0.5 + lookZ * step))).isAir();
+                            }
+                            if (open) {
+                                return new double[]{Math.floor(x) + dx + 0.5, cy + 0.2, Math.floor(z) + dz + 0.5};
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return new double[]{x, y, z};
+    }
+
+    /**
+     * -PdevFarDims (with -PdevChunky): per dimension (the Nether, then the End around its outer islands), 100 goes there,
+     * Chunky generates -PdevFarDimsRadius around the spot and the world is saved; 101 imports the saved chunks into that
+     * dimension's far store; 102 waits until the import ended and the far terrain is meshed and on the GPU; 103 to 104
+     * take each view's shot (camera at open air near the view's height), logging the far terrain's status and the frames
+     * with far terrain GL calls; then the next dimension, and back to the overworld (87). Shots
+     * shaderscompanion-fardims-<tag>-<dimension>-<view>.png. Delete DIM-1 and DIM1's region, entities and poi folders
+     * and the store's minecraft_the_nether and minecraft_the_end folders afterwards (keep DIM-1/data and DIM1/data).
+     */
+    private static void farDimsCheck(Minecraft mc, int t) {
+        int d = Math.min(dimIndex, DIM_IDS.length - 1);
+        String dim = DIM_IDS[d];
+        int cx = DIM_CENTRES[d][0];
+        int cz = DIM_CENTRES[d][1];
+        float[] view = DIM_VIEWS[d][Math.min(dimView, DIM_VIEWS[d].length - 1)];
+        if (phase == 100) {
+            if (t == 1) {
+                mc.player.connection.sendCommand("execute in " + dim + " run tp @s " + cx + ".5 " + (int) view[0] + " " + cz + ".5 " + view[1] + " " + view[2]);
+            } else if (t == 60) {
+                chunkyGenerate(dim, cx, cz, FAR_DIMS_RADIUS);
+            }
+            if (t > 2) {
+                holdAt(mc, cx + 0.5, view[0], cz + 0.5, view[1], view[2]);
+            }
+            if (t % 200 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} generating {} s | Far store: {}", dim, t / 20, FarStore.status());
+            }
+            if (t >= 200 && !chunkyRunning(dim) || t >= 12000) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} generated after {} s", dim, t / 20);
+                mc.player.connection.sendCommand("save-all flush");
+                phase = 101;
+                phaseTick = ticks;
+            }
+        } else if (phase == 101) {
+            holdAt(mc, cx + 0.5, view[0], cz + 0.5, view[1], view[2]);
+            if (t == 100) {
+                dimImportBefore = FarStore.importForChecks();
+                String line = FarStore.startImport(FAR_DIMS_RADIUS / 16 + 2);
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} import: {}", dim, line);
+                phase = 102;
+                phaseTick = ticks;
+                storeSettledTicks = 0;
+            }
+        } else if (phase == 102) {
+            holdAt(mc, cx + 0.5, view[0], cz + 0.5, view[1], view[2]);
+            String imported = FarStore.importForChecks();
+            boolean importDone = imported != null && imported.startsWith("Far store import") && !imported.equals(dimImportBefore);
+            boolean ready = farReady(t) && importDone;
+            if (t % 200 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} {} s, import {} | Far terrain: {}", dim, t / 20, imported, FarStore.terrainStatus());
+            }
+            if (ready && t >= 400 || t >= 1200) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} {} after {} s: import {} | Far store: {} | Far terrain: {}", dim,
+                        ready ? "ready" : "NOT ready", t / 20, imported, FarStore.status(), FarStore.terrainStatus());
+                logWhenDone(FarStore.terrainStats());
+                dimView = 0;
+                phase = 103;
+                phaseTick = ticks;
+            }
+        } else if (phase == 103) {
+            if (t == 1) {
+                double[] spot = openAir(mc, cx + 0.5, view[0], cz + 0.5, view[1], view[2]);
+                holdAt(mc, spot[0], spot[1], spot[2], view[1], view[2]);
+                mc.player.connection.sendCommand("tp @s " + spot[0] + " " + spot[1] + " " + spot[2] + " " + view[1] + " " + view[2]);
+                dimGlFrom = FarRenderer.glFramesForChecks();
+            } else if (t > 2) {
+                hold(mc);
+            }
+            if (t == 200) {
+                String tag = System.getProperty("shaderscompanion.devTag", "run");
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardims-" + tag + "-" + DIM_TAGS[dimIndex] + "-" + dimView + ".png", mc.getMainRenderTarget(), message -> { });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} view {} at {} {} {} (yaw {}, pitch {}): frames with far terrain GL calls {} of the last 10 s; "
+                                + "info texture: {} | Far terrain: {} | {}", dim, dimView, String.format("%.1f", holdX), String.format("%.1f", holdY), String.format("%.1f", holdZ),
+                        holdYaw, holdPitch, FarRenderer.glFramesForChecks() - dimGlFrom, infoLine(), FarStore.terrainStatus(), frameTiming());
+                // The far terrain alone over a plain sky, for what it holds there
+                FarRenderer.aloneForChecks(true);
+            } else if (t == 230) {
+                String tag = System.getProperty("shaderscompanion.devTag", "run");
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardims-" + tag + "-" + DIM_TAGS[dimIndex] + "-" + dimView + "-alone.png", mc.getMainRenderTarget(),
+                        message -> { });
+                FarRenderer.aloneForChecks(false);
+            } else if (t >= 250) {
+                dimView++;
+                phaseTick = ticks;
+                if (dimView >= DIM_VIEWS[dimIndex].length) {
+                    phase = 104;
+                }
+            }
+        } else if (phase == 104) {
+            if (t == 1) {
+                logWhenDone(FarStore.terrainStats());
+            } else if (t >= 40) {
+                dimIndex++;
+                dimView = 0;
+                phaseTick = ticks;
+                storeSettledTicks = 0;
+                if (dimIndex < DIM_IDS.length) {
+                    phase = 100;
+                } else {
+                    mc.player.connection.sendCommand("execute in minecraft:overworld run tp @s " + FAR_X + ".5 " + farY + " " + FAR_Z + ".5 " + FAR_YAW + " " + FAR_PITCH);
+                    phase = 105;
+                }
+            }
+        } else if (phase == 105) {
+            if (t % 100 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: back in {} {} s | Far terrain: {}", mc.level.dimension().location(), t / 20, FarStore.terrainStatus());
+            }
+            if (t >= 600) {
+                String tag = System.getProperty("shaderscompanion.devTag", "run");
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardims-" + tag + "-overworld.png", mc.getMainRenderTarget(), message -> { });
+                FarStore.drawForChecks(false);
+                phase = 87;
+                phaseTick = ticks;
             }
         }
     }
