@@ -30,9 +30,15 @@ final class CompanionTexture extends AbstractTexture {
     static final int LATTICE_FIELD = 6;
     /** mirror_info_2 to _4, the mirror info texture under the names that ask for that many planes ({@link #mirrorPlanesGroup}). */
     private static final int MIRROR_PLANES_2 = 7;
+    /** The far terrain's layers ({@link FarTextures}). */
+    static final int FAR = MIRROR_PLANES_2 + MirrorView.MAX_PLANES - 1;
+    /** The far terrain's info texture as {@code far_info} (the layers jittered for the pack's TAA). */
+    static final int FAR_INFO = FAR + 1;
+    /** The same texture as {@code far_info_still} (the layers not jittered). */
+    static final int FAR_INFO_STILL = FAR + 2;
 
     /** Per group: how often a texture's id was asked for from outside the mod (render thread only). */
-    private static final long[] requests = new long[MIRROR_PLANES_2 + MirrorView.MAX_PLANES - 1];
+    private static final long[] requests = new long[FAR_INFO_STILL + 1];
 
     private final int group;
     private final int internalFormat;

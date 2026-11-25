@@ -1,4 +1,4 @@
-# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 3, rain cover protocol 1, lattice protocol 1, material table protocol 1)
+# Shaders Companion: API for shader packs (cube protocol 2, mirror view protocol 3, rain cover protocol 1, lattice protocol 1, material table protocol 1, far terrain protocol 1)
 
 Shaders Companion draws two views for the active shader pack and hands them over as textures:
 
@@ -254,9 +254,55 @@ Classes come from the user's rules (`config/shaderscompanion/*.rules`, one rule 
 
 **Entities** (2.0.0-dev21). When the pack reads the table, entity types the mod classes get `16384 | class` in Oculus's entity id map (`entityId`) the same way: minecarts iron (the jar's entity table), vehicles (an entity class or superclass named `...Vehicle...`, such as Superb Warfare's) paint, inferred when the first of a type is drawn, and the user's `entity` rules. Armour, items held by mobs and other players, dropped items and items in frames are drawn with their item's id, as above.
 
+## Far terrain (3.0.0, far protocol 1)
+
+```properties
+customTexture.scFarAlbedo = shaderscompanion:far_albedo
+customTexture.scFarData = shaderscompanion:far_data
+customTexture.scFarDepth = shaderscompanion:far_depth
+customTexture.scFarTranslucentAlbedo = shaderscompanion:far_translucent_albedo
+customTexture.scFarTranslucentData = shaderscompanion:far_translucent_data
+customTexture.scFarInfo = shaderscompanion:far_info
+```
+
+The mod's own far terrain (its copy of the world, beyond the chunk terrain out to the player's far range), drawn each frame before the world from the main camera with this frame's projection and view, at the size of Minecraft's main framebuffer (`viewWidth` x `viewHeight`), in two layers: the opaque surfaces, and the nearest translucent surface in front of them (water, stained glass, ice). Drawn only while the pack binds `far_info` (or `far_info_still`) and the player has far terrain on; the info texture says whether this frame's layers were drawn. While the pack binds neither name, the mod shows its far terrain in a debug view of its own over the finished frame (where the screen shows sky), or not at all.
+
+The name the info texture is bound under sets the jitter: with `far_info` the layers are jittered for TAA as Sundial Lite jitters its gbuffers, with `far_info_still` they are not (for a pack without TAA, or with TAA off). For example:
+
+```properties
+#ifdef TAA
+customTexture.scFarInfo = shaderscompanion:far_info
+#else
+customTexture.scFarInfo = shaderscompanion:far_info_still
+#endif
+```
+
+| Texture | Format | Contents |
+|---|---|---|
+| `far_albedo` | RGBA8 | rgb: the face's average colour (its texture's pixels, tinted by the biome as chunk meshes are), encoded like Minecraft's textures (sRGB). a: 1 on a surface, 0 where nothing was drawn. |
+| `far_data` | RGBA16 | As `cube_data`, read with `uint v = uint(round(x * 65535.0))`. r: the face's normal (world space, axis-aligned), octahedral, high byte x, low byte y. g: light, high byte block light, low byte sky light (each / 255; the light of the air in front of the face). b: the block's `block.properties` id + 1 (0 for an unlisted block), with the material class bits when the pack reads the material table ("Material classes"). a: the block's own light emission / 15. |
+| `far_depth` | RG32F | r: the opaque surface's depth, g: the translucent surface's depth where one lies in front of the opaque one; 1.0 where there is none. Depth is OpenGL's window depth of the point's view-space z (in `gbufferModelView` space, negative in front) under a perspective depth mapping with near N and far F (texel 1 of the info): `0.5 + 0.5 * ((F + N) / (F - N) - 2 F N / ((F - N) * -z))`, below 1 even past F. So the projection that turns it into a position is `gbufferProjection` with `[2].z = -(F + N) / (F - N)` and `[3].z = -2 F N / (F - N)`, and its inverse `gbufferProjectionInverse` with `[2].w = -(F - N) / (2 F N)` and `[3].w = (F + N) / (2 F N)`, as `dhProjection` relates to Distant Horizons' depth. |
+| `far_translucent_albedo` | RGBA8 | As `far_albedo`; a is the face's coverage (at least 1/255) where the translucent layer has a surface, 0 elsewhere. |
+| `far_translucent_data` | RGBA16 | As `far_data`, for the translucent surface. |
+| `far_info` | RGBA32F, 4 x 1 | Texel 0: `(4242, protocol 1, drawn, frame counter mod 4096)`; drawn is 1 when this frame's layers hold far terrain, 0 otherwise (then the other texels are 0); the frame counter is Oculus's `frameCounter` of this frame. Texel 1: `(N, F, far range, chunk terrain radius)`: the depth mapping's planes, how far the far terrain reaches (blocks from the camera; a pack's fog and far plane), and the radius inside which nothing is drawn (blocks, horizontally and vertically: (render distance - 1) x 16, where Embeddium's chunks still draw). Texel 2: `(projection [0].x, projection [1].y, jitter x, jitter y)`: the projection the layers were drawn with and the jitter added to clip-space x and y (`gl_Position.xy += jitter * gl_Position.w`; 0 with `far_info_still`). Texel 3: `(width, height, 0, 0)` of the layers. |
+
+All layer textures use nearest filtering; read them with `texelFetch` at the pixel, or `textureLod` at its centre.
+
+**Checking the link.** Without the mod Oculus binds Minecraft's 16 x 16 missing texture. Use the layers only when texel 0 is `(4242, 1, 1, ...)` and texel 3 equals the screen size (on the frame of a window resize it doesn't). The layers are 1 x 1 while nothing was drawn yet or far terrain is off.
+
+**Jitter** (with `far_info`): `i = frameCounter % 16`, `jitter = vec2(fract(0.5 + i * 0.7548776269) * 2 - 1, fract(0.5 + i * 0.5698402524) * 2 - 1) / vec2(viewWidth, viewHeight)`, Sundial Lite's `taaOffset`. The mod works out Oculus's frame counter before the world is drawn; on the frame Oculus reloads a pack it starts its counter again, and that one frame's layers carry the old counter's jitter (texel 0 shows it).
+
+**The far edge.** With `far_info` (and the player's `farEdgeFade`, on by default), far fragments over the last tenth of the far range are thinned out with a pattern that changes with the frame index, from none at 90% of the range to all at the range, so TAA blends the edge into whatever lies behind it; with `far_info_still` the edge is hard. The depths and the layers agree either way.
+
+**The chunk edge.** Nothing is drawn within the chunk terrain radius of the camera, horizontally (a cylinder, as Embeddium culls sections) and vertically. Embeddium's chunks reach about a chunk farther, so the two overlap by about a chunk; show far terrain only where the chunk terrain drew nothing (its solid depth is 1), as with Distant Horizons. Chunks Embeddium hasn't built yet inside that radius aren't covered in protocol 1. In the overlap the far terrain holds thin blocks (snow layers, slabs, fence gaps) as whole voxels, so its depth there can lie up to about a block in front of the chunk terrain's: never compare the two depths to choose between them.
+
+**Not drawn:** in dimensions without sky light (the Nether, the End), without OpenGL 4.3, while Distant Horizons draws far terrain or a Voxy mod is loaded (unless the player sets `farTerrain = companion`), and while the player's far terrain is off (`farStore`, `farTerrain`).
+
 ## Versions
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
+
+- 3.0.0 (in development): `far_*` (far protocol 1): the mod's own far terrain in two layers with its depth and info texture, drawn while the pack binds `far_info` or `far_info_still` ("Far terrain"). The other protocols and textures are 2.0.0's.
 
 - 2.0.0: `lattice_*` (protocol 1): the lattice; from 2.0.0-dev12 its detail (`lattice_detail*`, `lattice_info` texel 4). From 2.0.0-dev16, mirror view protocol 3: up to four planes mirrored at once, as many as the name the pack binds `mirror_info` under asks for (`mirror_info_N`); the mirror textures hold one tile per plane, `mirror_info` one row per plane (9 x 4) with the tile's corner in texel 8. `material_table` (protocol 1): material classes for blocks, block entities, items and entities. Comes with ABZA Shader 2.0.0.
 - 1.0.0: the same protocols and textures. The plane search traces collision shapes (plants no longer stop its rays) and counts water past the chunk terrain's range; chunk terrain is drawn over Distant Horizons LODs in the views by a stencil, so far terrain no longer shows through near terrain; the entity capture frees its kept memory when mods create render types without end. Comes with ABZA Shader 1.1.0.

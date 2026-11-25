@@ -18,9 +18,11 @@ import net.minecraftforge.client.gui.overlay.ForgeGui;
  * the views as pictures, and {@code on} and {@code off} start and stop all drawing. {@code lod map <level> [radius]}
  * saves a map of the far store's level around you, {@code lod stats} prints its sizes and {@code lod import [radius]}
  * (singleplayer) adds the world's saved chunks within that many chunks of you to it, {@code lod import stop} stops
- * that (all in development). {@code far show} draws the far terrain in a debug view where the screen shows sky,
- * {@code far show alone} draws it alone, {@code far hide} stops it; {@code far mesh on|off}, {@code far stats} and
- * {@code far meshmap <level> [radius]} are M2a's checks.
+ * that (all in development). {@code far on} and {@code far off} turn the far terrain on or off with the far store,
+ * {@code far mode auto|companion|off} says whose far terrain is drawn (the setting farTerrain); {@code far show} draws it
+ * in a debug view where the screen shows sky while the shader pack doesn't draw it itself, {@code far show alone} draws
+ * it alone, {@code far hide} stops that; {@code far mesh on|off}, {@code far stats} and {@code far meshmap <level>
+ * [radius]} are M2a's checks.
  */
 public final class DebugOverlay {
     /** {@code lod import} without a radius: 256 chunks (4,096 blocks) each way. */
@@ -80,6 +82,10 @@ public final class DebugOverlay {
                 .then(Commands.literal("far")
                         .then(Commands.literal("on").executes(context -> say(context.getSource(), FarStore.setFarTerrain(true))))
                         .then(Commands.literal("off").executes(context -> say(context.getSource(), FarStore.setFarTerrain(false))))
+                        .then(Commands.literal("mode")
+                                .then(Commands.literal("auto").executes(context -> say(context.getSource(), FarStore.setFarTerrainMode("auto"))))
+                                .then(Commands.literal("companion").executes(context -> say(context.getSource(), FarStore.setFarTerrainMode("companion"))))
+                                .then(Commands.literal("off").executes(context -> say(context.getSource(), FarStore.setFarTerrainMode("off")))))
                         .then(Commands.literal("show")
                                 .executes(context -> say(context.getSource(), FarStore.setDebugView(true, false)))
                                 .then(Commands.literal("alone").executes(context -> say(context.getSource(), FarStore.setDebugView(true, true)))))

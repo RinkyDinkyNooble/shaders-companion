@@ -5,12 +5,48 @@ import net.minecraftforge.fml.ModList;
 
 /**
  * Guards {@link DistantHorizonsLods}: its class refers to Distant Horizons' classes, so it is only touched when
- * Distant Horizons is installed, and it is turned off for the session after any error.
+ * Distant Horizons is installed, and it is turned off for the session after any error. Also answers the far terrain's
+ * coexistence questions (research/lod/M3-PLAN.md, "Coexistence"): whether Distant Horizons draws far terrain, whether
+ * a Voxy mod is loaded.
  */
-final class Lods {
+public final class Lods {
+    /** Mod ids a Voxy build may use (Voxy's Modrinth slug first; no public page states the id). */
+    private static final String[] VOXY_IDS = {"voxy", "neovoxy", "neo_voxy"};
     private static int state; // 0 unchecked, 1 available, -1 unavailable
+    private static String voxy;
+    private static boolean voxyChecked;
 
     private Lods() {
+    }
+
+    /**
+     * Whether Distant Horizons draws far terrain on screen: installed and its rendering on, by its API (its renderer
+     * mode; the setting Oculus defines DISTANT_HORIZONS by). Unknown (its config not ready yet) counts as drawing.
+     */
+    public static boolean distantHorizonsDrawing() {
+        if (!ModList.get().isLoaded("distanthorizons")) {
+            return false;
+        }
+        try {
+            Boolean on = DistantHorizonsLods.renderingEnabled();
+            return on == null || on;
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    /** The id of a loaded Voxy mod, or null. */
+    public static String voxyLoaded() {
+        if (!voxyChecked) {
+            voxyChecked = true;
+            for (String id : VOXY_IDS) {
+                if (ModList.get().isLoaded(id)) {
+                    voxy = id;
+                    break;
+                }
+            }
+        }
+        return voxy;
     }
 
     static boolean available() {

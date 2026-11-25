@@ -2,6 +2,8 @@ package com.rinkynooble.shaderscompanion.client.far;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import com.rinkynooble.shaderscompanion.client.Config;
+import com.rinkynooble.shaderscompanion.client.FarTextures;
+import com.rinkynooble.shaderscompanion.client.Lods;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.client.Camera;
@@ -30,12 +32,14 @@ import net.minecraft.world.level.storage.LevelResource;
  * end waits for that. In singleplayer, {@code /shaderscompanion lod import} adds the chunks the world has saved
  * ({@link FarImport}).
  * <p>
- * Far terrain (M2): while meshing is on (the debug view {@code farTerrainDebug}, {@code /shaderscompanion far show};
- * or {@code far mesh on}, not saved; or the dev checks), the worker keeps the resident set ({@link FarResidency}) from
- * the camera posted here at most 4 times a second, the mesher thread meshes it ({@link FarMesher}), this frame hook
- * works out the colour table ({@link StateColors}) and takes the finished meshes. While the debug view is on they go to
- * the GPU ({@link FarGpuBuffers}, within a byte budget a frame; the render thread then keeps only their counts) and
- * {@link FarRenderer} draws them; with meshing alone they are only held and counted (M2a).
+ * Far terrain (M2, M3): while it is drawn ({@link #drawMode}: for the shader pack, which binds its textures, or for the
+ * debug view {@code farTerrainDebug}; research/lod/M3-PLAN.md, "Coexistence"), or meshing is on alone ({@code far mesh
+ * on}, not saved; or the dev checks), the worker keeps the resident set ({@link FarResidency}) from the camera posted
+ * here at most 4 times a second, the mesher thread meshes it ({@link FarMesher}), this frame hook works out the colour
+ * table ({@link StateColors}) and takes the finished meshes. While it is drawn they go to the GPU ({@link FarGpuBuffers},
+ * within a byte budget a frame; the render thread then keeps only their counts) and {@link FarRenderer} draws them; with
+ * meshing alone they are only held and counted (M2a). It is drawn with the store running, {@code farTerrain} not off and,
+ * with {@code auto}, neither Distant Horizons drawing far terrain nor a Voxy mod loaded, in a dimension with sky light.
  */
 public final class FarStore {
     /** Capturing for {@link #capture}'s level (main thread). The hooks check only this. */
@@ -66,10 +70,28 @@ public final class FarStore {
     private static long meshFrames;
     private static long lastTerrainNanos;
 
-    // Far terrain on the GPU (M2b): the debug view forced on by the dev checks, whether meshes go to the GPU, the frame's view
+    // Far terrain on the GPU (M2b): far terrain forced on by the dev checks, whether meshes go to the GPU, the frame's view
     private static boolean forcedDebug;
     private static boolean gpuOn;
     private static FarResidency.View frameView;
+
+    // What the far terrain is drawn for this frame (M3), worked out by the frame hook (render thread)
+    /** Not drawn. */
+    public static final int MODE_NONE = 0;
+    /** For the shader pack, which binds far_info: jittered for its TAA. */
+    public static final int MODE_PACK = 1;
+    /** For the shader pack, which binds far_info_still: not jittered. */
+    public static final int MODE_PACK_STILL = 2;
+    /** For the debug view over the frame (the pack doesn't read the far terrain), or alone. */
+    public static final int MODE_OVERLAY = 3;
+    private static int drawMode;
+    /** Why far terrain isn't drawn here (farTerrain off, Distant Horizons, Voxy, no sky light), or null. */
+    private static String blocked;
+    /** Distant Horizons' rendering, asked through its API every 30 frames. */
+    private static boolean dhDrawing;
+    private static int dhCheckIn;
+    /** Dev checks: the debug view even while the pack reads the far terrain (-PdevFarOverlay). */
+    private static boolean forcedOverlay;
 
     private FarStore() {
     }
@@ -80,6 +102,8 @@ public final class FarStore {
 
     /** Called from the frame hook before the world is rendered: starts and stops the store, and copies due sections. */
     public static void frame(Camera camera) {
+        // Whether the shader pack reads the far terrain (two counters, no GL)
+        FarTextures.frame();
         if (!active && !wanted()) {
             return;
         }
@@ -122,14 +146,66 @@ public final class FarStore {
         }
     }
 
-    /** The debug view is wanted: {@code farTerrainDebug} (or the dev checks), the store running, the mod's drawing on. */
-    public static boolean drawWanted() {
-        return active && failure == null && (forcedDebug || Config.FAR_TERRAIN_DEBUG.get()) && Config.ENABLED.get();
+    /** What the far terrain is drawn for this frame: {@link #MODE_NONE}, {@link #MODE_PACK}, {@link #MODE_PACK_STILL} or {@link #MODE_OVERLAY}. */
+    public static int drawMode() {
+        return drawMode;
     }
 
-    /** Meshing runs: the debug view (unless it can't draw here) or {@code far mesh on}. */
+    /**
+     * Works out this frame's mode (render thread, while the store runs): nothing while far terrain is off or blocked
+     * here; for the pack while it binds the info texture (as far_info, jittered, or far_info_still); otherwise the debug
+     * view when it is on ({@code farTerrainDebug}, the dev checks, {@code far show alone}, which also wins over the pack).
+     */
+    private static int decideMode(Minecraft mc) {
+        blocked = blockedReason(mc);
+        if (!active || failure != null || !Config.ENABLED.get() || blocked != null) {
+            return MODE_NONE;
+        }
+        boolean debugView = forcedDebug || Config.FAR_TERRAIN_DEBUG.get() || FarRenderer.alone;
+        if (forcedOverlay || FarRenderer.alone) {
+            return debugView ? MODE_OVERLAY : MODE_NONE;
+        }
+        int demand = FarTextures.demand();
+        if (demand != FarTextures.NOT_BOUND) {
+            return demand == FarTextures.BOUND_JITTERED ? MODE_PACK : MODE_PACK_STILL;
+        }
+        return debugView ? MODE_OVERLAY : MODE_NONE;
+    }
+
+    /** The farTerrain setting: auto, companion or off (the dev checks turn off into auto). */
+    private static String farTerrainSetting() {
+        String setting = Config.FAR_TERRAIN.get();
+        return forcedDebug && setting.equals("off") ? "auto" : setting;
+    }
+
+    /** Why far terrain isn't drawn here, or null (M3-PLAN.md, "Coexistence"). */
+    private static String blockedReason(Minecraft mc) {
+        String setting = farTerrainSetting();
+        if (setting.equals("off")) {
+            return "farTerrain is off (/shaderscompanion far on, or far mode auto)";
+        }
+        if (mc.level != null && !mc.level.dimensionType().hasSkyLight()) {
+            return "no sky light in this dimension";
+        }
+        if (setting.equals("auto")) {
+            if (--dhCheckIn <= 0) {
+                dhCheckIn = 30;
+                dhDrawing = Lods.distantHorizonsDrawing();
+            }
+            if (dhDrawing) {
+                return "Distant Horizons draws far terrain (farTerrain = companion draws the mod's too)";
+            }
+            String voxy = Lods.voxyLoaded();
+            if (voxy != null) {
+                return "a Voxy mod (" + voxy + ") is loaded (farTerrain = companion draws the mod's far terrain too)";
+            }
+        }
+        return null;
+    }
+
+    /** Meshing runs: the far terrain is drawn (unless it can't draw here) or {@code far mesh on}. */
     private static boolean meshingOn() {
-        return meshing || drawWanted() && FarRenderer.problem() == null;
+        return meshing || drawMode != MODE_NONE && FarRenderer.problem() == null;
     }
 
     /** Meshes go to the GPU and the debug view draws them (render thread). */
@@ -180,6 +256,7 @@ public final class FarStore {
     /** The far terrain's part of the frame: the switch, the camera for the residency, the colour table, the finished meshes. */
     private static void terrainFrame(Minecraft mc, Camera camera) {
         FarWorker w = worker;
+        drawMode = decideMode(mc);
         boolean on = meshingOn();
         if (w.meshingWanted != on) {
             w.meshingWanted = on;
@@ -207,7 +284,7 @@ public final class FarStore {
         if (states != null && biomes != null && mc.level != null) {
             StateColors.frame(states, biomes, mc.level);
         }
-        setGpu(drawWanted() && FarRenderer.available());
+        setGpu(drawMode != MODE_NONE && FarRenderer.available());
         takeMeshes(w.residency);
         if (gpuOn) {
             FarGpuBuffers b = FarRenderer.buffers();
@@ -275,23 +352,35 @@ public final class FarStore {
         return forcedFarRange > 0 ? forcedFarRange : Config.FAR_RANGE.get();
     }
 
-    /** The far terrain's status line ("Far terrain: ..."). */
+    /** The far terrain's status line ("Far terrain: ..."): what it is drawn for, then the residency and the GPU. */
     public static String terrainStatus() {
-        boolean debug = forcedDebug || Config.FAR_TERRAIN_DEBUG.get();
-        if (!meshing && !debug) {
-            return "off (/shaderscompanion far show draws it in a debug view; needs farStore)";
-        }
         FarWorker w = worker;
+        if (!(forcedOn || Config.FAR_STORE.get()) && !forcedDebug) {
+            return "off (/shaderscompanion far on turns it on with the far store)";
+        }
         if (!active || w == null) {
             return "waiting for the far store (farStore)";
         }
+        String path = switch (drawMode) {
+            case MODE_PACK -> "for the shader pack, jittered for its TAA";
+            case MODE_PACK_STILL -> "for the shader pack, not jittered (it binds far_info_still)";
+            case MODE_OVERLAY -> forcedOverlay || FarRenderer.alone ? "debug view" + (FarRenderer.alone ? ", alone" : "")
+                    : "debug view: the shader pack doesn't read far terrain";
+            default -> !Config.ENABLED.get() ? "off with the rest of the mod's drawing (/shaderscompanion on)"
+                    : blocked != null ? "off: " + blocked
+                    : FarRenderer.problem() != null ? "off: " + FarRenderer.problem()
+                    : "off: the shader pack doesn't read far terrain and the debug view is hidden (/shaderscompanion far show)";
+        };
+        if (drawMode != MODE_NONE && farTerrainSetting().equals("companion") && (Lods.distantHorizonsDrawing() || Lods.voxyLoaded() != null)) {
+            path += " (farTerrain = companion: " + (Lods.voxyLoaded() != null ? "a Voxy mod" : "Distant Horizons") + " draws far terrain too)";
+        }
         if (!meshingOn()) {
-            return !Config.ENABLED.get() ? "off with the rest of the mod's drawing (/shaderscompanion on)" : "off: " + FarRenderer.problem();
+            return path;
         }
         String residency = w.meshStatus == null ? "starting" : w.meshStatus;
         String held = gpuOn ? FarRenderer.status() : String.format("the render thread holds %d meshes (%d quads, %.1f MB)%s", meshes.size(), meshQuads,
-                meshBytes / 1048576.0, debug && FarRenderer.problem() != null ? "; the debug view can't draw: " + FarRenderer.problem() : "");
-        return String.format("%s; %s; the far store's frame part %.0f us a frame (max %.0f); %s", residency, held,
+                meshBytes / 1048576.0, FarRenderer.problem() != null ? "; it can't draw: " + FarRenderer.problem() : "");
+        return String.format("%s; %s; %s; the far store's frame part %.0f us a frame (max %.0f); %s", path, residency, held,
                 meshFrames == 0 ? 0.0 : meshFrameNanos / 1.0e3 / meshFrames, meshFrameMaxNanos / 1.0e3, StateColors.status());
     }
 
@@ -302,28 +391,49 @@ public final class FarStore {
     }
 
     /**
-     * The {@code far on} and {@code far off} commands (for testing the far terrain in a real game): the store and the
-     * debug view over the frame together, both saved in the config.
+     * The {@code far on} and {@code far off} commands: the store, {@code farTerrain} (auto, or off) and the debug view
+     * for packs that don't read the far terrain together, all saved in the config.
      */
     public static String setFarTerrain(boolean on) {
         Config.FAR_STORE.set(on);
         Config.FAR_STORE.save();
+        Config.FAR_TERRAIN.set(on ? "auto" : "off");
+        Config.FAR_TERRAIN.save();
         Config.FAR_TERRAIN_DEBUG.set(on);
         Config.FAR_TERRAIN_DEBUG.save();
         FarRenderer.alone = false;
-        return on ? "Far terrain on: the store fills from the chunks you load (in singleplayer, /shaderscompanion lod import adds the world's saved chunks)"
-                : "Far terrain off (what is stored stays on disk)";
+        return on ? "Far terrain on: the store fills from the chunks you load (in singleplayer, /shaderscompanion lod import adds the world's saved chunks); "
+                + "a shader pack that reads it (ABZA Shader 3) lights it, otherwise the debug view shows it" : "Far terrain off (what is stored stays on disk)";
     }
 
-    /** The {@code far show [alone]} and {@code far hide} commands: the debug view on (saved in the config) or off. */
+    /** The {@code far mode auto|companion|off} command: whose far terrain is drawn (saved in the config). */
+    public static String setFarTerrainMode(String mode) {
+        Config.FAR_TERRAIN.set(mode);
+        Config.FAR_TERRAIN.save();
+        String needs = !(forcedOn || Config.FAR_STORE.get()) ? "; it needs farStore on (/shaderscompanion far on)" : "";
+        return switch (mode) {
+            case "companion" -> "Far terrain: the mod's own, even while Distant Horizons draws far terrain or a Voxy mod is loaded" + needs;
+            case "off" -> "Far terrain: none of the mod's (the store keeps filling while farStore is on)";
+            default -> "Far terrain: the mod's own, unless Distant Horizons draws far terrain or a Voxy mod is loaded" + needs;
+        };
+    }
+
+    /**
+     * The {@code far show [alone]} and {@code far hide} commands: the debug view on (saved in the config) or off. Over
+     * the frame it shows only while the shader pack doesn't draw the far terrain itself; alone, it shows always.
+     */
     public static String setDebugView(boolean show, boolean alone) {
         Config.FAR_TERRAIN_DEBUG.set(show);
         Config.FAR_TERRAIN_DEBUG.save();
         FarRenderer.alone = alone;
         if (!show) {
-            return "Far terrain debug view off (its video memory is freed)";
+            return "Far terrain debug view off";
         }
-        String needs = !(forcedOn || Config.FAR_STORE.get()) ? "; it needs farStore on in config/shaderscompanion-client.toml" : "";
+        String needs = !(forcedOn || Config.FAR_STORE.get()) ? "; it needs farStore on (/shaderscompanion far on)" : "";
+        if (!alone && (drawMode == MODE_PACK || drawMode == MODE_PACK_STILL)) {
+            return "The shader pack draws the far terrain itself: the debug view would paint over it (where the chunk terrain's depth is the sky, the pack's "
+                    + "far terrain is), so it shows only while the pack doesn't; far show alone shows the far terrain alone";
+        }
         return (alone ? "Far terrain debug view on, alone (only the far terrain, over a plain sky)" : "Far terrain debug view on (far terrain where the screen shows sky)") + needs;
     }
 
@@ -384,9 +494,17 @@ public final class FarStore {
 
     // Far terrain dev checks (M2a, M2b)
 
-    /** Dev checks (M2b): the debug view on for the run, without the config file (meshing follows it). */
+    /**
+     * Dev checks (M2b, M3a): far terrain on for the run, without the config file: for the pack when it binds the far
+     * textures, else in the debug view (meshing follows it).
+     */
     public static void drawForChecks(boolean on) {
         forcedDebug = on;
+    }
+
+    /** Dev checks (M3a): the debug view even while the pack reads the far terrain (-PdevFarOverlay). */
+    public static void overlayForChecks(boolean on) {
+        forcedOverlay = on;
     }
 
     /** Dev checks (M2b): every node meshed again from scratch (a new residency), e.g. after the cave filling changed. */
@@ -509,6 +627,7 @@ public final class FarStore {
      * worker: nothing waits here).
      */
     private static void stop() {
+        drawMode = MODE_NONE;
         setGpu(false);
         takeMeshes(null);
         frameView = null;

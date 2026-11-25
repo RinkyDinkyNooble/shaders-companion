@@ -1,6 +1,7 @@
 package com.rinkynooble.shaderscompanion.client;
 
 import com.mojang.blaze3d.platform.GlStateManager;
+import com.seibel.distanthorizons.api.DhApi;
 import com.seibel.distanthorizons.common.render.openGl.glObject.buffer.GLVertexBuffer;
 import com.seibel.distanthorizons.common.render.openGl.glObject.buffer.GlQuadIndexBuffer;
 import com.seibel.distanthorizons.core.api.internal.SharedApi;
@@ -42,6 +43,14 @@ final class DistantHorizonsLods {
     static String reason = "not read yet (the mod draws only while a shader pack reads its views)";
 
     private DistantHorizonsLods() {
+    }
+
+    /** Distant Horizons' rendering on (its renderer mode, through its API), or null while its config isn't ready. */
+    static Boolean renderingEnabled() {
+        if (DhApi.Delayed.configs == null) {
+            return null;
+        }
+        return DhApi.Delayed.configs.graphics().renderingEnabled().getValue();
     }
 
     /** Distant Horizons' LOD range in blocks. */

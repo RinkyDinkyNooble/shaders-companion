@@ -7,7 +7,8 @@ import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL30C;
 
 /**
- * The textures shader packs read, by resource location (see API.md): the cube around the camera, the mirror view and the rain cover. A pack binds them with
+ * The textures shader packs read, by resource location (see API.md): the cube around the camera, the mirror view and the rain cover (the far terrain's are
+ * {@link FarTextures}'). A pack binds them with
  * {@code customTexture.<sampler> = shaderscompanion:<name>} in shaders.properties.
  */
 public final class CubeTextures {
@@ -107,7 +108,8 @@ public final class CubeTextures {
         MIRROR_BEHIND_DATA.allocate(1, 1);
         MIRROR_BEHIND_DISTANCE.allocate(1, 1);
         RAIN_COVER.allocate(1, 1);
-        ShadersCompanion.LOGGER.info("Shaders Companion: cube textures registered (protocol {}), mirror view textures (protocol {}), rain cover (protocol {})",
-                PROTOCOL, MIRROR_PROTOCOL, RainCover.PROTOCOL);
+        FarTextures.register();
+        ShadersCompanion.LOGGER.info("Shaders Companion: cube textures registered (protocol {}), mirror view textures (protocol {}), rain cover (protocol {}), "
+                + "far terrain (protocol {})", PROTOCOL, MIRROR_PROTOCOL, RainCover.PROTOCOL, FarTextures.PROTOCOL);
     }
 }

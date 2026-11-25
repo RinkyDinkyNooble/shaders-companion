@@ -1,15 +1,19 @@
 #version 430 core
 
-// The far terrain's debug view (research/lod/M2-PLAN.md, "The debug view"): the far layer's albedo times a simple
-// light (sky light with a fixed sun, block light), over the finished frame where the far layer was drawn and the
-// scene's depth is the sky or farther than the far terrain; alone, the far layer over a plain sky colour.
+// The far terrain's debug view (research/lod/M2-PLAN.md, "The debug view"), shown while the shader pack doesn't draw
+// the far terrain itself: the nearest far surface (the translucent layer's where it has one, else the opaque one's)
+// times a simple light (sky light with a fixed sun, block light), over the finished frame where the far layers hold a
+// surface and the screen shows sky; alone, the far layers over a plain sky colour. The distance comes from the
+// protocol's depth through the protocol's inverse projection (API.md, "Far terrain"), as a pack reads it.
 
 layout(binding = 0) uniform sampler2D u_Albedo;
 layout(binding = 1) uniform sampler2D u_Data;
-layout(binding = 2) uniform sampler2D u_Distance;
-layout(binding = 3) uniform sampler2D u_SceneDepth;
+layout(binding = 2) uniform sampler2D u_TranslucentAlbedo;
+layout(binding = 3) uniform sampler2D u_TranslucentData;
+layout(binding = 4) uniform sampler2D u_FarDepth;
+layout(binding = 5) uniform sampler2D u_SceneDepth;
 
-uniform mat4 u_InverseProjection; // the frame's projection, inverted: the scene's depth to view space
+uniform mat4 u_InverseProjection; // the frame's projection inverted, with [2].w and [3].w for the far depth's N and F
 uniform vec2 u_ScreenSize;
 uniform int u_Alone;
 uniform int u_UseScene;
@@ -34,8 +38,10 @@ vec3 octDecode(vec2 e) {
 
 void main() {
     ivec2 p = ivec2(gl_FragCoord.xy);
-    float distance = texelFetch(u_Distance, p, 0).r;
-    if (distance <= 0.0) {
+    vec2 depths = texelFetch(u_FarDepth, p, 0).rg;
+    bool translucent = depths.g < 1.0;
+    float depth = translucent ? depths.g : depths.r;
+    if (depth >= 1.0) {
         if (u_Alone != 0) {
             fragColor = vec4(SKY, 1.0);
             return;
@@ -48,8 +54,10 @@ void main() {
     if (u_Alone == 0 && u_UseScene != 0 && texelFetch(u_SceneDepth, p, 0).r < 1.0) {
         discard;
     }
-    vec4 albedo = texelFetch(u_Albedo, p, 0);
-    vec4 data = texelFetch(u_Data, p, 0);
+    vec4 albedo = translucent ? texelFetch(u_TranslucentAlbedo, p, 0) : texelFetch(u_Albedo, p, 0);
+    vec4 data = translucent ? texelFetch(u_TranslucentData, p, 0) : texelFetch(u_Data, p, 0);
+    vec4 view = u_InverseProjection * vec4(gl_FragCoord.xy / u_ScreenSize * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    float distance = length(view.xyz / view.w);
     uint n = uint(round(data.r * 65535.0));
     uint l = uint(round(data.g * 65535.0));
     vec3 normal = octDecode(vec2(float(n >> 8u), float(n & 255u)) / 255.0);

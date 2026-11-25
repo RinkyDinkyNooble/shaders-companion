@@ -10,17 +10,27 @@ final class TextureDemand {
     private static final int IDLE_FRAMES = 30;
 
     private final int group;
+    /** The first update after a start counts the requests so far as old (nothing is wanted until the pack asks again). */
+    private final boolean idleAtStart;
     private long lastRequests = -1;
     private int idleFrames;
 
     TextureDemand(int group) {
+        this(group, false);
+    }
+
+    TextureDemand(int group, boolean idleAtStart) {
         this.group = group;
+        this.idleAtStart = idleAtStart;
     }
 
     /** Counts this frame; true while the pack has asked for the group's textures within the last IDLE_FRAMES frames. */
     boolean update() {
         long requests = CompanionTexture.requests(this.group);
-        if (requests != this.lastRequests) {
+        if (this.idleAtStart && this.lastRequests < 0) {
+            this.lastRequests = requests;
+            this.idleFrames = IDLE_FRAMES + 1;
+        } else if (requests != this.lastRequests) {
             this.lastRequests = requests;
             this.idleFrames = 0;
         } else {

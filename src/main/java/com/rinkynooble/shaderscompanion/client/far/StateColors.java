@@ -46,11 +46,12 @@ import net.minecraftforge.client.model.data.ModelData;
  * untinted ones, the base, alone.
  * <p>
  * Per state id in {@link #info()}: bits 0 to 11 the tint kind of each face (2 bits a face: {@link #TINT_NONE},
- * {@link #TINT_GRASS}, {@link #TINT_FOLIAGE}, {@link #TINT_WATER}), {@link #RESOLVED}, {@link #OTHER_TINT} (a tint
- * that doesn't depend on the biome, such as spruce leaves or a lily pad, already multiplied into the colour), and in
- * bits 16 to 31 the shader pack's {@code block.properties} id plus one (0: none; Oculus's
- * {@code WorldRenderingSettings.getBlockStateIds()}, read again when the pack reloads). The tint kind comes from asking
- * the state's tint provider with a stand-in world that answers each biome colour resolver with a marker.
+ * {@link #TINT_GRASS}, {@link #TINT_FOLIAGE}, {@link #TINT_WATER}; a tint that doesn't depend on the biome, such as
+ * spruce leaves or a lily pad, is already multiplied into the colour), bits 12 to 15 the state's own light emission (0
+ * to 15; M3, for the far data's alpha), and in bits 16 to 31 the shader pack's {@code block.properties} id plus one (0:
+ * none; Oculus's {@code WorldRenderingSettings.getBlockStateIds()}, read again when the pack reloads). The tint kind
+ * comes from asking the state's tint provider with a stand-in world that answers each biome colour resolver with a
+ * marker. Until M3 bits 12 and 13 held a resolved flag and an "other tint" flag that nothing read.
  * <p>
  * Per biome id in {@link #biomeColours()} at {@code id * 4}: the grass colour ({@code Biome.getGrassColor} at 0, 0),
  * the foliage colour and the water colour, RGBA8, and 1 at {@code id * 4 + 3} once worked out.
@@ -66,8 +67,8 @@ public final class StateColors {
     public static final int TINT_GRASS = 1;
     public static final int TINT_FOLIAGE = 2;
     public static final int TINT_WATER = 3;
-    public static final int RESOLVED = 1 << 12;
-    public static final int OTHER_TINT = 1 << 13;
+    /** The light emission's place in {@link #info()}: bits 12 to 15. */
+    public static final int EMISSION_SHIFT = 12;
     private static final int GRASS_MARK = 0x01FE01;
     private static final int FOLIAGE_MARK = 0x02FE02;
     private static final int WATER_MARK = 0x03FE03;
@@ -189,7 +190,7 @@ public final class StateColors {
                     ShadersCompanion.LOGGER.warn("Shaders Companion far terrain: no colour for {} ({}); grey instead (logged once)", ids.state(done), e.toString());
                 }
                 Arrays.fill(colours, done * 6, done * 6 + 6, 0xFF808080);
-                info[done] = RESOLVED | propertyId(ids.state(done)) << 16;
+                info[done] = emission(ids.state(done)) << EMISSION_SHIFT | propertyId(ids.state(done)) << 16;
             }
             long nanos = System.nanoTime() - t0;
             stateNanos += nanos;
@@ -276,7 +277,7 @@ public final class StateColors {
         int base = id * 6;
         if (state == null || state.isAir()) {
             Arrays.fill(colours, base, base + 6, 0);
-            info[id] = RESOLVED;
+            info[id] = 0;
             return;
         }
         BakedModel model = mc.getBlockRenderer().getBlockModel(state);
@@ -294,7 +295,6 @@ public final class StateColors {
             all.add(quad);
         }
         int kinds = 0;
-        boolean other = false;
         if (all.isEmpty() || state.getBlock() instanceof LiquidBlock) {
             // Drawn some other way (a fluid, a block entity renderer): the particle sprite, tinted as its provider says
             TextureAtlasSprite sprite = model.getParticleIcon(ModelData.EMPTY);
@@ -304,7 +304,6 @@ public final class StateColors {
             int rgba = rgba(s[0], s[1], s[2], s[3], s[3]);
             if (kind < 0) {
                 rgba = multiply(rgba, tint);
-                other = true;
                 kind = TINT_NONE;
             }
             for (int f = 0; f < 6; f++) {
@@ -343,7 +342,6 @@ public final class StateColors {
                     kind = kindOf(tint);
                     if (kind < 0) {
                         rgba = multiply(rgba, tint);
-                        other = true;
                         kind = TINT_NONE;
                     }
                 }
@@ -351,7 +349,19 @@ public final class StateColors {
                 kinds |= kind << (2 * f);
             }
         }
-        info[id] = kinds | RESOLVED | (other ? OTHER_TINT : 0) | propertyId(state) << 16;
+        info[id] = kinds | emission(state) << EMISSION_SHIFT | propertyId(state) << 16;
+    }
+
+    /** A state's own light emission, 0 to 15 (Forge's, which modded blocks may override; 0 if it needs more than is at hand). */
+    private static int emission(BlockState state) {
+        if (state == null) {
+            return 0;
+        }
+        try {
+            return Math.max(0, Math.min(15, state.getLightEmission(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO)));
+        } catch (RuntimeException e) {
+            return 0;
+        }
     }
 
     /** RGBA8 (red in the low byte) from premultiplied means and the mean alpha; alpha byte from the coverage. */

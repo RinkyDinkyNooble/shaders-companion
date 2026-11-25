@@ -5,12 +5,14 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import com.rinkynooble.shaderscompanion.client.Config;
+import com.rinkynooble.shaderscompanion.client.FarTextures;
 import com.rinkynooble.shaderscompanion.client.Gl;
 import com.rinkynooble.shaderscompanion.client.GlState;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import net.irisshaders.iris.uniforms.SystemTimeUniforms;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.Mth;
@@ -37,19 +39,23 @@ import org.lwjgl.opengl.GL46C;
 import org.lwjgl.opengl.GLCapabilities;
 
 /**
- * Draws the far terrain (research/lod/M2-PLAN.md, "GPU" and "The debug view"; render thread only) while the debug
- * view is on ({@code farTerrainDebug}, {@code /shaderscompanion far show}):
+ * Draws the far terrain (research/lod/M2-PLAN.md, "GPU"; M3-PLAN.md, "The mod side"; render thread only) while the far
+ * store has it on ({@link FarStore#drawMode}): for the shader pack, which binds its textures ({@link FarTextures}, far
+ * protocol 1, API.md "Far terrain"), or for the debug view when the pack doesn't.
  * <ol>
  * <li>in the frame hook before the world ({@link #render}): the selection compute pass ({@code far_select.csh}) writes
  * the frame's draw commands from the node records in {@link FarGpuBuffers}, then one
  * {@code glMultiDrawElementsIndirect(Count)} per pass and kind (opaque, then water and glass; each for the nodes clear
- * of the chunk terrain and those reaching into it) draws them with vertex pulling ({@code far_terrain.vsh}) into the
- * far layer (4 vertices a quad through a shared index pattern, so the vertex cache shades each corner once): albedo RGBA8,
- * data RGBA16 (normal, light, the {@code block.properties} id, as the views' data), distance R32F and a 32-bit float
- * depth, with reverse Z through {@code glClipControl} (GL 4.5) or else a logarithmic depth, with the main camera and
- * this frame's projection;</li>
- * <li>after the world ({@link #overlay}): the far layer lit simply, over the finished frame where the screen's depth is
- * the sky or farther than the far terrain ({@code far_overlay.fsh}); or alone, for screenshots.</li>
+ * of the chunk terrain and those reaching into it or into the far edge's fade) draws them with vertex pulling
+ * ({@code far_terrain.vsh}; 4 vertices a quad through a shared index pattern, so the vertex cache shades each corner
+ * once) into two layers that share one 32-bit float depth buffer: the opaque layer ({@code far_albedo},
+ * {@code far_data}, {@code far_depth}'s r), then the nearest translucent surface in front of it
+ * ({@code far_translucent_albedo}, {@code far_translucent_data}, {@code far_depth}'s g), with the main camera and this
+ * frame's projection, jittered as the pack jitters its gbuffers when it binds {@code far_info}. The hardware depth is
+ * reverse Z through {@code glClipControl} (GL 4.5) or else logarithmic, for the depth test only; the pack's depth is a
+ * colour output. Then the info texture ({@code far_info}) says what was drawn;</li>
+ * <li>after the world ({@link #overlay}), only while the pack doesn't read the layers: the debug view, the far layers lit
+ * simply over the finished frame where the screen shows sky ({@code far_overlay.fsh}); or alone, for screenshots.</li>
  * </ol>
  * Every GL binding and setting touched is read first and put back ({@link Saved}, {@link GlState}). GPU time of the
  * selection, the draw and the overlay comes from timestamps read a few frames later; the counts of drawn nodes and
@@ -67,6 +73,8 @@ public final class FarRenderer {
     /** Per frame slot: selection start, draw start, draw end, overlay start, overlay end. */
     private static final int STAMPS = 5;
     private static final int HISTORY = 240;
+    /** The far edge's fade starts at this share of the far range. */
+    private static final float FADE_FROM = 0.9F;
 
     /** The debug view shows the far layer alone (not saved; {@code far show alone}). */
     static boolean alone;
@@ -93,10 +101,12 @@ public final class FarRenderer {
     private static final int[][] terrainUniforms = new int[2][];
     private static int[] overlayUniforms;
     private static final String[] SELECT_UNIFORMS = {"u_CameraBlock", "u_CameraFrac", "u_K", "u_Far", "u_TopLevel", "u_ChunkRadius", "u_Planes", "u_RecordCount",
-            "u_Region", "u_OneQuad"};
+            "u_Region", "u_OneQuad", "u_FadeStart"};
     private static final String[] TERRAIN_UNIFORMS = {"u_ViewProjection", "u_CameraBlock", "u_CameraFrac", "u_StateCount", "u_BiomeCount", "u_Translucent",
-            "u_ChunkRadius", "u_LogDepth", "u_Near"};
+            "u_ChunkRadius", "u_LogDepth", "u_Near", "u_Jitter", "u_ViewZ", "u_DepthMapping", "u_FarNear", "u_FadeStart", "u_FarRange", "u_FrameIndex"};
     private static final String[] OVERLAY_UNIFORMS = {"u_InverseProjection", "u_ScreenSize", "u_Alone", "u_UseScene", "u_SunDir", "u_Daylight", "u_FarRange", "u_FogColor"};
+    /** The overlay's texture units: the two layers' albedo and data, the far depth, the scene's depth. */
+    private static final int OVERLAY_UNITS = 6;
 
     private static FarGpuBuffers buffers;
     private static int vao;
@@ -118,19 +128,32 @@ public final class FarRenderer {
     private static final boolean[] overlayStamped = new boolean[RING];
     private static int slot;
 
-    // The far layer
-    private static int framebuffer;
-    private static int albedo;
-    private static int data;
-    private static int distance;
+    // The far layers (their colour textures are FarTextures'; the hardware depth buffer is the mod's own, shared)
+    private static int opaqueFramebuffer;
+    private static int translucentFramebuffer;
     private static int depth;
     private static int layerWidth;
     private static int layerHeight;
 
     // This frame
     private static boolean drewThisFrame;
+    /** The mode this frame's layers were drawn for (FarStore.MODE_*). */
+    private static int drawnFor;
     private static int drawSlot = -1;
     private static final Matrix4f projection = new Matrix4f();
+    /** The far depth's planes this frame (API.md: N and F). */
+    private static float farNear;
+    private static float farFar;
+    /** This frame's far range, for the overlay's haze. */
+    private static float overlayRange;
+    /** Oculus's frame counter this frame, as worked out before the world (its frameCounter uniform's value to come). */
+    private static int frameCounter;
+
+    // The jitter's check: frames drawn for the pack, and those whose frame counter Oculus didn't use after all
+    static long jitterFrames;
+    static long jitterMismatches;
+    /** Frames whose hook made GL calls for the far terrain (drawing, the info texture, the overlay); for the dev checks. */
+    private static long glFrames;
 
     // Statistics (render thread)
     static long selectNanos = -1;
@@ -168,7 +191,7 @@ public final class FarRenderer {
                 String depthDefine = clipControl ? "" : "#define LOG_DEPTH\n";
                 for (int i = 0; i < 2; i++) {
                     terrainPrograms[i] = link("far terrain", compile(GL20C.GL_VERTEX_SHADER, "far_terrain.vsh"),
-                            compile(GL20C.GL_FRAGMENT_SHADER, "far_terrain.fsh", depthDefine + (i == 1 ? "#define CLIP_CHUNKS\n" : "")));
+                            compile(GL20C.GL_FRAGMENT_SHADER, "far_terrain.fsh", depthDefine + (i == 1 ? "#define CLIP\n" : "")));
                     terrainUniforms[i] = uniforms(terrainPrograms[i], TERRAIN_UNIFORMS);
                 }
                 overlayProgram = link("far overlay", compile(GL20C.GL_VERTEX_SHADER, "far_overlay.vsh"), compile(GL20C.GL_FRAGMENT_SHADER, "far_overlay.fsh"));
@@ -265,7 +288,7 @@ public final class FarRenderer {
         return buffers != null;
     }
 
-    /** Frees every buffer and texture (the debug view went off). */
+    /** Frees every buffer and texture (the far terrain went off). */
     static void release() {
         if (buffers != null) {
             buffers.delete();
@@ -304,6 +327,8 @@ public final class FarRenderer {
             overlayVao = 0;
         }
         deleteLayer();
+        // The layers back to 1 x 1 (a pack binding them never gets the missing texture)
+        FarTextures.release();
         selectNanos = drawNanos = overlayNanos = -1;
         nodesDrawn = 0;
         quadsDrawn = 0;
@@ -312,17 +337,17 @@ public final class FarRenderer {
     }
 
     private static void deleteLayer() {
-        if (framebuffer != 0) {
-            GL30C.glDeleteFramebuffers(framebuffer);
-            GL11C.glDeleteTextures(new int[]{albedo, data, distance, depth});
-            framebuffer = albedo = data = distance = depth = 0;
+        if (opaqueFramebuffer != 0) {
+            GL30C.glDeleteFramebuffers(new int[]{opaqueFramebuffer, translucentFramebuffer});
+            GL11C.glDeleteTextures(depth);
+            opaqueFramebuffer = translucentFramebuffer = depth = 0;
             layerWidth = layerHeight = 0;
         }
     }
 
-    /** Video memory of the far layer's textures, in bytes. */
+    /** Video memory of the far layers' textures, in bytes: the five layer textures and the depth buffer. */
     static long layerBytes() {
-        return (long) layerWidth * layerHeight * (4 + 8 + 4 + 4);
+        return FarTextures.layerBytes() + (long) layerWidth * layerHeight * 4;
     }
 
     /** Video memory of the command, counter and readback buffers, in bytes. */
@@ -334,41 +359,91 @@ public final class FarRenderer {
     // The frame
 
     /**
-     * Draws the far terrain into the far layer (the frame hook, before the world). Does nothing unless the far store
-     * has the GPU path on ({@link FarStore#gpuOn}).
+     * Draws the far terrain into the far layers (the frame hook, before the world) and writes the info texture. Does
+     * nothing unless the far store has the GPU path on ({@link FarStore#gpuOn}) and a mode for this frame; then only
+     * says in the info texture that nothing was drawn, if the pack binds it and it says otherwise.
      *
      * @param camera the main camera
      * @param view   the frame's view rotation (the pose the world is drawn with)
      */
     public static void render(Camera camera, Matrix4f view) {
         drewThisFrame = false;
-        if (!FarStore.gpuOn() || buffers == null || paused) {
-            return;
-        }
+        int mode = FarStore.drawMode();
         FarResidency.View v = FarStore.frameView();
         RenderTarget main = Minecraft.getInstance().getMainRenderTarget();
-        if (v == null || main.width <= 0 || main.height <= 0) {
+        if (mode == FarStore.MODE_NONE || !FarStore.gpuOn() || buffers == null || paused || v == null || main.width <= 0 || main.height <= 0) {
+            notDrawn();
             return;
         }
         long start = System.nanoTime();
+        glFrames++;
         Saved saved = Saved.capture();
         try {
             readBack();
             ensureLayer(main.width, main.height);
             ensureCommands();
-            draw(camera, view, v);
+            boolean forPack = mode == FarStore.MODE_PACK || mode == FarStore.MODE_PACK_STILL;
+            // Oculus counts the frame at the head of LevelRenderer.renderLevel, after this hook (720720 is a multiple of 16)
+            frameCounter = (SystemTimeUniforms.COUNTER.getAsInt() + 1) % 720720;
+            int index = frameCounter % 16;
+            float jitterX = 0.0F;
+            float jitterY = 0.0F;
+            if (mode == FarStore.MODE_PACK) {
+                // The pack's taaOffset (Sundial's R2 sequence, shaders.properties), in clip space per unit of w
+                jitterX = (fract(0.5F + index * 0.7548776269F) * 2.0F - 1.0F) / main.width;
+                jitterY = (fract(0.5F + index * 0.5698402524F) * 2.0F - 1.0F) / main.height;
+            }
+            boolean fade = mode == FarStore.MODE_PACK && Config.FAR_EDGE_FADE.get();
+            draw(camera, view, v, jitterX, jitterY, fade ? v.farRange() * FADE_FROM : 0.0F, index);
+            if (forPack) {
+                FarTextures.writeDrawn(frameCounter, farNear, farFar, v.farRange(), chunkRadius(v.renderDistance()), projection.m00(), projection.m11(),
+                        jitterX, jitterY, layerWidth, layerHeight);
+            } else {
+                FarTextures.writeNotDrawn();
+            }
             drewThisFrame = true;
+            drawnFor = mode;
         } catch (RuntimeException e) {
             problem = "stopped after an error: " + e;
             available = false;
             ShadersCompanion.LOGGER.error("Shaders Companion far terrain: drawing stopped after an error", e);
+            FarTextures.writeNotDrawn();
         } finally {
             saved.restore();
         }
         cpuNanos = System.nanoTime() - start;
     }
 
-    private static void draw(Camera camera, Matrix4f view, FarResidency.View v) {
+    /** The info texture says nothing was drawn this frame (written only when the pack binds it and it said otherwise). */
+    private static void notDrawn() {
+        if (!FarTextures.notDrawnPending()) {
+            return;
+        }
+        GlState saved = GlState.capture();
+        try {
+            if (FarTextures.writeNotDrawn()) {
+                glFrames++;
+            }
+        } finally {
+            saved.restore();
+        }
+    }
+
+    private static float fract(float x) {
+        return x - (float) Math.floor(x);
+    }
+
+    /** The far depth's near plane N (API.md): about an eighth of the chunk terrain's radius, which far fragments never come nearer than. */
+    static float farNear(float chunkRadius) {
+        return Math.max(2.0F, chunkRadius / 8.0F);
+    }
+
+    /** The far depth's far plane F: four times the far range, at least 1,024 blocks. */
+    static float farFar(int farRange) {
+        return Math.max(1024.0F, farRange * 4.0F);
+    }
+
+    private static void draw(Camera camera, Matrix4f view, FarResidency.View v, float jitterX, float jitterY, float fadeStart, int frameIndex) {
         Vec3 position = camera.getPosition();
         int bx = Mth.floor(position.x);
         int by = Mth.floor(position.y);
@@ -390,6 +465,9 @@ public final class FarRenderer {
         double k = v.k();
         int top = topLevel(v);
         float chunkRadius = chunkRadius(v.renderDistance());
+        farNear = farNear(chunkRadius);
+        farFar = farFar(v.farRange());
+        overlayRange = v.farRange();
         FarGpuBuffers b = buffers;
         int s = slot;
         // Timestamps only in a slot whose last ones were read (it is 4 frames old by now)
@@ -426,6 +504,7 @@ public final class FarRenderer {
         GL20C.glUniform1i(u[7], b.recordHigh);
         GL20C.glUniform1i(u[8], commandRecords * NodeMesh.RANGES);
         GL20C.glUniform1i(u[9], probe == 2 ? 1 : 0);
+        GL20C.glUniform1f(u[10], fadeStart);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 1, b.records);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 2, commands);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 3, counts);
@@ -437,8 +516,9 @@ public final class FarRenderer {
             GL33C.glQueryCounter(queries[s * STAMPS + 1], GL33C.GL_TIMESTAMP);
         }
 
-        // The draw into the far layer
-        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
+        // The draw into the far layers: the opaque one first (albedo, data, far depth's r), cleared to nothing and the
+        // far depth to 1 in both channels
+        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, opaqueFramebuffer);
         GlStateManager._viewport(0, 0, layerWidth, layerHeight);
         GlStateManager._disableScissorTest();
         GL11C.glDisable(GL11C.GL_STENCIL_TEST);
@@ -449,9 +529,9 @@ public final class FarRenderer {
             clipControl(GL20C.GL_LOWER_LEFT, GL45C.GL_ZERO_TO_ONE);
         }
         float[] zero = {0.0F, 0.0F, 0.0F, 0.0F};
-        for (int i = 0; i < 3; i++) {
-            GL30C.glClearBufferfv(GL11C.GL_COLOR, i, zero);
-        }
+        GL30C.glClearBufferfv(GL11C.GL_COLOR, 0, zero);
+        GL30C.glClearBufferfv(GL11C.GL_COLOR, 1, zero);
+        GL30C.glClearBufferfv(GL11C.GL_COLOR, 2, new float[]{1.0F, 1.0F, 0.0F, 0.0F});
         GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[]{clipControl ? 0.0F : 1.0F});
         GlStateManager._enableDepthTest();
         GlStateManager._depthFunc(clipControl ? GL11C.GL_GREATER : GL11C.GL_LESS);
@@ -481,13 +561,31 @@ public final class FarRenderer {
             GL20C.glUniform1f(t[6], chunkRadius);
             GL20C.glUniform1f(t[7], logDepth);
             GL20C.glUniform1f(t[8], NEAR);
+            GL20C.glUniform2f(t[9], jitterX, jitterY);
+            // The view's z row (gbufferModelView's third row): the protocol's depth is of this z, not the bobbed one
+            GL20C.glUniform4f(t[10], view.m02(), view.m12(), view.m22(), view.m32());
+            GL20C.glUniform2f(t[11], (farFar + farNear) / (farFar - farNear), 2.0F * farFar * farNear / (farFar - farNear));
+            GL20C.glUniform1f(t[12], farNear);
+            GL20C.glUniform1f(t[13], fadeStart);
+            GL20C.glUniform1f(t[14], v.farRange());
+            GL20C.glUniform1i(t[15], frameIndex);
         }
         int max = commandRecords * NodeMesh.RANGES;
         boolean discard = probe == 1 && !GL11C.glIsEnabled(GL30C.GL_RASTERIZER_DISCARD);
         if (discard) {
             GL11C.glEnable(GL30C.GL_RASTERIZER_DISCARD);
         }
+        // The far depth's r only in the opaque pass, its g only in the translucent one (colour masks are per draw buffer)
+        GL30C.glColorMaski(2, true, false, false, false);
         for (int pass = 0; pass < 2; pass++) {
+            if (pass == 1) {
+                // The translucent layer: its own albedo and data, cleared; the far depth's g; the opaque pass's hardware
+                // depth, so the nearest translucent surface in front of the opaque one wins
+                Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, translucentFramebuffer);
+                GL30C.glClearBufferfv(GL11C.GL_COLOR, 0, zero);
+                GL30C.glClearBufferfv(GL11C.GL_COLOR, 1, zero);
+                GL30C.glColorMaski(2, false, true, false, false);
+            }
             for (int variant = 0; variant < 2; variant++) {
                 int region = pass * 2 + variant;
                 Gl.useProgram(terrainPrograms[variant]);
@@ -505,6 +603,8 @@ public final class FarRenderer {
         if (discard) {
             GL11C.glDisable(GL30C.GL_RASTERIZER_DISCARD);
         }
+        // Every draw buffer's mask back to all on, as Minecraft's record (set above) says; GlState puts its own back
+        GL11C.glColorMask(true, true, true, true);
         if (stamp) {
             GL33C.glQueryCounter(queries[s * STAMPS + 2], GL33C.GL_TIMESTAMP);
             drawPending[s] = true;
@@ -552,28 +652,37 @@ public final class FarRenderer {
         return top;
     }
 
+    /**
+     * The layers at this size: FarTextures' five textures (re-specified in place) and the mod's own hardware depth
+     * buffer, in two framebuffers: opaque (far_albedo, far_data, far_depth) and translucent (far_translucent_albedo,
+     * far_translucent_data, far_depth), both with the same depth buffer.
+     */
     private static void ensureLayer(int width, int height) {
-        if (framebuffer != 0 && width == layerWidth && height == layerHeight) {
+        if (opaqueFramebuffer != 0 && width == layerWidth && height == layerHeight) {
             return;
         }
         deleteLayer();
-        albedo = texture(GL11C.GL_RGBA8, width, height);
-        data = texture(GL11C.GL_RGBA16, width, height);
-        distance = texture(GL30C.GL_R32F, width, height);
+        FarTextures.ensureSize(width, height);
         depth = texture(GL30C.GL_DEPTH_COMPONENT32F, width, height);
-        framebuffer = GL30C.glGenFramebuffers();
-        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
+        opaqueFramebuffer = framebuffer(FarTextures.albedo(), FarTextures.data(), "opaque");
+        translucentFramebuffer = framebuffer(FarTextures.translucentAlbedo(), FarTextures.translucentData(), "translucent");
+        layerWidth = width;
+        layerHeight = height;
+    }
+
+    private static int framebuffer(int albedo, int data, String name) {
+        int id = GL30C.glGenFramebuffers();
+        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, id);
         GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, albedo, 0);
         GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT1, GL11C.GL_TEXTURE_2D, data, 0);
-        GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT2, GL11C.GL_TEXTURE_2D, distance, 0);
+        GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT2, GL11C.GL_TEXTURE_2D, FarTextures.depth(), 0);
         GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, depth, 0);
         GL20C.glDrawBuffers(new int[]{GL30C.GL_COLOR_ATTACHMENT0, GL30C.GL_COLOR_ATTACHMENT1, GL30C.GL_COLOR_ATTACHMENT2});
         int status = GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER);
         if (status != GL30C.GL_FRAMEBUFFER_COMPLETE) {
-            throw new IllegalStateException("far layer framebuffer incomplete: 0x" + Integer.toHexString(status));
+            throw new IllegalStateException("far " + name + " layer framebuffer incomplete: 0x" + Integer.toHexString(status));
         }
-        layerWidth = width;
-        layerHeight = height;
+        return id;
     }
 
     /** A screen-sized texture (bound on the active unit, unit 0 here: the saved state puts unit 0 back). */
@@ -700,6 +809,15 @@ public final class FarRenderer {
             return;
         }
         drewThisFrame = false;
+        if (drawnFor == FarStore.MODE_PACK || drawnFor == FarStore.MODE_PACK_STILL) {
+            // Drawn for the pack: no overlay. Oculus counted this frame at the head of the world's rendering: the info
+            // texture's frame counter (and the jitter) should be the one it used
+            jitterFrames++;
+            if (SystemTimeUniforms.COUNTER.getAsInt() != frameCounter) {
+                jitterMismatches++;
+            }
+            return;
+        }
         Minecraft mc = Minecraft.getInstance();
         RenderTarget main = mc.getMainRenderTarget();
         if (main.width != layerWidth || main.height != layerHeight) {
@@ -709,10 +827,10 @@ public final class FarRenderer {
         int s = drawSlot;
         GlState saved = GlState.capture();
         int vaoBefore = GL11C.glGetInteger(GL30C.GL_VERTEX_ARRAY_BINDING);
-        int[] textures = new int[4];
-        int[] samplers = new int[4];
+        int[] textures = new int[OVERLAY_UNITS];
+        int[] samplers = new int[OVERLAY_UNITS];
         try {
-            for (int unit = 0; unit < 4; unit++) {
+            for (int unit = 0; unit < OVERLAY_UNITS; unit++) {
                 GL13C.glActiveTexture(GL13C.GL_TEXTURE0 + unit);
                 textures[unit] = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
                 samplers[unit] = GL11C.glGetInteger(GL33C.GL_SAMPLER_BINDING);
@@ -732,8 +850,8 @@ public final class FarRenderer {
                 overlayVao = GL30C.glGenVertexArrays();
             }
             int sceneDepth = alone ? 0 : main.getDepthTextureId();
-            int[] bind = {albedo, data, distance, sceneDepth};
-            for (int unit = 0; unit < 4; unit++) {
+            int[] bind = {FarTextures.albedo(), FarTextures.data(), FarTextures.translucentAlbedo(), FarTextures.translucentData(), FarTextures.depth(), sceneDepth};
+            for (int unit = 0; unit < OVERLAY_UNITS; unit++) {
                 Gl.activeTexture(GL13C.GL_TEXTURE0 + unit);
                 Gl.bindTexture(bind[unit]);
                 GL33C.glBindSampler(unit, sampler);
@@ -755,7 +873,10 @@ public final class FarRenderer {
             GlStateManager._colorMask(true, true, true, true);
             Gl.useProgram(overlayProgram);
             int[] u = overlayUniforms;
-            GL20C.glUniformMatrix4fv(u[0], false, new Matrix4f(projection).invert().get(new float[16]));
+            // The protocol's inverse projection (API.md): the frame's, with [2].w and [3].w from the far depth's N and F
+            Matrix4f inverse = new Matrix4f(projection).invert();
+            inverse.m23(-(farFar - farNear) / (2.0F * farFar * farNear)).m33((farFar + farNear) / (2.0F * farFar * farNear));
+            GL20C.glUniformMatrix4fv(u[0], false, inverse.get(new float[16]));
             GL20C.glUniform2f(u[1], main.width, main.height);
             GL20C.glUniform1i(u[2], alone ? 1 : 0);
             GL20C.glUniform1i(u[3], sceneDepth != 0 ? 1 : 0);
@@ -765,7 +886,7 @@ public final class FarRenderer {
             GL20C.glUniform3f(u[4], -Mth.sin(sunAngle), Mth.cos(sunAngle), 0.0f);
             float daylight = mc.level == null ? 1.0f : Mth.clamp((mc.level.getSkyDarken(partial) - 0.2f) / 0.8f, 0.0f, 1.0f);
             GL20C.glUniform1f(u[5], daylight);
-            GL20C.glUniform1f(u[6], Config.FAR_RANGE.get());
+            GL20C.glUniform1f(u[6], overlayRange);
             // The vanilla fog colour of this frame (FogRenderer: time of day, weather, biome, sunsets)
             float[] fogColor = RenderSystem.getShaderFogColor();
             GL20C.glUniform3f(u[7], Mth.clamp(fogColor[0], 0.0f, 1.0f), Mth.clamp(fogColor[1], 0.0f, 1.0f), Mth.clamp(fogColor[2], 0.0f, 1.0f));
@@ -776,7 +897,7 @@ public final class FarRenderer {
                 overlayStamped[s] = true;
             }
         } finally {
-            for (int unit = 3; unit >= 0; unit--) {
+            for (int unit = OVERLAY_UNITS - 1; unit >= 0; unit--) {
                 GL33C.glBindSampler(unit, samplers[unit] != 0 && GL33C.glIsSampler(samplers[unit]) ? samplers[unit] : 0);
                 if (unit > 0) {
                     Gl.activeTexture(GL13C.GL_TEXTURE0 + unit);
@@ -795,18 +916,22 @@ public final class FarRenderer {
     /** The status line's GPU part. */
     static String status() {
         if (problem != null) {
-            return "the debug view can't draw: " + problem;
+            return "the far terrain can't draw: " + problem;
         }
         FarGpuBuffers b = buffers;
         if (b == null) {
-            return "the debug view has nothing on the GPU yet";
+            return "nothing on the GPU yet";
         }
-        return String.format("%d meshes on the GPU (%.1f MB of %.0f MB%s), %d drawn (%d quads, %d draws), GPU %s (selection %s, draw %s, overlay %s), "
-                        + "uploads %.1f MB a second%s, render thread %.0f us a frame for the draw, %.0f for the overlay%s", b.meshesOnGpu(),
+        boolean forPack = drawnFor == FarStore.MODE_PACK || drawnFor == FarStore.MODE_PACK_STILL;
+        String overlay = forPack ? "" : String.format(", overlay %s", ms(overlayNanos));
+        String jitter = jitterFrames == 0 ? "" : String.format("; the frame counter was Oculus's in %d of %d frames drawn for the pack", jitterFrames - jitterMismatches,
+                jitterFrames);
+        return String.format("%d meshes on the GPU (%.1f MB of %.0f MB%s), %d drawn (%d quads, %d draws), GPU %s (selection %s, draw %s%s), "
+                        + "uploads %.1f MB a second%s, render thread %.0f us a frame for the draw%s%s%s", b.meshesOnGpu(),
                 b.geometryBytesUsed() / 1048576.0, b.geometryBytes / 1048576.0, b.dirtyCount() > 0 ? ", " + b.dirtyCount() + " waiting to upload" : "",
-                nodesDrawn, quadsDrawn, commandsDrawn, ms(selectNanos < 0 ? -1 : selectNanos + drawNanos), ms(selectNanos), ms(drawNanos), ms(overlayNanos),
-                b.lastSecondBytes / 1048576.0, b.noRoom > 0 ? ", " + b.noRoom + " meshes didn't fit" : "", cpuNanos / 1.0e3, overlayCpuNanos / 1.0e3,
-                alone ? "; shown alone" : "");
+                nodesDrawn, quadsDrawn, commandsDrawn, ms(selectNanos < 0 ? -1 : selectNanos + drawNanos), ms(selectNanos), ms(drawNanos), overlay,
+                b.lastSecondBytes / 1048576.0, b.noRoom > 0 ? ", " + b.noRoom + " meshes didn't fit" : "", cpuNanos / 1.0e3,
+                forPack ? "" : String.format(", %.0f for the overlay", overlayCpuNanos / 1.0e3), jitter, alone ? "; shown alone" : "");
     }
 
     private static String ms(long nanos) {
@@ -852,7 +977,22 @@ public final class FarRenderer {
         return out;
     }
 
-    /** Dev checks: the video memory of the far terrain's buffers and the far layer, in bytes: geometry allocated, geometry used, everything. */
+    /** Dev checks: frames drawn for the pack so far, and those whose frame counter wasn't the one Oculus used. */
+    public static long[] jitterForChecks() {
+        return new long[]{jitterFrames, jitterMismatches};
+    }
+
+    /** Dev checks: frames whose hook made GL calls for the far terrain so far (drawing, the info texture). */
+    public static long glFramesForChecks() {
+        return glFrames;
+    }
+
+    /** Dev checks: this frame's far depth planes N and F and Oculus's frame counter as worked out before the world. */
+    public static float[] depthPlanesForChecks() {
+        return new float[]{farNear, farFar, frameCounter};
+    }
+
+    /** Dev checks: the video memory of the far terrain's buffers and the far layers, in bytes: geometry allocated, geometry used, everything. */
     public static long[] memoryForChecks() {
         FarGpuBuffers b = buffers;
         if (b == null) {
@@ -907,6 +1047,10 @@ public final class FarRenderer {
             }
             GL15C.glBindBuffer(GL31C.GL_COPY_READ_BUFFER, alive(copyRead));
             GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, alive(copyWrite));
+            // The draw's per draw buffer colour masks: every buffer to all on, in Minecraft's record and in GL, so GlState
+            // puts the saved mask back on all of them (also after an error between the two)
+            GlStateManager._colorMask(true, true, true, true);
+            GL11C.glColorMask(true, true, true, true);
             // GlState unbinds the vertex array (and tells Minecraft's buffer uploader); the real one goes back after it
             state.restore();
             GlStateManager._glBindVertexArray(vao != 0 && GL30C.glIsVertexArray(vao) ? vao : 0);

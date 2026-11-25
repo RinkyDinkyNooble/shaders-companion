@@ -5,6 +5,7 @@ import com.rinkynooble.shaderscompanion.client.Config;
 import com.rinkynooble.shaderscompanion.client.CubeDump;
 import com.rinkynooble.shaderscompanion.client.CubeView;
 import com.rinkynooble.shaderscompanion.client.DebugOverlay;
+import com.rinkynooble.shaderscompanion.client.FarTextures;
 import com.rinkynooble.shaderscompanion.client.far.FarRenderer;
 import com.rinkynooble.shaderscompanion.client.far.FarStore;
 import net.irisshaders.iris.Iris;
@@ -359,8 +360,10 @@ public final class DevRun {
             // -PdevFarNoStale: sections next to an opened voxel are not marked stale (the tunnel check's negative control)
             FarStore.markStaleForChecks(!Boolean.getBoolean("shaderscompanion.devFarNoStale"));
             if (FAR_DRAW) {
-                // M2b: the debug view on for the run (meshing follows it)
+                // M2b, M3a: far terrain on for the run (for the pack when it binds the far textures, else the debug view;
+                // meshing follows it); -PdevFarOverlay: the debug view even while the pack binds them
                 FarStore.drawForChecks(true);
+                FarStore.overlayForChecks(FAR_OVERLAY);
             }
             if (FAR_MESH || FAR_DRAW) {
                 // M2a: the far terrain meshed for the run, at -PdevFarRange (the config's by default), corner shading with -PdevFarCornerShading
@@ -1666,14 +1669,24 @@ public final class DevRun {
             farRefTick = ticks;
         } else if (phase == 9) {
             // -PdevFarSearch: the search runs on the server and quits
-        } else if ((phase == 1 || phase >= 10) && far && FAR_STORE) {
+        } else if ((phase == 1 || phase >= 10) && far && FAR_STORE && !FAR_DH_SHOT) {
             farStoreCheck(mc);
         } else if (phase == 1 && far && FAR_DH_SHOT) {
-            // -PdevFarDhShot: one shot once Distant Horizons has settled, for comparing with the far terrain's (M2b)
-            if (farSettled(mc)) {
+            // -PdevFarDhShot: one shot once Distant Horizons has settled, for comparing with the far terrain's (M2b); with
+            // -PdevFarStore -PdevFarDraw the far terrain is on too and must draw nothing (M3a: farTerrain = auto)
+            if (ticks - phaseTick == 200 && FAR_DRAW) {
+                dhGlFramesFrom = FarRenderer.glFramesForChecks();
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene with Distant Horizons: Far terrain: {}", FarStore.terrainStatus());
+            }
+            if (farSettled(mc) && (!FAR_DRAW || ticks - phaseTick > 200)) {
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-" + System.getProperty("shaderscompanion.devTag", "run") + "-dh.png",
                         mc.getMainRenderTarget(), message -> { });
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene: Distant Horizons shot taken | {} | {}", vram(), farProbe(mc, true));
+                if (FAR_DRAW) {
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene with Distant Horizons drawing: frames whose hook made far terrain GL calls "
+                                    + "since 10 s in: {} (of {} s); Far terrain: {} | Far store: {}", FarRenderer.glFramesForChecks() - dhGlFramesFrom,
+                            (ticks - phaseTick - 200) / 20, FarStore.terrainStatus(), FarStore.status());
+                }
                 phase = 2000;
                 phaseTick = ticks;
             }
@@ -3412,8 +3425,34 @@ public final class DevRun {
     private static final boolean FAR_DRAW = Boolean.getBoolean("shaderscompanion.devFarDraw");
     /** -PdevFarDhShot: the far scene with Distant Horizons takes one shot once it has settled, and quits. */
     private static final boolean FAR_DH_SHOT = Boolean.getBoolean("shaderscompanion.devFarDhShot");
+    /** -PdevFarOverlay (M3a): the debug view even while the pack binds the far textures. */
+    private static final boolean FAR_OVERLAY = Boolean.getBoolean("shaderscompanion.devFarOverlay");
+    /** -PdevFarShort (M3a): no second round with level 0's caves filled. */
+    private static final boolean FAR_SHORT = Boolean.getBoolean("shaderscompanion.devFarShort");
+    /** -PdevFarDim: the far terrain check ends with a trip to the Nether and back (M3a: nothing drawn there). */
+    private static final boolean FAR_DIM = Boolean.getBoolean("shaderscompanion.devFarDim");
+    private static long dhGlFramesFrom;
+    private static long dimGlFramesFrom;
+    private static long[] jitterFrom;
+
     private static String drawTag() {
         return phase < 84 ? "caves" : "filled";
+    }
+
+    /** The far terrain is drawn for the shader pack this frame (it binds the far textures). */
+    private static boolean forPack() {
+        return FarStore.drawMode() == FarStore.MODE_PACK || FarStore.drawMode() == FarStore.MODE_PACK_STILL;
+    }
+
+    /** The info texture's 16 floats as a log line (M3a). */
+    private static String infoLine() {
+        float[] f = FarTextures.infoForChecks();
+        StringBuilder s = new StringBuilder();
+        for (int i = 0; i < 4; i++) {
+            s.append(i == 0 ? "" : ", ").append(String.format("texel %d (%s, %s, %s, %s)", i, f[i * 4], f[i * 4 + 1], f[i * 4 + 2], f[i * 4 + 3]));
+        }
+        float[] planes = FarRenderer.depthPlanesForChecks();
+        return s.append(String.format("; this frame N %s, F %s, Oculus's frame counter worked out %d", planes[0], planes[1], (int) planes[2])).toString();
     }
 
     /**
@@ -3458,7 +3497,13 @@ public final class DevRun {
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-" + drawTag() + "-alone.png", mc.getMainRenderTarget(), message -> { });
                 FarRenderer.aloneForChecks(false);
             } else if (t == 60) {
-                Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-" + drawTag() + "-over.png", mc.getMainRenderTarget(), message -> { });
+                // M3a: with the pack reading the far terrain this is the pack's frame (the debug view stays off)
+                boolean pack = forPack();
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-" + drawTag() + (pack ? "-pack.png" : "-over.png"), mc.getMainRenderTarget(), message -> { });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain {} shot: Far terrain: {}", pack ? "pack" : "over", FarStore.terrainStatus());
+                if (pack) {
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain info texture: {}", infoLine());
+                }
             } else if (t >= 80) {
                 phase++;
                 phaseTick = ticks;
@@ -3466,7 +3511,12 @@ public final class DevRun {
         } else if (phase == 82 || phase == 86) {
             if (t == 1) {
                 FarRenderer.historyForChecks();
+                jitterFrom = FarRenderer.jitterForChecks();
             } else if (t == 200) {
+                long[] jitter = FarRenderer.jitterForChecks();
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain path ({}): {}; frames drawn for the pack {}, of them with another frame counter than "
+                                + "Oculus's {}; info texture: {}", drawTag(), forPack() ? "for the shader pack" : "debug view", jitter[0] - jitterFrom[0], jitter[1] - jitterFrom[1],
+                        infoLine());
                 long[] h = FarRenderer.historyForChecks();
                 long[] memory = FarRenderer.memoryForChecks();
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain timing ({}, render distance {}): over {} frames, the far terrain's GPU time: selection {} ms "
@@ -3490,7 +3540,12 @@ public final class DevRun {
                         ms(h[0]), ms(h[2]), h[14], h[8]);
                 FarRenderer.probeForChecks(t == 600 ? 2 : 0);
             } else if (t >= 840) {
-                if (phase == 82) {
+                if (phase == 82 && FAR_SHORT) {
+                    phase = FAR_DIM ? 88 : 87;
+                    if (!FAR_DIM) {
+                        FarStore.drawForChecks(false);
+                    }
+                } else if (phase == 82) {
                     // The same with level 0's caves filled: everything meshed again
                     FarStore.caveFillFromForChecks(0);
                     // A new residency counts its fills from 0
@@ -3499,10 +3554,39 @@ public final class DevRun {
                     FarStore.restartMeshingForChecks();
                     FarStore.gpuNumbersForChecks(true);
                     phase = 84;
+                } else if (FAR_DIM) {
+                    phase = 88;
                 } else {
                     FarStore.drawForChecks(false);
                     phase = 87;
                 }
+                phaseTick = ticks;
+            }
+        } else if (phase == 88) {
+            // M3a: the Nether has no sky light, so the far terrain draws nothing there and the hook makes no GL call
+            if (t == 1) {
+                mc.player.connection.sendCommand("execute in minecraft:the_nether run tp @s 0.5 120 0.5");
+            } else if (t == 200) {
+                dimGlFramesFrom = FarRenderer.glFramesForChecks();
+            } else if (t % 100 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain in {} {} s: Far terrain: {} | Far store: {}", mc.level.dimension().location(), t / 20,
+                        FarStore.terrainStatus(), FarStore.status());
+            }
+            if (t == 400) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain in {}: frames whose hook made far terrain GL calls from 10 s in: {} (of 10 s); "
+                        + "its buffers {} MB", mc.level.dimension().location(), FarRenderer.glFramesForChecks() - dimGlFramesFrom, FarRenderer.memoryForChecks()[2] >> 20);
+                mc.player.connection.sendCommand("execute in minecraft:overworld run tp @s " + FAR_X + ".5 " + farY + " " + FAR_Z + ".5 " + FAR_YAW + " " + FAR_PITCH);
+                phase = 89;
+                phaseTick = ticks;
+            }
+        } else if (phase == 89) {
+            if (t % 100 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain back in {} {} s: Far terrain: {}", mc.level.dimension().location(), t / 20,
+                        FarStore.terrainStatus());
+            }
+            if (t >= 600) {
+                FarStore.drawForChecks(false);
+                phase = 87;
                 phaseTick = ticks;
             }
         } else if (phase == 87) {

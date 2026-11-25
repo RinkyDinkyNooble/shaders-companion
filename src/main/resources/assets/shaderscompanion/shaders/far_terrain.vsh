@@ -3,7 +3,9 @@
 // Far terrain quads by vertex pulling (research/lod/M2-PLAN.md, "GPU"): no vertex attributes but the record, from
 // the draw's base instance through a per-instance attribute. Drawn through a shared index pattern (4 vertices a quad,
 // the command's base vertex its range's first quad times 4), so gl_VertexID / 4 is the quad in the geometry buffer and
-// gl_VertexID % 4 its corner, and the vertex cache runs this once per corner. Quad layout: NodeMesh.
+// gl_VertexID % 4 its corner, and the vertex cache runs this once per corner. Quad layout: NodeMesh. Writes the far
+// data as API.md's "Far terrain" defines it (normal, light, the block.properties id, the light emission) and the
+// view-space z for the protocol's depth; jittered for the shader pack's TAA as its gbuffers are.
 
 layout(std430, binding = 0) readonly buffer Geometry { uint geometry[]; };
 layout(std430, binding = 1) readonly buffer Records { int records[]; };
@@ -19,8 +21,11 @@ uniform vec3 u_CameraFrac;
 uniform int u_StateCount;      // states with colours (others draw grey)
 uniform int u_BiomeCount;      // biomes with colours
 uniform int u_Translucent;     // 1 in the water and glass pass
+uniform vec2 u_Jitter;         // added to clip-space x and y (times w): the pack's TAA offset, 0 without
+uniform vec4 u_ViewZ;          // the view matrix's z row (gbufferModelView's): view-space z of a camera-relative position
 
 out vec3 v_Position;
+out float v_ViewZ;
 flat out vec4 v_Albedo;
 flat out vec4 v_Data;
 
@@ -68,7 +73,9 @@ void main() {
     p[V_AXIS[dir]] += corner >= 2 ? int((w0 >> 20) & 31u) + 1 : 0;
     vec3 position = vec3(origin - u_CameraBlock + p * (1 << level)) - u_CameraFrac;
     v_Position = position;
+    v_ViewZ = dot(u_ViewZ, vec4(position, 1.0));
     gl_Position = u_ViewProjection * vec4(position, 1.0);
+    gl_Position.xy += u_Jitter * gl_Position.w;
 
     uint entry = geometry[paletteBase + int(w1 & 0x3FFFu)];
     uint state = entry & 0xFFFFFu;
@@ -90,6 +97,8 @@ void main() {
     v_Albedo = albedo;
     uint light = (w1 >> 14) & 255u;
     vec2 oct = octEncode(NORMAL[dir]);
-    // As the views' data texture (API.md): normal, light (block high, sky low), block.properties id + 1, 0 for LODs
-    v_Data = vec4(pack88(oct.x, oct.y), pack88(float(light & 15u) / 15.0, float(light >> 4) / 15.0), float(stateInfo >> 16) / 65535.0, 0.0);
+    // As the views' data texture (API.md): normal, light (block high, sky low), block.properties id + 1, the block's own
+    // light emission / 15
+    v_Data = vec4(pack88(oct.x, oct.y), pack88(float(light & 15u) / 15.0, float(light >> 4) / 15.0), float(stateInfo >> 16) / 65535.0,
+            float((stateInfo >> 12) & 15u) / 15.0);
 }

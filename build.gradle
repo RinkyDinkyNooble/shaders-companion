@@ -316,7 +316,11 @@ minecraft {
             // gpu-lods M2b: -PdevFarDraw (the far store check draws the far terrain in its debug view: the join's fill and
             // uploads, shots alone and over the frame, timings with caves kept and then filled, the view hidden), -PdevFarDhShot
             // (the far scene with -PdevDh takes one shot once Distant Horizons has settled, and quits).
-            ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort', 'devFarDraw', 'devFarDhShot'].each { name ->
+            // gpu-lods M3a (research/lod/M3.md): -PdevFarDraw now means far terrain on for the run (for the shader pack when it
+            // binds the far textures, else the debug view); -PdevFarOverlay forces the debug view (comparison shots);
+            // -PdevFarShort skips the round with level 0's caves filled; -PdevFarDim (with -PdevFarDraw) ends with a trip to the
+            // Nether and back (no sky light: nothing drawn).
+            ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort', 'devFarDraw', 'devFarDhShot', 'devFarOverlay', 'devFarShort'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", 'true'
                 }
