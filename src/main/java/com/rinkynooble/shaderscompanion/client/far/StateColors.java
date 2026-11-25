@@ -84,6 +84,8 @@ public final class StateColors {
     private static volatile boolean modelsChanged;
 
     // Render thread
+    /** The id of still water (the far mesher's state for every water voxel), -1 until its colour is worked out. */
+    private static int waterState = -1;
     private static StateIds ids;
     private static BiomeIds biomes;
     private static ClientLevel level;
@@ -123,6 +125,11 @@ public final class StateColors {
         return biomeColours;
     }
 
+    /** The id of still water, the far mesher's state for every water voxel; -1 while unknown (render thread). */
+    static int waterState() {
+        return waterState;
+    }
+
     /** State ids below this have their colours (any thread). */
     public static int resolvedStates() {
         return resolvedStates;
@@ -148,6 +155,7 @@ public final class StateColors {
             resolvedStates = 0;
             resolvedBiomes = 0;
             fillStart = System.nanoTime();
+            waterState = -1;
             version++;
         }
         Object2IntMap<BlockState> properties = WorldRenderingSettings.INSTANCE.getBlockStateIds();
@@ -191,6 +199,9 @@ public final class StateColors {
                 }
                 Arrays.fill(colours, done * 6, done * 6 + 6, 0xFF808080);
                 info[done] = emission(ids.state(done)) << EMISSION_SHIFT | propertyId(ids.state(done)) << 16;
+            }
+            if (ids.state(done) == Blocks.WATER.defaultBlockState()) {
+                waterState = done;
             }
             long nanos = System.nanoTime() - t0;
             stateNanos += nanos;

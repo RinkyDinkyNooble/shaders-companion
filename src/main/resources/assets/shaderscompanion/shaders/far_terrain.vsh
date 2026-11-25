@@ -5,7 +5,8 @@
 // the command's base vertex its range's first quad times 4), so gl_VertexID / 4 is the quad in the geometry buffer and
 // gl_VertexID % 4 its corner, and the vertex cache runs this once per corner. Quad layout: NodeMesh. Writes the far
 // data as API.md's "Far terrain" defines it (normal, light, the block.properties id, the light emission) and the
-// view-space z for the protocol's depth; jittered for the shader pack's TAA as its gbuffers are.
+// view-space z for the protocol's depth; jittered for the shader pack's TAA as its gbuffers are. Compiled with VIEW for
+// the mod's own views (FarViews, far_view.fsh): no jitter, and a mirror view's cut plane as a clip distance.
 
 layout(std430, binding = 0) readonly buffer Geometry { uint geometry[]; };
 layout(std430, binding = 1) readonly buffer Records { int records[]; };
@@ -25,6 +26,11 @@ uniform vec2 u_Jitter;         // added to clip-space x and y (times w): the pac
 uniform vec4 u_ViewZ;          // the view matrix's z row (gbufferModelView's): view-space z of a camera-relative position
 uniform float u_PlantShade;    // a planted face's colour factor (word 1's top bit: a level-0 up face with a plant on it)
 uniform vec2 u_PlantFade;      // the factor fades out from x to y blocks, before level 0 ends (coarser levels know no plants)
+#ifdef VIEW
+uniform vec4 u_ClipPlane;      // a mirror view's cut plane for camera-relative positions, drawn where it is 0 or more; (0, 0, 0, 1) for none
+uniform int u_WaterState;      // the far water's state id (-1 while unknown)
+uniform float u_WaterCut;      // 1 for a level mirror plane: far water less than a voxel above it is the mirror's own water
+#endif
 
 out vec3 v_Position;
 out float v_ViewZ;
@@ -77,7 +83,9 @@ void main() {
     v_Position = position;
     v_ViewZ = dot(u_ViewZ, vec4(position, 1.0));
     gl_Position = u_ViewProjection * vec4(position, 1.0);
+#ifndef VIEW
     gl_Position.xy += u_Jitter * gl_Position.w;
+#endif
 
     uint entry = geometry[paletteBase + int(w1 & 0x3FFFu)];
     uint state = entry & 0xFFFFFu;
@@ -107,4 +115,10 @@ void main() {
     // light emission / 15
     v_Data = vec4(pack88(oct.x, oct.y), pack88(float(light & 15u) / 15.0, float(light >> 4) / 15.0), float(stateInfo >> 16) / 65535.0,
             float((stateInfo >> 12) & 15u) / 15.0);
+#ifdef VIEW
+    // Far water stands a voxel high (level 0's a block, 1/9 above the water's surface; coarser levels round the sea up to
+    // their voxel's top): within a voxel above a level mirror plane it is the mirror's own water, cut with what lies behind
+    float lift = int(state) == u_WaterState ? u_WaterCut * float(1 << level) : 0.0;
+    gl_ClipDistance[0] = dot(u_ClipPlane.xyz, position) + u_ClipPlane.w - lift;
+#endif
 }

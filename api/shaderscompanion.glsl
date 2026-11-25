@@ -23,9 +23,9 @@ const int SC_PROTOCOL = 2;
 const int SC_MIRROR_PROTOCOL = 3;
 
 // What a texel shows (ScSurface.kind)
-const int SC_BLOCK = 0;   // terrain from the chunk meshes; id = block.properties id, -1 when not listed
+const int SC_BLOCK = 0;   // terrain from the chunk meshes or the mod's far terrain (3.0.0); id = block.properties id, -1 when not listed
 const int SC_ENTITY = 1;  // mobs, players, items and block entities; id = entity.properties id, -1 when not listed
-const int SC_LOD = 2;     // Distant Horizons far terrain; id = Distant Horizons' block material (6 lava, 12 water, 15 light source)
+const int SC_LOD = 2;     // Distant Horizons far terrain (Shaders Companion 2.x only); id = Distant Horizons' block material (6 lava, 12 water, 15 light source)
 
 struct ScSurface {
     bool hit;          // false: nothing drawn in that direction
@@ -75,7 +75,7 @@ bool sc_linked() {
     return abs(header.x - 4242.0) < 0.5 && abs(header.y - float(SC_PROTOCOL)) < 0.5 && header.z > 0.0;
 }
 
-// Range of the chunk terrain and of Distant Horizons' far terrain (0 without it), in blocks.
+// Range of the chunk terrain (horizontal) and of the far terrain in the faces drawn this frame (from the camera; 0 without it), in blocks.
 vec2 sc_ranges() {
     return texelFetch(scInfo, ivec2(7, 0), 0).zw;
 }

@@ -3,6 +3,7 @@ package com.rinkynooble.shaderscompanion.client;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
+import com.rinkynooble.shaderscompanion.client.far.FarViews;
 import java.nio.FloatBuffer;
 import java.util.ArrayDeque;
 import java.util.Map;
@@ -62,7 +63,6 @@ public final class CubeView {
     static int entitiesDrawn;
     static int blockEntitiesDrawn;
     static int entitiesReused;
-    static int lodRange;
     static boolean mirrorPlayerDrawn;
     static boolean hookCalled;
 
@@ -105,6 +105,8 @@ public final class CubeView {
         hookCalled = true;
         hookFrame++;
         collectAfterFrame = false;
+        // Whether the pack reads the views, for the far store's next frame (set again below while it does)
+        FarViews.viewsRead(false);
         if (failed) {
             return;
         }
@@ -213,6 +215,7 @@ public final class CubeView {
             status = "the shader pack doesn't read the cube";
             return 0;
         }
+        FarViews.viewsRead(true);
         SodiumWorldRenderer worldRenderer = SodiumWorldRenderer.instanceNullable();
         RenderSectionManager sections = worldRenderer == null ? null : EmbeddiumAccess.sectionManager(worldRenderer);
         if (sections == null) {
@@ -240,10 +243,10 @@ public final class CubeView {
             requestBuilds(sections, regions, cameraPos, maxDistance);
             int faces = wantCube ? Config.FACES_PER_FRAME.get() : 0;
 
-            float lodDistance = ViewRenderer.collectLods(mc);
-            lodRange = (int) lodDistance;
-            // Far enough for the range's corners and for the full build height straight up or down.
-            float far = Math.max(maxDistance, lodDistance) * 1.75F + 512.0F;
+            // The far terrain in the views reaches the far range (FarViews); the far plane is far enough for the range's
+            // corners and for the full build height straight up or down
+            int farRange = FarViews.range();
+            float far = Math.max(maxDistance, farRange) * 1.75F + 512.0F;
             lastFar = far;
             lastMaxDistance = maxDistance;
             boolean mirror = wantMirror && MirrorView.update(mc, camera, view, new Matrix4f(RenderSystem.getProjectionMatrix()), NEAR, far, maxDistance,
@@ -263,33 +266,41 @@ public final class CubeView {
 
             cubeTarget.bind();
             ViewRenderer.beginFrame(NEAR, far);
-            for (int i = 0; i < faces; i++) {
-                int face = nextFace;
-                nextFace = (nextFace + 1) % 6;
-                drawFace(face, size, cameraPos, maxDistance, lodDistance, far, regions);
-                faceOrigin[face][0] = cameraPos.x;
-                faceOrigin[face][1] = cameraPos.y;
-                faceOrigin[face][2] = cameraPos.z;
-                faceFrame[face] = frameCounter;
-            }
-            long mirrorStart = System.nanoTime();
-            if (mirror) {
-                MirrorView.draw(cameraPos, maxDistance, lodDistance, regions, behindDemand.wanted());
+            boolean farViews = FarViews.beginFrame(faces + (mirror ? MirrorView.activePlanes() : 0));
+            long mirrorStart;
+            try {
+                for (int i = 0; i < faces; i++) {
+                    int face = nextFace;
+                    nextFace = (nextFace + 1) % 6;
+                    drawFace(face, size, cameraPos, maxDistance, far, regions, farViews);
+                    faceOrigin[face][0] = cameraPos.x;
+                    faceOrigin[face][1] = cameraPos.y;
+                    faceOrigin[face][2] = cameraPos.z;
+                    faceFrame[face] = frameCounter;
+                }
+                mirrorStart = System.nanoTime();
+                if (mirror) {
+                    MirrorView.draw(cameraPos, regions, behindDemand.wanted(), farViews);
+                }
+            } finally {
+                if (farViews) {
+                    FarViews.endFrame();
+                }
             }
             mirrorNanos = System.nanoTime() - mirrorStart;
-            Lods.clear();
             GpuTimer.end();
             cpuNanos = System.nanoTime() - start;
             frameCounter++;
             int drew = 0;
-            float lodInfoRange = ViewRenderer.lodsCollected() ? (float) lodRange : 0.0F;
+            // The far terrain's range in the views' info (0 when they hold none this frame)
+            float farInfoRange = FarViews.drewThisFrame() ? (float) farRange : 0.0F;
             if (wantCube) {
-                writeInfo(cameraPos, lodInfoRange);
+                writeInfo(cameraPos, farInfoRange);
                 linked = true;
                 drew |= DREW_CUBE;
             }
             if (wantMirror) {
-                MirrorView.writeInfo(frameCounter, NEAR, far, maxDistance, lodInfoRange);
+                MirrorView.writeInfo(frameCounter, NEAR, far, maxDistance, farInfoRange);
                 drew |= DREW_MIRROR;
             }
             status = wantCube ? "drawing" : "drawing the mirror view only";
@@ -311,11 +322,6 @@ public final class CubeView {
     /** The current face size in pixels (0 before the first frame). */
     public static int faceSizeForChecks() {
         return faceSize;
-    }
-
-    /** Distant Horizons' range in the last frame, 0 without LODs. */
-    public static int lodRangeForChecks() {
-        return ViewRenderer.lodsCollected() ? lodRange : 0;
     }
 
     /** The latest GPU time of the mod's drawing in nanoseconds (-1 before the first), for the dev run's timings. */
@@ -427,7 +433,7 @@ public final class CubeView {
         ViewRenderer.setEntities(entities);
     }
 
-    private static void drawFace(int face, int size, Vec3 camera, float maxDistance, float lodDistance, float far, RenderRegionManager regions) {
+    private static void drawFace(int face, int size, Vec3 camera, float maxDistance, float far, RenderRegionManager regions, boolean farViews) {
         int x = (face % 3) * size;
         int y = (face / 3) * size;
         GlStateManager._viewport(x, y, size, size);
@@ -441,9 +447,9 @@ public final class CubeView {
                 .lookAt(0.0F, 0.0F, 0.0F, f[0], f[1], f[2], u[0], u[1], u[2]);
         double maxDistanceSq = (double) maxDistance * maxDistance;
         BoxTest seen = (minX, minY, minZ, maxX, maxY, maxZ) -> boxVisible(face, minX, minY, minZ, maxX, maxY, maxZ, maxDistanceSq);
-        BoxTest lodSeen = (minX, minY, minZ, maxX, maxY, maxZ) -> boxInFace(face, minX, minY, minZ, maxX, maxY, maxZ);
-        ViewRenderer.drawView(viewProjection, seen, lodSeen, camera, camera, ViewRenderer.NO_CLIP, ViewRenderer.NO_OFFSET, maxDistance, lodDistance,
-                regions, false, null);
+        // The face's origin is the camera: its own matrix culls the far terrain, with no cut plane
+        ViewRenderer.drawView(viewProjection, seen, farViews ? new ViewRenderer.Far(null, null, false) : null, camera, camera, ViewRenderer.NO_CLIP,
+                ViewRenderer.NO_OFFSET, regions, false, null);
     }
 
     /**
@@ -521,8 +527,11 @@ public final class CubeView {
         return nx * px + ny * py + nz * pz >= 0.0;
     }
 
-    /** Writes the info texture: header, each face's capture origin relative to this frame's camera, and the projection. */
-    private static void writeInfo(Vec3 camera, float lodInfoRange) {
+    /**
+     * Writes the info texture: header, each face's capture origin relative to this frame's camera, and the projection
+     * with the ranges (the far terrain's 0 when the faces drawn this frame hold none).
+     */
+    private static void writeInfo(Vec3 camera, float farInfoRange) {
         infoBuffer.clear();
         infoBuffer.put(CubeTextures.MAGIC).put(CubeTextures.PROTOCOL).put(faceSize).put(frameCounter % 4096);
         for (int face = 0; face < 6; face++) {
@@ -535,7 +544,7 @@ public final class CubeView {
                         .put(frameCounter - 1 - faceFrame[face]);
             }
         }
-        infoBuffer.put(NEAR).put(lastFar).put(lastMaxDistance).put(lodInfoRange);
+        infoBuffer.put(NEAR).put(lastFar).put(lastMaxDistance).put(farInfoRange);
         infoBuffer.flip();
         CubeTextures.INFO.writeRow(infoBuffer, CubeTextures.INFO_WIDTH);
     }

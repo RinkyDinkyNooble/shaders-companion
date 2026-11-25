@@ -3,7 +3,6 @@ package com.rinkynooble.shaderscompanion.client.far;
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import com.rinkynooble.shaderscompanion.client.Config;
 import com.rinkynooble.shaderscompanion.client.FarTextures;
-import com.rinkynooble.shaderscompanion.client.Lods;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.client.Camera;
@@ -93,6 +92,12 @@ public final class FarStore {
     private static int dhCheckIn;
     /** Dev checks: the debug view even while the pack reads the far terrain (-PdevFarOverlay). */
     private static boolean forcedOverlay;
+    /**
+     * The far terrain is drawn into the mod's own views this frame (M4, FarViews): far terrain on, farTerrainInViews on and
+     * the shader pack reading the cube or the mirror view; also while Distant Horizons or a Voxy mod draws the screen's
+     * far terrain, since nothing else draws far terrain into the views.
+     */
+    private static boolean viewsOn;
 
     private FarStore() {
     }
@@ -188,12 +193,12 @@ public final class FarStore {
         if (setting.equals("auto")) {
             if (--dhCheckIn <= 0) {
                 dhCheckIn = 30;
-                dhDrawing = Lods.distantHorizonsDrawing();
+                dhDrawing = FarCoexistence.distantHorizonsDrawing();
             }
             if (dhDrawing) {
                 return "Distant Horizons draws far terrain (farTerrain = companion draws the mod's too)";
             }
-            String voxy = Lods.voxyLoaded();
+            String voxy = FarCoexistence.voxyLoaded();
             if (voxy != null) {
                 return "a Voxy mod (" + voxy + ") is loaded (farTerrain = companion draws the mod's far terrain too)";
             }
@@ -201,9 +206,20 @@ public final class FarStore {
         return null;
     }
 
-    /** Meshing runs: the far terrain is drawn (unless it can't draw here) or {@code far mesh on}. */
+    /** Meshing runs: the far terrain is drawn on screen or into the views (unless it can't draw here), or {@code far mesh on}. */
     private static boolean meshingOn() {
-        return meshing || drawMode != MODE_NONE && FarRenderer.problem() == null;
+        return meshing || (drawMode != MODE_NONE || viewsOn) && FarRenderer.problem() == null;
+    }
+
+    /** Whether the far terrain goes into the mod's views this frame (see {@link #viewsOn}; render thread, while the store runs). */
+    private static boolean viewsWanted() {
+        return active && failure == null && Config.ENABLED.get() && Config.FAR_TERRAIN_IN_VIEWS.get() && !farTerrainSetting().equals("off")
+                && FarViews.viewsRead();
+    }
+
+    /** The views draw the far terrain this frame: on for them and on the GPU (render thread). */
+    static boolean viewsDraw() {
+        return viewsOn && gpuOn && frameView != null;
     }
 
     /** Meshes go to the GPU and the debug view draws them (render thread). */
@@ -255,6 +271,7 @@ public final class FarStore {
     private static void terrainFrame(Minecraft mc, Camera camera) {
         FarWorker w = worker;
         drawMode = decideMode(mc);
+        viewsOn = viewsWanted();
         boolean on = meshingOn();
         if (w.meshingWanted != on) {
             w.meshingWanted = on;
@@ -284,7 +301,7 @@ public final class FarStore {
         if (states != null && biomes != null && mc.level != null) {
             StateColors.frame(states, biomes, mc.level);
         }
-        setGpu(drawMode != MODE_NONE && FarRenderer.available());
+        setGpu((drawMode != MODE_NONE || viewsOn) && FarRenderer.available());
         takeMeshes(w.residency);
         if (gpuOn) {
             FarGpuBuffers b = FarRenderer.buffers();
@@ -371,8 +388,11 @@ public final class FarStore {
                     : FarRenderer.problem() != null ? "off: " + FarRenderer.problem()
                     : "off: the shader pack doesn't read far terrain and the debug view is hidden (/shaderscompanion far show)";
         };
-        if (drawMode != MODE_NONE && farTerrainSetting().equals("companion") && (Lods.distantHorizonsDrawing() || Lods.voxyLoaded() != null)) {
-            path += " (farTerrain = companion: " + (Lods.voxyLoaded() != null ? "a Voxy mod" : "Distant Horizons") + " draws far terrain too)";
+        if (drawMode != MODE_NONE && farTerrainSetting().equals("companion") && (FarCoexistence.distantHorizonsDrawing() || FarCoexistence.voxyLoaded() != null)) {
+            path += " (farTerrain = companion: " + (FarCoexistence.voxyLoaded() != null ? "a Voxy mod" : "Distant Horizons") + " draws far terrain too)";
+        }
+        if (viewsOn) {
+            path += drawMode == MODE_NONE ? "; drawn into the mod's views only: " + FarViews.status() : "; in the mod's views: " + FarViews.status();
         }
         if (!meshingOn()) {
             return path;
@@ -629,6 +649,7 @@ public final class FarStore {
      */
     private static void stop() {
         drawMode = MODE_NONE;
+        viewsOn = false;
         setGpu(false);
         takeMeshes(null);
         frameView = null;

@@ -21,12 +21,12 @@ public abstract class ProfileModMixin {
         PassProfiler.mark("mod cube faces");
     }
 
-    @Inject(method = "renderFrameUnguarded", at = @At(value = "INVOKE", target = "Lcom/rinkynooble/shaderscompanion/client/MirrorView;draw(Lnet/minecraft/world/phys/Vec3;FFLme/jellysquid/mods/sodium/client/render/chunk/region/RenderRegionManager;Z)V"))
+    @Inject(method = "renderFrameUnguarded", at = @At(value = "INVOKE", target = "Lcom/rinkynooble/shaderscompanion/client/MirrorView;draw(Lnet/minecraft/world/phys/Vec3;Lme/jellysquid/mods/sodium/client/render/chunk/region/RenderRegionManager;ZZ)V"))
     private static void shaderscompanion$mirror(CallbackInfoReturnable<Integer> cir) {
         PassProfiler.mark("mod mirror planes");
     }
 
-    @Inject(method = "renderFrameUnguarded", at = @At(value = "INVOKE", target = "Lcom/rinkynooble/shaderscompanion/client/Lods;clear()V"))
+    @Inject(method = "renderFrameUnguarded", at = @At(value = "INVOKE", target = "Lcom/rinkynooble/shaderscompanion/client/GpuTimer;end()V", ordinal = 0))
     private static void shaderscompanion$info(CallbackInfoReturnable<Integer> cir) {
         PassProfiler.mark("mod info textures, state restore");
     }

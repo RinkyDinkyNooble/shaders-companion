@@ -8,6 +8,7 @@ import com.rinkynooble.shaderscompanion.client.DebugOverlay;
 import com.rinkynooble.shaderscompanion.client.FarTextures;
 import com.rinkynooble.shaderscompanion.client.far.FarRenderer;
 import com.rinkynooble.shaderscompanion.client.far.FarStore;
+import com.rinkynooble.shaderscompanion.client.far.FarViews;
 import net.irisshaders.iris.Iris;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
@@ -482,6 +483,14 @@ public final class DevRun {
         if (++ticks % 200 == 0) {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: {}", String.join(" | ", DebugOverlay.statusLines()));
         }
+        if (stopAt >= 0) {
+            // M4: finish waits for the glass walls' removal
+            if (ticks >= stopAt) {
+                stopAt = -1;
+                finish(mc);
+            }
+            return;
+        }
         if (SHOW_HAND && phase >= 1) {
             mc.options.hideGui = false;
         }
@@ -550,9 +559,12 @@ public final class DevRun {
         boolean rainCover = SCENE.equals("raincover");
         boolean far = FAR;
         if (far && !FAR_FILL && !FAR_SEARCH && phase >= 1 && mc.player != null) {
-            // The far scene's view held still (the window takes mouse input while it has the focus)
-            mc.player.setYRot(FAR_YAW);
-            mc.player.yRotO = FAR_YAW;
+            // The far scene's view held still (the window takes mouse input while it has the focus); M4: -PdevYaw with
+            // -PdevFarGlass, to look at a glass wall, and in a held camera's toggle rounds (until M4 they looked east, the
+            // far scene's heading, whatever -PdevYaw said: this ran after hold)
+            float farYaw = FAR_GLASS || farHolding ? FAR_SHIFT_YAW : FAR_YAW;
+            mc.player.setYRot(farYaw);
+            mc.player.yRotO = farYaw;
             mc.player.setXRot(FAR_PITCH);
             mc.player.xRotO = FAR_PITCH;
         }
@@ -1682,6 +1694,9 @@ public final class DevRun {
         } else if (phase == 1 && far && FAR_DH_SHOT) {
             // -PdevFarDhShot: one shot once Distant Horizons has settled, for comparing with the far terrain's (M2b); with
             // -PdevFarStore -PdevFarDraw the far terrain is on too and must draw nothing (M3a: farTerrain = auto)
+            if (ticks - phaseTick == 1 && FAR_GLASS) {
+                placeGlass(mc, new BlockPos(FAR_X, farY, FAR_Z), FAR_GLASS_YAW);
+            }
             if (ticks - phaseTick == 200 && FAR_DRAW) {
                 dhGlFramesFrom = FarRenderer.glFramesForChecks();
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene with Distant Horizons: Far terrain: {}", FarStore.terrainStatus());
@@ -1694,12 +1709,30 @@ public final class DevRun {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene with Distant Horizons drawing: frames whose hook made far terrain GL calls "
                                     + "since 10 s in: {} (of {} s); Far terrain: {} | Far store: {}", FarRenderer.glFramesForChecks() - dhGlFramesFrom,
                             (ticks - phaseTick - 200) / 20, FarStore.terrainStatus(), FarStore.status());
+                    // M4: the mod's views draw its far terrain while Distant Horizons draws the screen
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain in the views with Distant Horizons drawing: {} | {}", viewsLine(),
+                            String.join(" | ", DebugOverlay.statusLines()));
+                    try {
+                        ShadersCompanion.LOGGER.info("Shaders Companion dev run, views dumped with Distant Horizons drawing as {}", CubeDump.dump());
+                    } catch (java.io.IOException e) {
+                        ShadersCompanion.LOGGER.error("Shaders Companion dev run: dump failed", e);
+                    }
                 }
                 phase = 2000;
                 phaseTick = ticks;
             }
         } else if (phase == 2000) {
-            if (ticks - phaseTick >= 40) {
+            // M4: with the far terrain on, Distant Horizons' rendering turned off through its API for 10 s (Distant Horizons
+            // writes it to its config file: put the file back afterwards): the mod's check (FarCoexistence, by reflection) must
+            // see it and draw the screen's far terrain again
+            boolean dhOff = FAR_DRAW && dhLoaded();
+            if (dhOff && ticks - phaseTick == 1) {
+                DhProbe.setRendering(false);
+            } else if (dhOff && ticks - phaseTick == 200) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene with Distant Horizons' rendering turned off: Far terrain: {}", FarStore.terrainStatus());
+                DhProbe.clearRendering();
+            }
+            if (ticks - phaseTick >= (dhOff ? 240 : 40)) {
                 finish(mc);
             }
         } else if (phase == 1 && far && !farSettled(mc)) {
@@ -2110,6 +2143,16 @@ public final class DevRun {
             if (FAR) {
                 // Round B: the far shadow map over the round
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far shadow map with {} {}: {}", TOGGLE, label, shadowLine());
+                // M4: the far terrain in the views over the round
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain in the views with {} {}: {} | Far terrain: {}", TOGGLE, label, viewsLine(),
+                        FarStore.terrainStatus());
+                if (FAR_VIEW_DUMP && timingRound < 2) {
+                    try {
+                        ShadersCompanion.LOGGER.info("Shaders Companion dev run, views dumped with {} {} as {}", TOGGLE, label, CubeDump.dump());
+                    } catch (java.io.IOException e) {
+                        ShadersCompanion.LOGGER.error("Shaders Companion dev run: dump failed", e);
+                    }
+                }
             }
             phaseTick = ticks;
             if (timingRound == 1 && Boolean.getBoolean("shaderscompanion.devResourceReload")) {
@@ -2258,7 +2301,6 @@ public final class DevRun {
     private static void farRound(Minecraft mc, int round) {
         int[] spec = FAR_ROUNDS[round];
         boolean dh = spec[0] == 1;
-        Config.DISTANT_HORIZONS.set(dh);
         boolean glassWanted = spec[1] == 1;
         if (glassWanted != farGlassPlaced) {
             MinecraftServer server = mc.getSingleplayerServer();
@@ -2330,7 +2372,6 @@ public final class DevRun {
             DhProbe.clearRendering();
             DhProbe.clearGeneration();
         }
-        Config.DISTANT_HORIZONS.set(true);
         MinecraftServer server = mc.getSingleplayerServer();
         server.execute(() -> farGlass(server.overworld(), false));
         ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene done: {} | {}", vram(), farProbe(mc, true));
@@ -2342,13 +2383,21 @@ public final class DevRun {
      * the feet to 6 above and from 3 behind to 12 ahead: placed only in air, removed only where they are glass.
      */
     private static void farGlass(net.minecraft.server.level.ServerLevel level, boolean place) {
-        double forwardX = -Math.sin(Math.toRadians(FAR_YAW));
-        double forwardZ = Math.cos(Math.toRadians(FAR_YAW));
-        BlockPos at = new BlockPos(FAR_X, farY, FAR_Z);
+        glassWalls(level, new BlockPos(FAR_X, farY, FAR_Z), FAR_YAW, place);
+    }
+
+    /**
+     * Two black glass walls, 4 blocks to either side of a spot along a heading, from 3 blocks below it to 6 above and
+     * from 3 behind to 12 ahead: placed only in air, removed only where they are glass (the far scene's, and M4's at a
+     * held camera).
+     */
+    private static void glassWalls(net.minecraft.server.level.ServerLevel level, BlockPos at, float yaw, boolean place) {
+        double forwardX = -Math.sin(Math.toRadians(yaw));
+        double forwardZ = Math.cos(Math.toRadians(yaw));
         int changed = 0;
         for (int side : new int[]{-4, 4}) {
             for (int ahead = -3; ahead <= 12; ahead++) {
-                for (int y = farY - 3; y <= farY + 6; y++) {
+                for (int y = at.getY() - 3; y <= at.getY() + 6; y++) {
                     BlockPos pos = trunkOffset(at, y, ahead, side, forwardX, forwardZ);
                     var state = level.getBlockState(pos);
                     if (place ? state.isAir() : state.is(Blocks.BLACK_STAINED_GLASS)) {
@@ -2358,7 +2407,8 @@ public final class DevRun {
                 }
             }
         }
-        ShadersCompanion.LOGGER.info("Shaders Companion dev run: far scene glass walls {} ({} blocks)", place ? "placed" : "removed", changed);
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run: glass walls at {} along yaw {} {} ({} blocks)", at.toShortString(), yaw, place ? "placed" : "removed",
+                changed);
     }
 
     /**
@@ -3770,6 +3820,9 @@ public final class DevRun {
             double z = FAR_SHIFT_Z + 0.5;
             if (t == 1) {
                 mc.player.connection.sendCommand("tp @s " + x + " " + FAR_HOLD_Y + " " + z + " " + FAR_SHIFT_YAW + " " + FAR_PITCH);
+                if (FAR_GLASS) {
+                    placeGlass(mc, BlockPos.containing(x, FAR_HOLD_Y, z), FAR_GLASS_YAW);
+                }
             }
             if (t > 2) {
                 holdAt(mc, x, FAR_HOLD_Y, z, FAR_SHIFT_YAW, FAR_PITCH);
@@ -3842,6 +3895,34 @@ public final class DevRun {
     /** Integration round A: -PdevFarHoldY=N holds the -PdevToggle rounds' camera at the shift check's spot, N high. */
     private static final int FAR_HOLD_Y = Integer.getInteger("shaderscompanion.devFarHoldY", 0);
     private static boolean farHolding;
+    /**
+     * M4: -PdevFarGlass puts two black glass walls (glassWalls) at the held camera (-PdevFarHoldY) or, with
+     * -PdevFarDhShot, at the vantage, along -PdevFarGlassYaw (the camera's heading by default), so the mirror view
+     * shows the far terrain; removed at the end. The vantage's view then turns to -PdevYaw.
+     */
+    private static final boolean FAR_GLASS = Boolean.getBoolean("shaderscompanion.devFarGlass");
+    private static final float FAR_GLASS_YAW = Integer.getInteger("shaderscompanion.devFarGlassYaw", (int) FAR_SHIFT_YAW);
+    /** M4: -PdevFarViewDump dumps the cube (and the mirror view) at the end of the first two toggle rounds. */
+    private static final boolean FAR_VIEW_DUMP = Boolean.getBoolean("shaderscompanion.devFarViewDump");
+    private static BlockPos glassAt;
+    private static int stopAt = -1;
+    private static float glassYaw;
+
+    /** M4: the walls placed (glassWalls), remembered so finish removes them. */
+    private static void placeGlass(Minecraft mc, BlockPos at, float yaw) {
+        glassAt = at;
+        glassYaw = yaw;
+        MinecraftServer server = mc.getSingleplayerServer();
+        server.execute(() -> glassWalls(server.overworld(), at, yaw, true));
+    }
+
+    /** M4: the far terrain in the mod's views over the frames since the last call, as a log line. */
+    private static String viewsLine() {
+        long[] v = FarViews.numbersForChecks();
+        return String.format("cube faces GPU %s ms a frame (%d a frame), mirror planes GPU %s ms a frame (%d a frame), of it selection %s ms; %d frames timed; "
+                        + "%d views, %d nodes, %d quads a frame (medians of %d frames); %d commands a region%s", ms(v[0]), v[1], ms(v[2]), v[3], ms(v[4]), v[5], v[6], v[7],
+                v[8], v[9], v[10], v[11] != 0 ? "; STOPPED after an error" : "");
+    }
     /** The visits: dimension, the spot Chunky generates around (x, z), and per view the camera (y, yaw, pitch); y is searched for open air. */
     private static final String[] DIM_IDS = {"minecraft:the_nether", "minecraft:the_end"};
     private static final int[][] DIM_CENTRES = {{0, 0}, {1300, 0}};
@@ -4354,6 +4435,16 @@ public final class DevRun {
     }
 
     private static void finish(Minecraft mc) {
+        if (glassAt != null && mc.getSingleplayerServer() != null) {
+            // M4: the walls go first, and the game stops 2 seconds later (the far store sees the change too)
+            BlockPos at = glassAt;
+            float yaw = glassYaw;
+            MinecraftServer server = mc.getSingleplayerServer();
+            server.execute(() -> glassWalls(server.overworld(), at, yaw, false));
+            glassAt = null;
+            stopAt = ticks + 40;
+            return;
+        }
         if (renderBefore >= 0) {
             mc.options.renderDistance().set(renderBefore);
         }
@@ -4363,8 +4454,8 @@ public final class DevRun {
         if (!shadersOn) {
             setShaders(mc, true);
         }
-        if (CubeView.lodRangeForChecks() > 0 || System.getProperty("shaderscompanion.devDh") != null || FAR) {
-            ShadersCompanion.LOGGER.info("Shaders Companion dev run: Distant Horizons range {}", CubeView.lodRangeForChecks());
+        if (System.getProperty("shaderscompanion.devDh") != null) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run: Distant Horizons range {}", farDhRange());
         }
         phase = -1;
         ShadersCompanion.LOGGER.info("Shaders Companion dev run done");

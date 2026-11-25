@@ -129,7 +129,7 @@ final class MirrorPlaneView {
      * drawn"): the part of the view the plane covers, the rest left saying "not drawn". {@code behindTarget} (null for
      * none) gets the opaque surfaces copied before water and glass are drawn over them.
      */
-    void draw(ViewTarget target, ViewTarget behindTarget, int tileX, Vec3 camera, float maxDistance, float lodDistance, RenderRegionManager regions) {
+    void draw(ViewTarget target, ViewTarget behindTarget, int tileX, Vec3 camera, RenderRegionManager regions, boolean farViews) {
         GlStateManager._viewport(tileX, 0, this.width, this.height);
         int[] drawn = this.area.pixels();
         int x = tileX + drawn[0];
@@ -139,8 +139,8 @@ final class MirrorPlaneView {
 
         float[] cameraOffset = {(float) (camera.x - this.originWorld.x), (float) (camera.y - this.originWorld.y), (float) (camera.z - this.originWorld.z)};
         Runnable copyBehind = behindTarget == null ? null : () -> target.copyTo(behindTarget, x, drawn[1], drawn[2], drawn[3]);
-        ViewRenderer.drawView(this.drawMatrix, this.seen(), this.frustumSeen(), camera, this.originWorld, this.clipPlane(), cameraOffset, maxDistance,
-                lodDistance, regions, true, copyBehind);
+        ViewRenderer.Far far = farViews ? new ViewRenderer.Far(this.croppedMatrix, this.cameraClipPlane(), this.axis == 1) : null;
+        ViewRenderer.drawView(this.drawMatrix, this.seen(), far, camera, this.originWorld, this.clipPlane(), cameraOffset, regions, true, copyBehind);
     }
 
     /**
@@ -158,11 +158,6 @@ final class MirrorPlaneView {
                 && this.inView(this.wholeFrustum, minX, minY, minZ, maxX, maxY, maxZ);
     }
 
-    /** As {@link #seen()} without the terrain range, for Distant Horizons' far terrain. */
-    private BoxTest frustumSeen() {
-        return (minX, minY, minZ, maxX, maxY, maxZ) -> this.inView(this.frustum, minX, minY, minZ, maxX, maxY, maxZ);
-    }
-
     private boolean inView(FrustumIntersection test, double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
         double front = this.heightAbove + (this.side > 0 ? (this.axis == 0 ? maxX : this.axis == 1 ? maxY : maxZ)
                 : -(this.axis == 0 ? minX : this.axis == 1 ? minY : minZ));
@@ -174,17 +169,22 @@ final class MirrorPlaneView {
         return new float[]{this.normal.x, this.normal.y, this.normal.z, (float) -this.heightAbove - CLIP_EPSILON};
     }
 
+    /** The same cut plane for positions relative to the camera (the far terrain's): the camera lies heightAbove in front of it. */
+    private float[] cameraClipPlane() {
+        return new float[]{this.normal.x, this.normal.y, this.normal.z, (float) this.heightAbove - CLIP_EPSILON};
+    }
+
     /**
      * Writes this view's row of the info texture (see API.md): header, plane, origin, matrix, ranges, fade-in and its
      * tile's corner, relative to this frame's camera.
      */
-    void writeRow(FloatBuffer buffer, int frameCounter, float near, float far, float terrainRange, float lodRange, int tileX) {
+    void writeRow(FloatBuffer buffer, int frameCounter, float near, float far, float terrainRange, float farRange, int tileX) {
         buffer.put(CubeTextures.MAGIC).put(CubeTextures.MIRROR_PROTOCOL).put(this.width).put(this.height);
         buffer.put(this.normal.x).put(this.normal.y).put(this.normal.z).put((float) this.heightAbove);
         buffer.put(this.origin.x).put(this.origin.y).put(this.origin.z).put(frameCounter % 4096);
         this.packMatrix.get(buffer.position(), buffer);
         buffer.position(buffer.position() + 16);
-        buffer.put(near).put(far).put(terrainRange).put(lodRange);
+        buffer.put(near).put(far).put(terrainRange).put(farRange);
         buffer.put(Math.min(1.0F, MirrorPlaneSearch.planeAge(this.slot) / FADE_IN_SECONDS)).put(tileX).put(0.0F).put(0.0F);
     }
 

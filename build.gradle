@@ -328,7 +328,10 @@ minecraft {
             // Integration round A (research/lod/M3.md): -PdevFarHoldY=230 (with -PdevToggle) runs the toggle rounds from a camera held at
             // -PdevFarShiftX, that height, -PdevFarShiftZ, -PdevYaw and -PdevPitch, once the far terrain there is ready.
             // -PdevToggle=renderDistance:5:8 sets the render distance per round; -PdevFarEncodedAverage averages the far faces' colours as before 3.0.0-dev4.
-            ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort', 'devFarDraw', 'devFarDhShot', 'devFarOverlay', 'devFarShort', 'devFarDims', 'devFarEncodedAverage'].each { name ->
+            // M4 (research/lod/M4.md): -PdevFarGlass puts two black glass walls at the held camera (or the vantage with -PdevFarDhShot)
+            // along -PdevFarGlassYaw; -PdevFarViewDump dumps the cube and the mirror view in the first two toggle rounds.
+            ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort', 'devFarDraw', 'devFarDhShot', 'devFarOverlay', 'devFarShort', 'devFarDims', 'devFarEncodedAverage',
+             'devFarGlass', 'devFarViewDump'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", 'true'
                 }
@@ -336,7 +339,7 @@ minecraft {
             // -PdevFarDiff=200: the log says what differs in the first 200 stored sections that change.
             // -PdevFov=90: the field of view for the run (restored; the dev client's default is 70, the user's 90).
             ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache', 'devFarImport', 'devFarDiff', 'devFarRawStore', 'devFarRange', 'devFov', 'devFarFillFrom',
-             'devFarShift', 'devFarShiftX', 'devFarShiftY', 'devFarShiftZ', 'devFarDimsRadius', 'devFarHoldY'].each { name ->
+             'devFarShift', 'devFarShiftX', 'devFarShiftY', 'devFarShiftZ', 'devFarDimsRadius', 'devFarHoldY', 'devFarGlassYaw'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }
@@ -375,9 +378,10 @@ dependencies {
     // Compiled against, and loaded in the dev runs. Never packed into this mod's jar.
     implementation fg.deobf("local:oculus:${oculus_version}")
     implementation fg.deobf("local:embeddium:${embeddium_version}")
-    // Distant Horizons is optional: compiled against for its LOD buffers (only its own classes are used), loaded in
-    // dev runs only with -PdevDh.
-    compileOnly files("libs/distanthorizons-${distanthorizons_version}.jar")
+    // Distant Horizons is optional and the mod doesn't compile against it (3.0.0: the far terrain asks its renderer mode by
+    // reflection on its API); the dev checks (src/verify) are compiled against it, and it is loaded in dev runs only with
+    // -PdevDh.
+    verifyCompileOnly files("libs/distanthorizons-${distanthorizons_version}.jar")
     // TaCZ is optional too: compiled against so the mixin processor finds its first-person gun renderer
     // (TaczFirstPersonMixin, applied only when TaCZ is installed); loaded in dev runs only with -PdevTacz.
     compileOnly fg.deobf("local:tacz:1.1.8")

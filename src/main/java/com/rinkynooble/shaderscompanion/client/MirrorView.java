@@ -135,7 +135,7 @@ final class MirrorView {
      * pack reads them), the opaque surfaces are copied before water and glass are drawn over them: what lies behind
      * those, for shading them as water and glass.
      */
-    static void draw(Vec3 camera, float maxDistance, float lodDistance, RenderRegionManager regions, boolean behind) {
+    static void draw(Vec3 camera, RenderRegionManager regions, boolean behind, boolean farViews) {
         int width = tileWidth * slots;
         if (target.ensureSize(width, tileHeight)) {
             ShadersCompanion.LOGGER.info("Shaders Companion: mirror view of {} x {} pixels ({} tiles of {} x {})", width, tileHeight, slots, tileWidth, tileHeight);
@@ -150,7 +150,7 @@ final class MirrorView {
         target.clear(-1.0F);
         for (int slot = 0; slot < slots; slot++) {
             if (views[slot].active()) {
-                views[slot].draw(target, behind ? behindTarget : null, slot * tileWidth, camera, maxDistance, lodDistance, regions);
+                views[slot].draw(target, behind ? behindTarget : null, slot * tileWidth, camera, regions, farViews);
             }
         }
     }
@@ -169,6 +169,15 @@ final class MirrorView {
 
     static boolean active() {
         return active;
+    }
+
+    /** The planes drawn this frame. */
+    static int activePlanes() {
+        int count = 0;
+        for (int slot = 0; slot < slots; slot++) {
+            count += views[slot].active() ? 1 : 0;
+        }
+        return count;
     }
 
     /** Boxes relative to the camera that the drawn part of any view can see (see {@link MirrorPlaneView#seen()}). */
@@ -200,14 +209,14 @@ final class MirrorView {
      * Writes the info texture, one row per slot: a view's row (see {@link MirrorPlaneView#writeRow}), or a header of
      * size 0 for an empty slot, all relative to this frame's camera.
      */
-    static void writeInfo(int frameCounter, float near, float far, float terrainRange, float lodRange) {
+    static void writeInfo(int frameCounter, float near, float far, float terrainRange, float farRange) {
         if (infoBuffer == null) {
             infoBuffer = MemoryUtil.memAllocFloat(CubeTextures.MIRROR_INFO_WIDTH * 4 * MAX_PLANES);
         }
         infoBuffer.clear();
         for (int slot = 0; slot < MAX_PLANES; slot++) {
             if (active && slot < slots && views[slot].active()) {
-                views[slot].writeRow(infoBuffer, frameCounter, near, far, terrainRange, lodRange, slot * tileWidth);
+                views[slot].writeRow(infoBuffer, frameCounter, near, far, terrainRange, farRange, slot * tileWidth);
             } else {
                 putEmptyRow();
             }

@@ -3,6 +3,7 @@ package com.rinkynooble.shaderscompanion.client;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.rinkynooble.shaderscompanion.client.far.FarStore;
+import com.rinkynooble.shaderscompanion.client.far.FarViews;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -150,10 +151,10 @@ public final class DebugOverlay {
                         MirrorView.cpuNanos / 1.0e6, gpu),
                 String.format("Last frame: %d sections, %d draws, %d quads, %d queued to build",
                         ViewRenderer.sectionsDrawn, ViewRenderer.drawCalls, ViewRenderer.quadsDrawn, CubeView.sectionsQueued),
-                String.format("Entities: %d, block entities: %d (%d kept from earlier frames; %s); Distant Horizons: %s", CubeView.entitiesDrawn,
+                String.format("Entities: %d, block entities: %d (%d kept from earlier frames; %s); far terrain in the views: %s", CubeView.entitiesDrawn,
                         CubeView.blockEntitiesDrawn, CubeView.entitiesReused, CubeView.entityMemory(),
-                        CubeView.lodRangeForChecks() > 0 ? ViewRenderer.lodContainers + " LOD sections, range " + CubeView.lodRange + " blocks"
-                                : !Config.DISTANT_HORIZONS.get() ? "turned off in the config" : Lods.reason()),
+                        FarViews.drewThisFrame() ? "drawn, out to " + FarViews.range() + " blocks (Far terrain line)"
+                                : !Config.FAR_TERRAIN_IN_VIEWS.get() ? "turned off in the config (farTerrainInViews)" : "not drawn (see the Far terrain line)"),
                 String.format("Mirror view: %s%s", MirrorView.status, MirrorView.active() && CubeView.mirrorPlayerDrawn ? ", your player in it" : ""),
                 "Rain cover: " + RainCover.status,
                 "Lattice: " + Lattice.status,

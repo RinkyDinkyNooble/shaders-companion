@@ -299,6 +299,7 @@ final class FarShadow {
                 (float) -light[0], (float) -light[1], (float) -light[2], (float) (e - ox),
                 (float) light[3], (float) light[4], (float) light[5], (float) (oy + e),
                 (float) -light[3], (float) -light[4], (float) -light[5], (float) (e - oy),
+                0.0F, 0.0F, 0.0F, 1.0F,
                 0.0F, 0.0F, 0.0F, 1.0F};
         GL20C.glUniform4fv(u[6], planes);
         GL20C.glUniform1i(u[7], b.recordHigh);
@@ -306,6 +307,8 @@ final class FarShadow {
         GL20C.glUniform1i(u[9], 0);
         GL20C.glUniform1f(u[10], 0.0F);
         GL20C.glUniform1i(u[11], backFaces(light));
+        GL20C.glUniform3f(u[12], 0.0F, 0.0F, 0.0F);
+        GL20C.glUniform1i(u[13], 0);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 1, b.records);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 2, commands);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 3, counts);

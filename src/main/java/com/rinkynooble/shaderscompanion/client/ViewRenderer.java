@@ -2,6 +2,7 @@ package com.rinkynooble.shaderscompanion.client;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
+import com.rinkynooble.shaderscompanion.client.far.FarViews;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
@@ -38,8 +39,9 @@ import org.lwjgl.system.MemoryUtil;
 
 /**
  * Draws one view (a cube face or the mirror view) into the bound target as surface data (see API.md): Embeddium's built
- * chunk meshes, the collected entities and Distant Horizons' far terrain, with the mod's own programs. {@link CubeView}
- * runs the frame and says what to draw; this class owns the programs, buffers and vertex arrays they share.
+ * chunk meshes and the collected entities with the mod's own programs, and the mod's far terrain ({@link FarViews}).
+ * {@link CubeView} runs the frame and says what to draw; this class owns the programs, buffers and vertex arrays they
+ * share.
  */
 final class ViewRenderer {
     /** The cut plane of a view without one, and the camera offset of a view whose origin is the camera. */
@@ -49,14 +51,12 @@ final class ViewRenderer {
     private static final String[] ATTRIBUTE_NAMES = {"a_PosId", "a_Color", "a_TexCoord", "a_LightCoord", "a_Normal", "a_BlockId", "a_MidBlock"};
     private static final int[] ATTRIBUTE_LOCATIONS = {1, 2, 3, 4, 10, 11, 14};
     private static final String[] ENTITY_ATTRIBUTES = {"a_Position", "a_Color", "a_TexCoord", "a_Light", "a_Normal", "a_Meta"};
-    private static final String[] LOD_ATTRIBUTES = {"a_Position", "a_Color", "a_Data"};
     private static final int MAX_DRAWS = 256 * ModelQuadFacing.COUNT;
 
     // Counts for the status line: this frame's views together
     static int sectionsDrawn;
     static int drawCalls;
     static long quadsDrawn;
-    static int lodContainers;
 
     /** The view being drawn: its projection, cut plane and the camera relative to its origin (none and zero for the cube). */
     private static FloatBuffer matrixBuffer;
@@ -64,8 +64,6 @@ final class ViewRenderer {
     private static float[] viewCamera = NO_OFFSET;
     /** 1 / log2(far / near) for this frame's views. */
     private static float logDepth;
-    /** Whether this frame has Distant Horizons' LODs to draw. */
-    private static boolean lodsCollected;
     /** The mobs and block entities (a frame old) and the local player in first person (this frame's, mirror view only). */
     private static List<EntityCapture.Batch> entityBatches = List.of();
     private static List<EntityCapture.Batch> playerBatches = List.of();
@@ -86,11 +84,6 @@ final class ViewRenderer {
     private static int playerVertexArray;
     private static int playerBuffer;
     private static ByteBuffer entityStaging;
-    private static ViewProgram lodProgram;
-    private static int uLodModelOffset;
-    private static int uLodTranslucent;
-    private static int uLodClipDistance;
-    private static int lodVertexArray;
     private static IntBuffer drawCounts;
     private static IntBuffer drawBaseVertices;
     private static PointerBuffer drawOffsets;
@@ -159,16 +152,6 @@ final class ViewRenderer {
         entityVertexArray = createEntityVertexArray(entityBuffer);
         playerBuffer = GL15C.glGenBuffers();
         playerVertexArray = createEntityVertexArray(playerBuffer);
-
-        lodProgram = new ViewProgram("cube_lod", LOD_ATTRIBUTES, new int[]{0, 1, 2});
-        uLodModelOffset = lodProgram.uniform("u_ModelOffset");
-        uLodTranslucent = lodProgram.uniform("u_Translucent");
-        uLodClipDistance = lodProgram.uniform("u_ClipDistance");
-        lodVertexArray = GL30C.glGenVertexArrays();
-        GlStateManager._glBindVertexArray(lodVertexArray);
-        for (int location = 0; location < 3; location++) {
-            GL20C.glEnableVertexAttribArray(location);
-        }
         GlStateManager._glBindVertexArray(0);
         Gl.useProgram(program.id);
         GL20C.glUniform1i(program.uniform("u_BlockAtlas"), 0);
@@ -218,32 +201,6 @@ final class ViewRenderer {
         GlStateManager._stencilMask(0xFF);
         GlStateManager._enableScissorTest();
         Gl.activeTexture(GL13C.GL_TEXTURE0);
-    }
-
-    /** Collects Distant Horizons' LOD buffers for this frame; returns the LOD range in blocks, 0 when there are none. */
-    static float collectLods(Minecraft mc) {
-        lodsCollected = false;
-        lodContainers = 0;
-        if (!Config.DISTANT_HORIZONS.get() || !Lods.available()) {
-            return 0.0F;
-        }
-        try {
-            lodsCollected = Lods.collect(mc.level);
-            if (!lodsCollected) {
-                return 0.0F;
-            }
-            int range = Config.LOD_DISTANCE.get() > 0 ? Config.LOD_DISTANCE.get() : Lods.range();
-            return Math.max(range, 0);
-        } catch (Throwable t) {
-            Lods.fail(t);
-            lodsCollected = false;
-            return 0.0F;
-        }
-    }
-
-    /** Whether this frame's views have Distant Horizons' far terrain (collected, and not turned off by an error since). */
-    static boolean lodsCollected() {
-        return lodsCollected;
     }
 
     /** Takes the local player's vertices for this frame's mirror view (none when the capture is empty). */
@@ -300,31 +257,46 @@ final class ViewRenderer {
     }
 
     /**
+     * How a view gets the far terrain ({@link FarViews}): the matrix its far terrain is culled by, for positions relative
+     * to the camera (null: the view's own), its cut plane for positions relative to the camera (null for none), and
+     * whether that plane is level (far water up to a voxel above it is the mirror's own water, cut with it).
+     */
+    record Far(Matrix4f cull, float[] cut, boolean levelPlane) {
+    }
+
+    /**
      * Draws a view into the bound target (viewport and scissor set): opaque surfaces first (blocks, entities, far
      * terrain), then translucent ones (water, glass) over them with the depth test, so each texel keeps the nearest
-     * surface.
+     * surface. The far terrain is drawn only where the chunk terrain and the entities drew nothing (the stencil).
      *
      * @param viewProjection the view's matrix for positions relative to its origin
      * @param seen           the chunk sections and entities the view can see (boxes relative to the camera)
-     * @param lodSeen        the same for Distant Horizons' far terrain, without the terrain range
+     * @param far            how the view gets the far terrain, or null for none
      * @param origin         the view's origin: the camera for the cube, the mirrored camera for the mirror view
      * @param clipPlane      the view's cut plane ({@link #NO_CLIP} for none)
      * @param cameraOffset   the camera relative to the view's origin
      * @param mirror         whether this is the mirror view, which also draws the local player
      * @param afterOpaque    run between the opaque and the translucent surfaces (null for nothing)
      */
-    static void drawView(Matrix4f viewProjection, BoxTest seen, BoxTest lodSeen, Vec3 camera, Vec3 origin, float[] clipPlane, float[] cameraOffset,
-                         float maxDistance, float lodDistance, RenderRegionManager regions, boolean mirror, Runnable afterOpaque) {
+    static void drawView(Matrix4f viewProjection, BoxTest seen, Far far, Vec3 camera, Vec3 origin, float[] clipPlane, float[] cameraOffset,
+                         RenderRegionManager regions, boolean mirror, Runnable afterOpaque) {
         viewProjection.get(matrixBuffer);
         viewClipPlane = clipPlane;
         viewCamera = cameraOffset;
+        // The far terrain's selection for this view, before anything is drawn: positions relative to the camera
+        int farSlice = -1;
+        if (far != null) {
+            Matrix4f farMatrix = new Matrix4f(viewProjection).translate((float) (camera.x - origin.x), (float) (camera.y - origin.y), (float) (camera.z - origin.z));
+            farSlice = FarViews.select(far.cull() != null ? far.cull() : farMatrix, farMatrix, (float) (origin.x - camera.x), (float) (origin.y - camera.y),
+                    (float) (origin.z - camera.z), far.cut(), far.levelPlane(), mirror);
+        }
         GL11C.glEnable(GL11C.GL_STENCIL_TEST);
         try {
             markTexels(true);
             drawTerrain(seen, camera, origin, regions, false);
             drawEntities(false, mirror);
             markTexels(false);
-            drawLods(lodSeen, camera, origin, maxDistance, lodDistance, true);
+            drawFar(farSlice, false);
             if (afterOpaque != null) {
                 afterOpaque.run();
             }
@@ -332,7 +304,7 @@ final class ViewRenderer {
             drawTerrain(seen, camera, origin, regions, true);
             drawEntities(true, mirror);
             markTexels(false);
-            drawLods(lodSeen, camera, origin, maxDistance, lodDistance, false);
+            drawFar(farSlice, true);
         } finally {
             GL11C.glDisable(GL11C.GL_STENCIL_TEST);
             viewClipPlane = NO_CLIP;
@@ -341,9 +313,9 @@ final class ViewRenderer {
     }
 
     /**
-     * The stencil for a view's passes: chunk terrain and entities mark the texels they draw (mark true), and Distant
-     * Horizons' terrain is drawn only where nothing is marked (false). So the chunk terrain stays in front wherever it
-     * reaches, as in the main view, and LODs don't show through it where both describe the same surface near the
+     * The stencil for a view's passes: chunk terrain and entities mark the texels they draw (mark true), and the far
+     * terrain is drawn only where nothing is marked (false). So the chunk terrain stays in front wherever it reaches, as
+     * in the main view, and the far terrain doesn't show through it where both describe the same surface near the
      * render distance's edge.
      */
     private static void markTexels(boolean mark) {
@@ -424,26 +396,13 @@ final class ViewRenderer {
         return true;
     }
 
-    /** Draws Distant Horizons' LODs beyond the chunk terrain's range that a view can see (boxes relative to the camera). */
-    private static void drawLods(BoxTest seen, Vec3 camera, Vec3 origin, float maxDistance, float lodDistance, boolean opaque) {
-        if (!lodsCollected) {
+    /** Draws a view's far terrain, its opaque or translucent part, where the stencil leaves room (its slice from FarViews.select). */
+    private static void drawFar(int slice, boolean translucent) {
+        if (slice < 0) {
             return;
         }
-        use(lodProgram);
-        GL20C.glUniform1i(uLodTranslucent, opaque ? 0 : 1);
-        // The chunk terrain covers the render distance; LODs fill in from a little inside its edge.
-        float clipDistance = Math.max(0.0F, maxDistance - 16.0F);
-        GL20C.glUniform1f(uLodClipDistance, clipDistance);
-        GlStateManager._glBindVertexArray(lodVertexArray);
-        try {
-            int worldHeight = Minecraft.getInstance().level == null ? 384 : Minecraft.getInstance().level.getHeight();
-            drawCalls += Lods.draw(seen, opaque, camera.x, camera.y, camera.z, origin.x, origin.y, origin.z, (double) lodDistance * lodDistance,
-                    clipDistance, worldHeight, uLodModelOffset);
-            lodContainers = Lods.containersDrawn();
-        } catch (Throwable t) {
-            Lods.fail(t);
-            lodsCollected = false;
-        }
+        FarViews.draw(slice, translucent, logDepth, CubeView.NEAR);
+        drawCalls++;
     }
 
     /**

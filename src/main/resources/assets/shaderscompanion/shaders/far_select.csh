@@ -11,13 +11,15 @@
 // start of the far edge's fade (drawn with the discarding program), translucent, translucent reaching in or out.
 // For the far shadow map (u_ShadowDirs set, FarShadow): the planes are a cascade's box, the face directions drawn are
 // the ones facing away from the light, opaque quads only, all into region 0, with no chunk terrain cut (u_ChunkRadius 0)
-// and no fade.
+// and no fade. For the mod's own views (u_ViewRegions set, FarViews: a cube face or a mirror plane): the main view's ring
+// rule and chunk terrain cut from the camera, the view's frustum and cut plane, the face directions its eye sees, and
+// two regions of at most u_Region commands, opaque and translucent, all for one program.
 
 layout(local_size_x = 64) in;
 
 layout(std430, binding = 1) readonly buffer Records { int records[]; };
 layout(std430, binding = 2) writeonly buffer Commands { uint commands[]; };
-// 0-3 the commands in each region, 4 nodes drawn, 5 quads drawn
+// 0-3 the commands in each region (the views: 0 and 1), 4 nodes drawn, 5 quads drawn
 layout(std430, binding = 3) buffer Counts { uint counts[]; };
 
 uniform ivec3 u_CameraBlock;
@@ -26,12 +28,15 @@ uniform float u_K;
 uniform float u_Far;
 uniform int u_TopLevel;
 uniform float u_ChunkRadius;   // the chunk terrain: within this many blocks of the camera horizontally and vertically
-uniform vec4 u_Planes[5];      // the view frustum's planes but the far one, camera-relative: inside where dot(xyz, p) + w >= 0
+uniform vec4 u_Planes[6];      // the view frustum's planes but the far one, and a mirror view's cut plane ((0, 0, 0, 1) for
+                               // none), camera-relative: inside where dot(xyz, p) + w >= 0
 uniform int u_RecordCount;
 uniform int u_Region;          // commands a region holds
 uniform int u_OneQuad;         // dev checks: 1 draws one quad per command (the commands' own cost)
 uniform float u_FadeStart;     // the far edge's fade starts this far from the camera (0: no fade)
 uniform int u_ShadowDirs;      // the far shadow map's pass: bit d set for each face direction drawn; 0 for the main view
+uniform vec3 u_Eye;            // the view's eye relative to the camera, for the face directions it sees (0 but in the mod's views)
+uniform int u_ViewRegions;     // 1 for the mod's views: opaque commands in region 0, translucent in region 1, no discarding split
 
 const int RECORD_INTS = 48;
 const ivec3 STEP[6] = ivec3[6](ivec3(0, -1, 0), ivec3(0, 1, 0), ivec3(0, 0, -1), ivec3(0, 0, 1), ivec3(-1, 0, 0), ivec3(1, 0, 0));
@@ -80,8 +85,12 @@ bool drawnAt(int level, ivec3 lo) {
     return true;
 }
 
-void writeCommand(uint index, int quads, int first, int record) {
-    uint at = index * 5u;
+// A command at an index of a region (a view's regions hold at most u_Region commands: the rest are left out)
+void writeCommand(uint region, uint index, int quads, int first, int record) {
+    if (index >= uint(u_Region)) {
+        return;
+    }
+    uint at = (region * uint(u_Region) + index) * 5u;
     commands[at] = uint(min(u_OneQuad != 0 ? 1 : quads, 65536) * 6);
     commands[at + 1u] = 1u;
     commands[at + 2u] = 0u;
@@ -108,17 +117,18 @@ void main() {
     int boxMax = records[base + 7];
     vec3 gMin = rel(lo + ivec3(boxMin & 63, (boxMin >> 6) & 63, (boxMin >> 12) & 63) * scale);
     vec3 gMax = rel(lo + ivec3(boxMax & 63, (boxMax >> 6) & 63, (boxMax >> 12) & 63) * scale);
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         vec4 p = u_Planes[i];
         vec3 corner = vec3(p.x >= 0.0 ? gMax.x : gMin.x, p.y >= 0.0 ? gMax.y : gMin.y, p.z >= 0.0 ? gMax.z : gMin.z);
         if (dot(p.xyz, corner) + p.w < 0.0) {
             return;
         }
     }
-    // The face directions the camera can see: down faces from below the geometry's top, and so on (the shadow map's
+    // The face directions the view's eye can see: down faces from below the geometry's top, and so on (the shadow map's
     // pass: those facing away from the light)
     bool shadowPass = u_ShadowDirs != 0;
-    bool see[6] = bool[6](gMax.y > 0.0, gMin.y < 0.0, gMax.z > 0.0, gMin.z < 0.0, gMax.x > 0.0, gMin.x < 0.0);
+    bool views = u_ViewRegions != 0;
+    bool see[6] = bool[6](gMax.y > u_Eye.y, gMin.y < u_Eye.y, gMax.z > u_Eye.z, gMin.z < u_Eye.z, gMax.x > u_Eye.x, gMin.x < u_Eye.x);
     if (shadowPass) {
         for (int d = 0; d < 6; d++) {
             see[d] = ((u_ShadowDirs >> d) & 1) != 0;
@@ -126,8 +136,9 @@ void main() {
     }
     int size = 32 << level;
     // The discarding program for nodes that reach into the chunk terrain, or whose geometry reaches past the fade's start
+    // (the views draw with one program)
     bool fades = u_FadeStart > 0.0 && length(max(abs(gMin), abs(gMax))) > u_FadeStart;
-    int clipped = !shadowPass && (reachesChunks(lo, size) || fades) ? 1 : 0;
+    int clipped = !shadowPass && !views && (reachesChunks(lo, size) || fades) ? 1 : 0;
     uint ranges = 0u;
     uint opaqueDraws = 0u;
     uint translucentDraws = 0u;
@@ -155,12 +166,12 @@ void main() {
     if (ranges == 0u) {
         return;
     }
-    uint o = opaqueDraws > 0u ? atomicAdd(counts[clipped], opaqueDraws) : 0u;
-    uint t = translucentDraws > 0u ? atomicAdd(counts[2 + clipped], translucentDraws) : 0u;
+    uint opaqueRegion = uint(clipped);
+    uint translucentRegion = views ? 1u : uint(2 + clipped);
+    uint o = opaqueDraws > 0u ? atomicAdd(counts[opaqueRegion], opaqueDraws) : 0u;
+    uint t = translucentDraws > 0u ? atomicAdd(counts[translucentRegion], translucentDraws) : 0u;
     atomicAdd(counts[4], 1u);
     atomicAdd(counts[5], quads);
-    uint opaqueRegion = uint(clipped * u_Region);
-    uint translucentRegion = uint((2 + clipped) * u_Region);
     for (int r = 0; r < 12; r++) {
         if ((ranges & (1u << r)) == 0u) {
             continue;
@@ -169,11 +180,11 @@ void main() {
         int count = records[base + 20 + r];
         int opaque = records[base + 32 + r];
         if (opaque > 0) {
-            writeCommand(opaqueRegion + o, opaque, first, id);
+            writeCommand(opaqueRegion, o, opaque, first, id);
             o++;
         }
         if (count > opaque && !shadowPass) {
-            writeCommand(translucentRegion + t, count - opaque, first + opaque, id);
+            writeCommand(translucentRegion, t, count - opaque, first + opaque, id);
             t++;
         }
     }

@@ -100,9 +100,9 @@ public final class FarRenderer {
     static int[] selectUniforms;
     private static final int[][] terrainUniforms = new int[2][];
     private static int[] overlayUniforms;
-    private static final String[] SELECT_UNIFORMS = {"u_CameraBlock", "u_CameraFrac", "u_K", "u_Far", "u_TopLevel", "u_ChunkRadius", "u_Planes", "u_RecordCount",
-            "u_Region", "u_OneQuad", "u_FadeStart", "u_ShadowDirs"};
-    private static final String[] TERRAIN_UNIFORMS = {"u_ViewProjection", "u_CameraBlock", "u_CameraFrac", "u_StateCount", "u_BiomeCount", "u_Translucent",
+    static final String[] SELECT_UNIFORMS = {"u_CameraBlock", "u_CameraFrac", "u_K", "u_Far", "u_TopLevel", "u_ChunkRadius", "u_Planes", "u_RecordCount",
+            "u_Region", "u_OneQuad", "u_FadeStart", "u_ShadowDirs", "u_Eye", "u_ViewRegions"};
+    static final String[] TERRAIN_UNIFORMS = {"u_ViewProjection", "u_CameraBlock", "u_CameraFrac", "u_StateCount", "u_BiomeCount", "u_Translucent",
             "u_ChunkRadius", "u_LogDepth", "u_Near", "u_Jitter", "u_ViewZ", "u_DepthMapping", "u_FarNear", "u_FadeStart", "u_FarRange", "u_FrameIndex", "u_PlantShade",
             "u_PlantFade"};
     /**
@@ -113,7 +113,7 @@ public final class FarRenderer {
      */
     static final float PLANT_SHADE = 0.79F;
     /** Dev checks: another factor for the planted faces (-PdevFarPlantShade), or NaN. */
-    private static float plantShadeForChecks = Float.NaN;
+    static float plantShadeForChecks = Float.NaN;
     private static final String[] OVERLAY_UNIFORMS = {"u_InverseProjection", "u_ScreenSize", "u_Alone", "u_UseScene", "u_SunDir", "u_Daylight", "u_FarRange", "u_FogColor"};
     /** The overlay's texture units: the two layers' albedo and data, the far depth, the scene's depth. */
     private static final int OVERLAY_UNITS = 6;
@@ -206,6 +206,7 @@ public final class FarRenderer {
                 }
                 overlayProgram = link("far overlay", compile(GL20C.GL_VERTEX_SHADER, "far_overlay.vsh"), compile(GL20C.GL_FRAGMENT_SHADER, "far_overlay.fsh"));
                 FarShadow.compile();
+                FarViews.compile();
             } catch (RuntimeException e) {
                 ShadersCompanion.LOGGER.error("Shaders Companion far terrain: its programs failed; the debug view is off", e);
                 problem = "its shaders failed (see the log)";
@@ -227,7 +228,7 @@ public final class FarRenderer {
     }
 
     /** Compiles a shader from assets/shaderscompanion/shaders, with defines inserted after its #version line. */
-    private static int compile(int type, String name, String defines) {
+    static int compile(int type, String name, String defines) {
         String source;
         try (InputStream in = FarRenderer.class.getResourceAsStream("/assets/shaderscompanion/shaders/" + name)) {
             if (in == null) {
@@ -339,6 +340,7 @@ public final class FarRenderer {
         }
         deleteLayer();
         FarShadow.release();
+        FarViews.release();
         // The layers back to 1 x 1 (a pack binding them never gets the missing texture)
         FarTextures.release();
         selectNanos = drawNanos = overlayNanos = -1;
@@ -506,21 +508,14 @@ public final class FarRenderer {
         GL20C.glUniform1f(u[3], v.farRange());
         GL20C.glUniform1i(u[4], top);
         GL20C.glUniform1f(u[5], chunkRadius);
-        float[] planes = new float[20];
-        Vector4f plane = new Vector4f();
-        for (int i = 0; i < 5; i++) {
-            viewProjection.frustumPlane(i, plane);
-            planes[i * 4] = plane.x;
-            planes[i * 4 + 1] = plane.y;
-            planes[i * 4 + 2] = plane.z;
-            planes[i * 4 + 3] = plane.w;
-        }
-        GL20C.glUniform4fv(u[6], planes);
+        GL20C.glUniform4fv(u[6], frustumPlanes(viewProjection, null));
         GL20C.glUniform1i(u[7], b.recordHigh);
         GL20C.glUniform1i(u[8], commandRecords * NodeMesh.RANGES);
         GL20C.glUniform1i(u[9], probe == 2 ? 1 : 0);
         GL20C.glUniform1f(u[10], fadeStart);
         GL20C.glUniform1i(u[11], 0);
+        GL20C.glUniform3f(u[12], 0.0F, 0.0F, 0.0F);
+        GL20C.glUniform1i(u[13], 0);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 1, b.records);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 2, commands);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 3, counts);
@@ -640,6 +635,28 @@ public final class FarRenderer {
             fences[s] = GL32C.glFenceSync(GL32C.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         }
         slot = (s + 1) % RING;
+    }
+
+    /**
+     * The selection's six planes (camera-relative, inside where dot(xyz, p) + w >= 0): a matrix's frustum planes but the
+     * far one, then a cut plane, or (0, 0, 0, 1) for none.
+     */
+    static float[] frustumPlanes(Matrix4f matrix, float[] cut) {
+        float[] planes = new float[24];
+        Vector4f plane = new Vector4f();
+        for (int i = 0; i < 5; i++) {
+            matrix.frustumPlane(i, plane);
+            planes[i * 4] = plane.x;
+            planes[i * 4 + 1] = plane.y;
+            planes[i * 4 + 2] = plane.z;
+            planes[i * 4 + 3] = plane.w;
+        }
+        if (cut != null) {
+            System.arraycopy(cut, 0, planes, 20, 4);
+        } else {
+            planes[23] = 1.0F;
+        }
+        return planes;
     }
 
     static void clipControl(int origin, int mode) {
@@ -1039,7 +1056,7 @@ public final class FarRenderer {
      * and storage buffer bindings (generic and indexed 0 to 6, with their ranges), clip control, the cull face and the
      * front face. The unit 0 texture the layer's creation binds is GlState's.
      */
-    private record Saved(GlState state, int vao, int arrayBuffer, int copyRead, int copyWrite, int drawIndirect, int parameter, int storage, int[] storageIndexed,
+    record Saved(GlState state, int vao, int arrayBuffer, int copyRead, int copyWrite, int drawIndirect, int parameter, int storage, int[] storageIndexed,
                          long[] storageStart, long[] storageSize, int clipOrigin, int clipDepth, int cullFace, int frontFace) {
         static Saved capture() {
             GlState state = GlState.capture();

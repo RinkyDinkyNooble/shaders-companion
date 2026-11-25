@@ -16,8 +16,6 @@ public final class Config {
     public static final ForgeConfigSpec.BooleanValue BLOCK_ENTITIES;
     public static final ForgeConfigSpec.IntValue BLOCK_ENTITY_DISTANCE;
     public static final ForgeConfigSpec.IntValue MAX_BLOCK_ENTITIES;
-    public static final ForgeConfigSpec.BooleanValue DISTANT_HORIZONS;
-    public static final ForgeConfigSpec.IntValue LOD_DISTANCE;
     public static final ForgeConfigSpec.BooleanValue MIRROR;
     public static final ForgeConfigSpec.IntValue MIRROR_SCALE;
     public static final ForgeConfigSpec.BooleanValue MIRROR_LOD;
@@ -39,6 +37,7 @@ public final class Config {
     public static final ForgeConfigSpec.ConfigValue<String> FAR_TERRAIN;
     public static final ForgeConfigSpec.BooleanValue FAR_EDGE_FADE;
     public static final ForgeConfigSpec.IntValue FAR_SHADOW_SIZE;
+    public static final ForgeConfigSpec.BooleanValue FAR_TERRAIN_IN_VIEWS;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -75,12 +74,6 @@ public final class Config {
         MAX_BLOCK_ENTITIES = builder
                 .comment("Most block entities drawn per frame, nearest first.")
                 .defineInRange("maxBlockEntities", 32, 0, 1024);
-        DISTANT_HORIZONS = builder
-                .comment("Draw Distant Horizons' far terrain (LODs) beyond the render distance, when Distant Horizons is installed.")
-                .define("distantHorizons", true);
-        LOD_DISTANCE = builder
-                .comment("Furthest Distant Horizons terrain drawn, in blocks. 0 uses Distant Horizons' own range.")
-                .defineInRange("lodDistance", 0, 0, 65536);
         MIRROR = builder
                 .comment("Render the mirror view: the world mirrored in the largest water surfaces and glass walls on screen (as many as the shader pack asks for), for sharp reflections that show your own player.")
                 .define("mirror", true);
@@ -144,6 +137,9 @@ public final class Config {
         FAR_SHADOW_SIZE = builder
                 .comment("The far terrain's shadow map, drawn while the shader pack reads it (ABZA Shader 3's \"Far terrain shadows\"): pixels along a side of each of its two maps, the near one (512 blocks around you) and the far one (out to farRange). Larger is sharper and takes more video memory (2048: 32 MB).")
                 .defineInRange("farShadowSize", 2048, 512, 4096);
+        FAR_TERRAIN_IN_VIEWS = builder
+                .comment("Draw the far terrain into the mod's own views (the cube and the mirror view, which the shader pack's reflections read) while farStore is on and farTerrain isn't off. The views draw it also while Distant Horizons or a Voxy mod draws the far terrain on screen: nothing else draws far terrain into them (Shaders Companion 2.x drew Distant Horizons' terrain there).")
+                .define("farTerrainInViews", true);
         SPEC = builder.build();
     }
 
