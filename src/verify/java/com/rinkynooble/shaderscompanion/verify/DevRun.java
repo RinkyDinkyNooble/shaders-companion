@@ -3505,7 +3505,16 @@ public final class DevRun {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain info texture: {}", infoLine());
                 }
             } else if (t >= 80) {
-                phase++;
+                if (!TOGGLE.isEmpty()) {
+                    // M3b: -PdevToggle rounds (with -PdevBurst and -PdevProfile) at the vantage after the shots, then quits:
+                    // shots shaderscompanion-far-<tag>-<toggle>-<off|on><round>[-bNNN].png
+                    prefix = "shaderscompanion-far-" + System.getProperty("shaderscompanion.devTag", "run");
+                    timingRound = 0;
+                    setPackRound(0);
+                    phase = 4;
+                } else {
+                    phase++;
+                }
                 phaseTick = ticks;
             }
         } else if (phase == 82 || phase == 86) {
