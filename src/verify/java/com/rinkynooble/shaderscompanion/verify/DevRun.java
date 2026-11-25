@@ -718,9 +718,11 @@ public final class DevRun {
                 }
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run: built the hand scene");
             } else if (far) {
-                // A high vantage over mountains and sea (FAR_X/Y/Z, FAR_YAW: found by -PdevFarSearch), standing on a barrier
+                // A high vantage over mountains and sea (FAR_X/Y/Z, FAR_YAW: found by -PdevFarSearch), standing on a barrier;
+                // -PdevRain: rain from the start (M3c; the far store check leaves phase 1 at once, before the scenes' rain)
                 mc.options.hideGui = true;
-                for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 6000), "weather clear",
+                for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 6000),
+                        Boolean.getBoolean("shaderscompanion.devRain") ? "weather rain" : "weather clear",
                         "gamerule doDaylightCycle false", "gamerule doWeatherCycle false", "gamerule doMobSpawning false"}) {
                     mc.player.connection.sendCommand(command);
                 }
@@ -3120,6 +3122,102 @@ public final class DevRun {
     private static long flightServerCpu;
     private static long flightWall;
     private static long serverThreadId = -1;
+    /** M3c (-PdevFarFlight -PdevFarDraw): unbuiltColumns every tick of the flight out, and the jitter counters at its start. */
+    private static java.util.List<int[]> flightUnbuilt;
+    private static long[] flightJitter;
+
+    /**
+     * M3c: the chunk columns whose centre lies inside the far terrain's cylinder ((render distance - 1) x 16 blocks, where it
+     * draws nothing) and whose top section Embeddium hasn't built (or whose chunk the client hasn't got): the holes M5's
+     * coverage mask would fill. {inside, not built, not built ahead (within 60 degrees of the view)}.
+     */
+    private static int[] unbuiltColumns(Minecraft mc) {
+        var renderer = me.jellysquid.mods.sodium.client.render.SodiumWorldRenderer.instanceNullable();
+        if (renderer == null || mc.level == null) {
+            return new int[3];
+        }
+        var cam = mc.gameRenderer.getMainCamera().getPosition();
+        int radius = (mc.options.getEffectiveRenderDistance() - 1) * 16;
+        double yaw = Math.toRadians(mc.player.getYRot());
+        double fx = -Math.sin(yaw);
+        double fz = Math.cos(yaw);
+        int cx = (int) Math.floor(cam.x) >> 4;
+        int cz = (int) Math.floor(cam.z) >> 4;
+        int reach = radius / 16 + 1;
+        int inside = 0;
+        int unbuilt = 0;
+        int ahead = 0;
+        for (int dx = -reach; dx <= reach; dx++) {
+            for (int dz = -reach; dz <= reach; dz++) {
+                int x = cx + dx;
+                int z = cz + dz;
+                double ox = x * 16 + 8 - cam.x;
+                double oz = z * 16 + 8 - cam.z;
+                double d2 = ox * ox + oz * oz;
+                if (d2 > (double) radius * radius) {
+                    continue;
+                }
+                inside++;
+                var chunk = mc.level.getChunkSource().getChunk(x, z, net.minecraft.world.level.chunk.ChunkStatus.FULL, false);
+                boolean built = false;
+                if (chunk != null) {
+                    int top = chunk.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, 8, 8);
+                    built = renderer.isSectionReady(x, Math.floorDiv(top, 16), z);
+                }
+                if (!built) {
+                    unbuilt++;
+                    double d = Math.sqrt(d2);
+                    if (d < 16.0 || ox * fx + oz * fz > 0.5 * d) {
+                        ahead++;
+                    }
+                }
+            }
+        }
+        return new int[]{inside, unbuilt, ahead};
+    }
+
+    /** M3c: the flight's unbuilt columns: average, the most, the share of ticks with any, and ahead of the view. */
+    private static String unbuiltSummary() {
+        if (flightUnbuilt == null || flightUnbuilt.isEmpty()) {
+            return "no unbuilt column samples";
+        }
+        long inside = 0;
+        long sum = 0;
+        long ahead = 0;
+        int max = 0;
+        int any = 0;
+        int anyAhead = 0;
+        for (int[] u : flightUnbuilt) {
+            inside += u[0];
+            sum += u[1];
+            ahead += u[2];
+            max = Math.max(max, u[1]);
+            any += u[1] > 0 ? 1 : 0;
+            anyAhead += u[2] > 0 ? 1 : 0;
+        }
+        int n = flightUnbuilt.size();
+        return String.format("columns inside the radius %.0f on average, not built %.2f on average (at most %d; %.0f%% of %d ticks with any), ahead of the view %.2f "
+                + "(%.0f%% of ticks with any)", inside / (double) n, sum / (double) n, max, 100.0 * any / n, n, ahead / (double) n, 100.0 * anyAhead / n);
+    }
+
+    /** M3c: frames of the flight window much slower than its median (hitches a player feels). */
+    private static String slowFramesSummary() {
+        if (flightFrames == null || flightFrames.isEmpty()) {
+            return "no frames";
+        }
+        double[] f = flightFrames.stream().mapToDouble(Double::doubleValue).sorted().toArray();
+        double median = f[f.length / 2];
+        int twice = 0;
+        int over33 = 0;
+        int over50 = 0;
+        for (double v : f) {
+            twice += v > 2 * median ? 1 : 0;
+            over33 += v > 33.3 ? 1 : 0;
+            over50 += v > 50.0 ? 1 : 0;
+        }
+        return String.format("slow frames: %d over twice the median (%.2f ms), %d over 33 ms, %d over 50 ms, of %d (%.1f FPS on average)", twice, median, over33, over50,
+                f.length, f.length / (java.util.Arrays.stream(f).sum() / 1000.0));
+    }
 
     /**
      * -PdevFarFlight (with -PdevFarStore and -PdevFarRender=N): 50 waits a second after joining and teleports to the
@@ -3145,6 +3243,14 @@ public final class DevRun {
             if (t > 2) {
                 holdAt(mc, FLIGHT_AX, FLIGHT_AZ);
             }
+            if (FAR_DRAW && (t == 60 || t == 200 || t == 399)) {
+                // M3c: what the screen shows while the chunks after the teleport load (holes inside the radius: M5)
+                Screenshot.grab(mc.gameDirectory, String.format("shaderscompanion-farflight-%s-teleport-%04d.png", System.getProperty("shaderscompanion.devTag", "run"), t),
+                        mc.getMainRenderTarget(), message -> { });
+                int[] u = unbuiltColumns(mc);
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight teleport shot {} s: {} of {} columns inside the radius not built ({} ahead) | Far terrain: {}",
+                        t / 20, u[1], u[0], u[2], FarStore.terrainStatus());
+            }
             if (t % 20 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store after the teleport {} s: main thread {} us a frame (max {}), {} sections waiting | {}", t / 20,
                         String.format("%.0f", frame[0]), String.format("%.0f", frame[1]), (int) frame[2], FarStore.status());
@@ -3158,11 +3264,26 @@ public final class DevRun {
             }
         } else if (phase == 52) {
             holdAt(mc, FLIGHT_AX, FLIGHT_AZ);
-            storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+            boolean ready = FarStore.settledForChecks();
+            if (FAR_DRAW) {
+                // M3c: the far terrain meshed and on the GPU too before the flight
+                if (t % 20 == 0) {
+                    FarStore.terrainNumbersForChecks().whenComplete((n, e) -> meshNumbers = n);
+                }
+                long[] n = meshNumbers;
+                ready &= n != null && n[n.length - 11 + 5] == 0 && FarStore.gpuNumbersForChecks(false)[0] == 0;
+            }
+            storeSettledTicks = ready ? storeSettledTicks + 1 : 0;
             if (storeSettledTicks >= 100 || t >= 2400) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store before the flight ({} after {} s) | {}", storeSettledTicks >= 100 ? "settled" : "not settled",
                         t / 20, FarStore.status());
                 logWhenDone(FarStore.stats());
+                if (FAR_DRAW) {
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight start: Far terrain: {}", FarStore.terrainStatus());
+                    startMeshWindow();
+                    flightUnbuilt = new java.util.ArrayList<>();
+                    flightJitter = FarRenderer.jitterForChecks();
+                }
                 startFlightWindow(true);
                 phase = 53;
                 phaseTick = ticks;
@@ -3176,6 +3297,29 @@ public final class DevRun {
             double x = out ? FLIGHT_AX + (FLIGHT_BX - FLIGHT_AX) * f : FLIGHT_BX + (FLIGHT_AX - FLIGHT_BX) * f;
             double z = out ? FLIGHT_AZ + (FLIGHT_BZ - FLIGHT_AZ) * f : FLIGHT_BZ + (FLIGHT_AZ - FLIGHT_BZ) * f;
             holdAt(mc, x, z);
+            if (out && FAR_DRAW && t < flightTicks) {
+                // M3c: the chunk columns inside the radius Embeddium hasn't built, every tick; a shot every 2 s and a
+                // burst of 4 consecutive ticks every 20 s (popping, holes at the chunk edge, flicker, fog while moving)
+                flightUnbuilt.add(unbuiltColumns(mc));
+                if (t % 40 == 20 || t % 400 >= 200 && t % 400 < 204) {
+                    Screenshot.grab(mc.gameDirectory, String.format("shaderscompanion-farflight-%s-%04d.png", System.getProperty("shaderscompanion.devTag", "run"), t),
+                            mc.getMainRenderTarget(), message -> { });
+                }
+                if (t % 20 == 19) {
+                    int s = flightUnbuilt.size();
+                    int sum = 0;
+                    int max = 0;
+                    int ahead = 0;
+                    for (int i = Math.max(0, s - 20); i < s; i++) {
+                        sum += flightUnbuilt.get(i)[1];
+                        max = Math.max(max, flightUnbuilt.get(i)[1]);
+                        ahead += flightUnbuilt.get(i)[2];
+                    }
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight {} s: columns inside the radius {}, not built {} on average (at most {}), {} ahead "
+                                    + "| Far terrain: {}", t / 20, flightUnbuilt.get(s - 1)[0], String.format("%.1f", sum / 20.0), max, String.format("%.1f", ahead / 20.0),
+                            FarStore.terrainStatus());
+                }
+            }
             if (t % 20 == 19) {
                 if (out) {
                     storeFlyMax = Math.max(storeFlyMax, frame[1]);
@@ -3204,10 +3348,16 @@ public final class DevRun {
                             String.format("%.1f", wall / 1.0e9), distance, framesSummary(frames), loads, frameTimes, String.format("%.1f", 100.0 * worker / wall),
                             String.format("%.1f", 100.0 * render / wall), String.format("%.1f", 100.0 * server / wall), FarStore.countersSummary(before, after))));
                     logWhenDone(FarStore.stats());
+                    if (FAR_DRAW) {
+                        ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight with far terrain drawn: {}; {}; {}; frames drawn for the pack {}, with "
+                                        + "another frame counter than Oculus's {} | Far terrain: {}", unbuiltSummary(), slowFramesSummary(), meshWindowSummary(),
+                                FarRenderer.jitterForChecks()[0] - flightJitter[0], FarRenderer.jitterForChecks()[1] - flightJitter[1], FarStore.terrainStatus());
+                    }
                     phase = 54;
                 } else {
-                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store flight with the store off ({} s, render distance {}): {}",
-                            String.format("%.1f", (System.nanoTime() - flightWall) / 1.0e9), mc.options.getEffectiveRenderDistance(), frameTimesSummary());
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store flight with the store off ({} s, render distance {}): {}{}",
+                            String.format("%.1f", (System.nanoTime() - flightWall) / 1.0e9), mc.options.getEffectiveRenderDistance(), frameTimesSummary(),
+                            FAR_DRAW ? "; " + slowFramesSummary() : "");
                     flightFrames = null;
                     flightGpu = null;
                     phase = 56;
