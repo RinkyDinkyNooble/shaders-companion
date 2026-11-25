@@ -9,6 +9,9 @@
 // DrawElementsIndirectCommand (6 indices of the shared quad pattern a quad, base vertex = the range's first quad times 4,
 // base instance = the record) appended to one of 4 regions: opaque, opaque reaching into the chunk terrain or past the
 // start of the far edge's fade (drawn with the discarding program), translucent, translucent reaching in or out.
+// For the far shadow map (u_ShadowDirs set, FarShadow): the planes are a cascade's box, the face directions drawn are
+// the ones facing away from the light, opaque quads only, all into region 0, with no chunk terrain cut (u_ChunkRadius 0)
+// and no fade.
 
 layout(local_size_x = 64) in;
 
@@ -28,6 +31,7 @@ uniform int u_RecordCount;
 uniform int u_Region;          // commands a region holds
 uniform int u_OneQuad;         // dev checks: 1 draws one quad per command (the commands' own cost)
 uniform float u_FadeStart;     // the far edge's fade starts this far from the camera (0: no fade)
+uniform int u_ShadowDirs;      // the far shadow map's pass: bit d set for each face direction drawn; 0 for the main view
 
 const int RECORD_INTS = 48;
 const ivec3 STEP[6] = ivec3[6](ivec3(0, -1, 0), ivec3(0, 1, 0), ivec3(0, 0, -1), ivec3(0, 0, 1), ivec3(-1, 0, 0), ivec3(1, 0, 0));
@@ -111,12 +115,19 @@ void main() {
             return;
         }
     }
-    // The face directions the camera can see: down faces from below the geometry's top, and so on
+    // The face directions the camera can see: down faces from below the geometry's top, and so on (the shadow map's
+    // pass: those facing away from the light)
+    bool shadowPass = u_ShadowDirs != 0;
     bool see[6] = bool[6](gMax.y > 0.0, gMin.y < 0.0, gMax.z > 0.0, gMin.z < 0.0, gMax.x > 0.0, gMin.x < 0.0);
+    if (shadowPass) {
+        for (int d = 0; d < 6; d++) {
+            see[d] = ((u_ShadowDirs >> d) & 1) != 0;
+        }
+    }
     int size = 32 << level;
     // The discarding program for nodes that reach into the chunk terrain, or whose geometry reaches past the fade's start
     bool fades = u_FadeStart > 0.0 && length(max(abs(gMin), abs(gMax))) > u_FadeStart;
-    int clipped = reachesChunks(lo, size) || fades ? 1 : 0;
+    int clipped = !shadowPass && (reachesChunks(lo, size) || fades) ? 1 : 0;
     uint ranges = 0u;
     uint opaqueDraws = 0u;
     uint translucentDraws = 0u;
@@ -132,10 +143,13 @@ void main() {
                 continue;
             }
             int opaque = records[base + 32 + r];
+            if (shadowPass && opaque == 0) {
+                continue;
+            }
             ranges |= 1u << r;
             opaqueDraws += opaque > 0 ? 1u : 0u;
-            translucentDraws += count > opaque ? 1u : 0u;
-            quads += uint(count);
+            translucentDraws += count > opaque && !shadowPass ? 1u : 0u;
+            quads += uint(shadowPass ? opaque : count);
         }
     }
     if (ranges == 0u) {
@@ -158,7 +172,7 @@ void main() {
             writeCommand(opaqueRegion + o, opaque, first, id);
             o++;
         }
-        if (count > opaque) {
+        if (count > opaque && !shadowPass) {
             writeCommand(translucentRegion + t, count - opaque, first + opaque, id);
             t++;
         }

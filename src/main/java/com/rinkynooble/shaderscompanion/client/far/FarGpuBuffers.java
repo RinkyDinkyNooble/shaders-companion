@@ -57,6 +57,8 @@ final class FarGpuBuffers {
     int biomes;
     /** Record slots below this may be in use (the selection's invocation count). */
     int recordHigh;
+    /** Grows each time every mesh goes ({@link #clearAll}): what was drawn from the old ones is stale. */
+    int generation;
     private long coloursVersion = -1;
     private int[] coloursUploaded;
     private int[] infoUploaded;
@@ -163,6 +165,7 @@ final class FarGpuBuffers {
 
     /** Every mesh gone (a new residency, or the store stopped): every slot freed. */
     void clearAll() {
+        generation++;
         int saved = GL11C.glGetInteger(GL31C.GL_COPY_WRITE_BUFFER);
         clearRecords(0, recordCapacity);
         GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, saved);

@@ -38,6 +38,7 @@ public final class Config {
     public static final ForgeConfigSpec.IntValue FAR_GPU_MB;
     public static final ForgeConfigSpec.ConfigValue<String> FAR_TERRAIN;
     public static final ForgeConfigSpec.BooleanValue FAR_EDGE_FADE;
+    public static final ForgeConfigSpec.IntValue FAR_SHADOW_SIZE;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -140,6 +141,9 @@ public final class Config {
         FAR_EDGE_FADE = builder
                 .comment("Fade the far terrain out over the last tenth of farRange with a pattern the shader pack's TAA smooths into a soft edge (only while the pack jitters it for TAA).")
                 .define("farEdgeFade", true);
+        FAR_SHADOW_SIZE = builder
+                .comment("The far terrain's shadow map, drawn while the shader pack reads it (ABZA Shader 3's \"Far terrain shadows\"): pixels along a side of each of its two maps, the near one (512 blocks around you) and the far one (out to farRange). Larger is sharper and takes more video memory (2048: 32 MB).")
+                .defineInRange("farShadowSize", 2048, 512, 4096);
         SPEC = builder.build();
     }
 

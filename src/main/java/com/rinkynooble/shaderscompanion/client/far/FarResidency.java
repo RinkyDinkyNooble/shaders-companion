@@ -55,8 +55,11 @@ final class FarResidency {
      */
     private static final java.util.concurrent.atomic.AtomicLong BASES = new java.util.concurrent.atomic.AtomicLong(1L << 40);
 
-    /** The camera and the settings the rings come from (posted by the main thread). */
-    record View(double x, double y, double z, int renderDistance, int windowHeight, double fovDegrees, int pixelsPerVoxel, int farRange) {
+    /**
+     * The camera and the settings the rings come from (posted by the main thread). keepInside: the nodes inside the chunk
+     * terrain's cylinder stay resident too (the far shadow map draws them as shadow casters, FarShadow).
+     */
+    record View(double x, double y, double z, int renderDistance, int windowHeight, double fovDegrees, int pixelsPerVoxel, int farRange, boolean keepInside) {
         /** Blocks from which a level-0 voxel covers at most the allowed pixels (K). */
         double k() {
             return windowHeight / 2.0 / Math.tan(Math.toRadians(fovDegrees) / 2.0) / pixelsPerVoxel;
@@ -64,7 +67,7 @@ final class FarResidency {
 
         boolean sameRings(View o) {
             return o != null && renderDistance == o.renderDistance && windowHeight == o.windowHeight && fovDegrees == o.fovDegrees
-                    && pixelsPerVoxel == o.pixelsPerVoxel && farRange == o.farRange;
+                    && pixelsPerVoxel == o.pixelsPerVoxel && farRange == o.farRange && keepInside == o.keepInside;
         }
 
         double distance(View o) {
@@ -218,8 +221,8 @@ final class FarResidency {
             }
         }
         // The chunk terrain: Embeddium's cylinder of the render distance around the camera less one chunk (entering), less
-        // two (leaving), as FarRenderer.chunkRadius
-        double enterRadius = FarRenderer.chunkRadius(v.renderDistance);
+        // two (leaving), as FarRenderer.chunkRadius; none while the far shadow map wants the nodes there as casters
+        double enterRadius = v.keepInside ? 0 : FarRenderer.chunkRadius(v.renderDistance);
         double leaveRadius = Math.max(0, enterRadius - 16);
         for (int level = 0; level <= top; level++) {
             int size = Node.SIZE << level;
@@ -524,8 +527,9 @@ final class FarResidency {
             geometry += statusCount[level * 4 + MESHED];
         }
         lines.add(String.format("Far terrain: %d resident nodes, %d with geometry, %d quads (%d border, %d dark), %.1f MB of quads and palettes; far range %d, K %.0f, "
-                        + "camera %.0f %.0f %.0f, render distance %d", resident.size(), geometry, q, border, dark, b / 1048576.0, v == null ? 0 : v.farRange,
-                v == null ? 0.0 : v.k(), v == null ? 0.0 : v.x, v == null ? 0.0 : v.y, v == null ? 0.0 : v.z, v == null ? 0 : v.renderDistance));
+                        + "camera %.0f %.0f %.0f, render distance %d%s", resident.size(), geometry, q, border, dark, b / 1048576.0, v == null ? 0 : v.farRange,
+                v == null ? 0.0 : v.k(), v == null ? 0.0 : v.x, v == null ? 0.0 : v.y, v == null ? 0.0 : v.z, v == null ? 0 : v.renderDistance,
+                v != null && v.keepInside ? ", the chunk terrain's nodes kept for the far shadow map" : ""));
         for (int level = 0; level < Node.LEVELS; level++) {
             if (residentCount[level] == 0) {
                 continue;

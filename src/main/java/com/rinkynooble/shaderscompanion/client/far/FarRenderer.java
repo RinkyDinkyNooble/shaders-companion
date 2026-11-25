@@ -89,27 +89,37 @@ public final class FarRenderer {
     private static boolean checked;
     private static boolean available;
     private static String problem;
-    private static boolean clipControl;
-    private static boolean indirectCount;
-    private static boolean arbIndirectCount;
+    static boolean clipControl;
+    static boolean indirectCount;
+    static boolean arbIndirectCount;
     private static boolean arbClipControl;
 
-    private static int selectProgram;
+    static int selectProgram;
     private static final int[] terrainPrograms = new int[2];
     private static int overlayProgram;
-    private static int[] selectUniforms;
+    static int[] selectUniforms;
     private static final int[][] terrainUniforms = new int[2][];
     private static int[] overlayUniforms;
     private static final String[] SELECT_UNIFORMS = {"u_CameraBlock", "u_CameraFrac", "u_K", "u_Far", "u_TopLevel", "u_ChunkRadius", "u_Planes", "u_RecordCount",
-            "u_Region", "u_OneQuad", "u_FadeStart"};
+            "u_Region", "u_OneQuad", "u_FadeStart", "u_ShadowDirs"};
     private static final String[] TERRAIN_UNIFORMS = {"u_ViewProjection", "u_CameraBlock", "u_CameraFrac", "u_StateCount", "u_BiomeCount", "u_Translucent",
-            "u_ChunkRadius", "u_LogDepth", "u_Near", "u_Jitter", "u_ViewZ", "u_DepthMapping", "u_FarNear", "u_FadeStart", "u_FarRange", "u_FrameIndex"};
+            "u_ChunkRadius", "u_LogDepth", "u_Near", "u_Jitter", "u_ViewZ", "u_DepthMapping", "u_FarNear", "u_FadeStart", "u_FarRange", "u_FrameIndex", "u_PlantShade",
+            "u_PlantFade"};
+    /**
+     * A planted face's colour factor (on its encoded colour): a level-0 up face with a plant on it, which the far terrain
+     * leaves out (FarMesher.PLANTED). Measured at the seam (research/lod/M3.md, "Round B"): the chunk terrain shows a
+     * block with a plant on it at 0.58 of a bare grass top's luminance (linear), 0.594 against the far terrain's 0.98,
+     * and 0.594 ^ (1 / 2.2) = 0.79.
+     */
+    static final float PLANT_SHADE = 0.79F;
+    /** Dev checks: another factor for the planted faces (-PdevFarPlantShade), or NaN. */
+    private static float plantShadeForChecks = Float.NaN;
     private static final String[] OVERLAY_UNIFORMS = {"u_InverseProjection", "u_ScreenSize", "u_Alone", "u_UseScene", "u_SunDir", "u_Daylight", "u_FarRange", "u_FogColor"};
     /** The overlay's texture units: the two layers' albedo and data, the far depth, the scene's depth. */
     private static final int OVERLAY_UNITS = 6;
 
     private static FarGpuBuffers buffers;
-    private static int vao;
+    static int vao;
     /** The instance id buffer generation the vertex array points at, plus one (0: none yet). */
     private static int vaoInstanceIds;
     private static int overlayVao;
@@ -195,6 +205,7 @@ public final class FarRenderer {
                     terrainUniforms[i] = uniforms(terrainPrograms[i], TERRAIN_UNIFORMS);
                 }
                 overlayProgram = link("far overlay", compile(GL20C.GL_VERTEX_SHADER, "far_overlay.vsh"), compile(GL20C.GL_FRAGMENT_SHADER, "far_overlay.fsh"));
+                FarShadow.compile();
             } catch (RuntimeException e) {
                 ShadersCompanion.LOGGER.error("Shaders Companion far terrain: its programs failed; the debug view is off", e);
                 problem = "its shaders failed (see the log)";
@@ -211,7 +222,7 @@ public final class FarRenderer {
         return available;
     }
 
-    private static int compile(int type, String name) {
+    static int compile(int type, String name) {
         return compile(type, name, "");
     }
 
@@ -241,7 +252,7 @@ public final class FarRenderer {
         return id;
     }
 
-    private static int link(String name, int... shaders) {
+    static int link(String name, int... shaders) {
         int program = GL20C.glCreateProgram();
         for (int shader : shaders) {
             GL20C.glAttachShader(program, shader);
@@ -259,7 +270,7 @@ public final class FarRenderer {
         return program;
     }
 
-    private static int[] uniforms(int program, String[] names) {
+    static int[] uniforms(int program, String[] names) {
         int[] out = new int[names.length];
         for (int i = 0; i < names.length; i++) {
             out[i] = GL20C.glGetUniformLocation(program, names[i]);
@@ -327,6 +338,7 @@ public final class FarRenderer {
             overlayVao = 0;
         }
         deleteLayer();
+        FarShadow.release();
         // The layers back to 1 x 1 (a pack binding them never gets the missing texture)
         FarTextures.release();
         selectNanos = drawNanos = overlayNanos = -1;
@@ -396,9 +408,12 @@ public final class FarRenderer {
             boolean fade = mode == FarStore.MODE_PACK && Config.FAR_EDGE_FADE.get();
             draw(camera, view, v, jitterX, jitterY, fade ? v.farRange() * FADE_FROM : 0.0F, index);
             if (forPack) {
+                // The far shadow map while the pack binds it (a cascade redrawn when due), then the info with its texels
+                float[] shadow = FarShadow.frame(camera.getPosition(), v, buffers, topLevel(v));
                 FarTextures.writeDrawn(frameCounter, farNear, farFar, v.farRange(), chunkRadius(v.renderDistance()), projection.m00(), projection.m11(),
-                        jitterX, jitterY, layerWidth, layerHeight);
+                        jitterX, jitterY, layerWidth, layerHeight, shadow);
             } else {
+                FarShadow.release();
                 FarTextures.writeNotDrawn();
             }
             drewThisFrame = true;
@@ -505,6 +520,7 @@ public final class FarRenderer {
         GL20C.glUniform1i(u[8], commandRecords * NodeMesh.RANGES);
         GL20C.glUniform1i(u[9], probe == 2 ? 1 : 0);
         GL20C.glUniform1f(u[10], fadeStart);
+        GL20C.glUniform1i(u[11], 0);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 1, b.records);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 2, commands);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 3, counts);
@@ -569,6 +585,9 @@ public final class FarRenderer {
             GL20C.glUniform1f(t[13], fadeStart);
             GL20C.glUniform1f(t[14], v.farRange());
             GL20C.glUniform1i(t[15], frameIndex);
+            GL20C.glUniform1f(t[16], Float.isNaN(plantShadeForChecks) ? PLANT_SHADE : plantShadeForChecks);
+            // Level 0 is drawn out to about 2K (its parent splits nearer than that): faded out from 1.25K to 2K less a node
+            GL20C.glUniform2f(t[17], (float) (k * 1.25), (float) Math.max(k * 1.25 + 1.0, k * 2.0 - Node.SIZE));
         }
         int max = commandRecords * NodeMesh.RANGES;
         boolean discard = probe == 1 && !GL11C.glIsEnabled(GL30C.GL_RASTERIZER_DISCARD);
@@ -623,7 +642,7 @@ public final class FarRenderer {
         slot = (s + 1) % RING;
     }
 
-    private static void clipControl(int origin, int mode) {
+    static void clipControl(int origin, int mode) {
         if (arbClipControl) {
             ARBClipControl.glClipControl(origin, mode);
         } else {
@@ -730,7 +749,7 @@ public final class FarRenderer {
      * buffer is the shared quad pattern (quad q: 4q, 4q + 1, 4q + 2, 4q, 4q + 2, 4q + 3), which a command offsets to its
      * range by its base vertex (4 per quad).
      */
-    private static void ensureVao() {
+    static void ensureVao() {
         if (vao == 0) {
             vao = GL30C.glGenVertexArrays();
             int[] pattern = new int[PATTERN_QUADS * 6];
@@ -760,6 +779,7 @@ public final class FarRenderer {
 
     /** Reads finished GPU timestamps and counters (never waits). */
     private static void readBack() {
+        FarShadow.readBack();
         for (int i = 0; i < RING; i++) {
             if (fences[i] != 0) {
                 int status = GL32C.glClientWaitSync(fences[i], 0, 0L);
@@ -927,11 +947,11 @@ public final class FarRenderer {
         String jitter = jitterFrames == 0 ? "" : String.format("; the frame counter was Oculus's in %d of %d frames drawn for the pack", jitterFrames - jitterMismatches,
                 jitterFrames);
         return String.format("%d meshes on the GPU (%.1f MB of %.0f MB%s), %d drawn (%d quads, %d draws), GPU %s (selection %s, draw %s%s), "
-                        + "uploads %.1f MB a second%s, render thread %.0f us a frame for the draw%s%s%s", b.meshesOnGpu(),
+                        + "uploads %.1f MB a second%s, render thread %.0f us a frame for the draw%s%s%s%s", b.meshesOnGpu(),
                 b.geometryBytesUsed() / 1048576.0, b.geometryBytes / 1048576.0, b.dirtyCount() > 0 ? ", " + b.dirtyCount() + " waiting to upload" : "",
                 nodesDrawn, quadsDrawn, commandsDrawn, ms(selectNanos < 0 ? -1 : selectNanos + drawNanos), ms(selectNanos), ms(drawNanos), overlay,
                 b.lastSecondBytes / 1048576.0, b.noRoom > 0 ? ", " + b.noRoom + " meshes didn't fit" : "", cpuNanos / 1.0e3,
-                forPack ? "" : String.format(", %.0f for the overlay", overlayCpuNanos / 1.0e3), jitter, alone ? "; shown alone" : "");
+                forPack ? "" : String.format(", %.0f for the overlay", overlayCpuNanos / 1.0e3), jitter, alone ? "; shown alone" : "", FarShadow.status());
     }
 
     private static String ms(long nanos) {
@@ -946,6 +966,11 @@ public final class FarRenderer {
     /** Dev checks: drawing paused (true) or not, the buffers kept. */
     public static void pauseForChecks(boolean pause) {
         paused = pause;
+    }
+
+    /** Dev checks: the planted faces' colour factor for the run (NaN: the mod's own). */
+    public static void plantShadeForChecks(float factor) {
+        plantShadeForChecks = factor;
     }
 
     /** Dev checks: the debug view alone (true) or over the frame. */
@@ -998,7 +1023,15 @@ public final class FarRenderer {
         if (b == null) {
             return new long[3];
         }
-        return new long[]{b.geometryBytes, b.geometryBytesUsed(), b.bytesAllocated() + commandBytes() + layerBytes()};
+        return new long[]{b.geometryBytes, b.geometryBytesUsed(), b.bytesAllocated() + commandBytes() + layerBytes() + FarShadow.bytes()};
+    }
+
+    /**
+     * Dev checks: the far shadow map since the last call: per cascade the redraws, the median and max GPU nanos of a
+     * redraw, the last redraw's quads; then the frames drawn, the frames with a redraw, and 1 when both cascades are in use.
+     */
+    public static long[] shadowNumbersForChecks() {
+        return FarShadow.numbersForChecks();
     }
 
     /**

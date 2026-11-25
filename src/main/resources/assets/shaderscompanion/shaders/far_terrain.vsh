@@ -23,6 +23,8 @@ uniform int u_BiomeCount;      // biomes with colours
 uniform int u_Translucent;     // 1 in the water and glass pass
 uniform vec2 u_Jitter;         // added to clip-space x and y (times w): the pack's TAA offset, 0 without
 uniform vec4 u_ViewZ;          // the view matrix's z row (gbufferModelView's): view-space z of a camera-relative position
+uniform float u_PlantShade;    // a planted face's colour factor (word 1's top bit: a level-0 up face with a plant on it)
+uniform vec2 u_PlantFade;      // the factor fades out from x to y blocks, before level 0 ends (coarser levels know no plants)
 
 out vec3 v_Position;
 out float v_ViewZ;
@@ -92,6 +94,10 @@ void main() {
                 albedo.rgb *= unpackColour(biomeColours[biome * 4u + kind - 1u]);
             }
         }
+    }
+    if ((w1 >> 31) != 0u) {
+        // The plants the far terrain leaves out darken the ground they stand on (their colour, shadows and occlusion)
+        albedo.rgb *= mix(u_PlantShade, 1.0, smoothstep(u_PlantFade.x, u_PlantFade.y, length(position)));
     }
     albedo.a = u_Translucent != 0 ? max(albedo.a, 1.0 / 255.0) : 1.0;
     v_Albedo = albedo;

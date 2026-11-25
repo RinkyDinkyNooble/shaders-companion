@@ -17,7 +17,8 @@ package com.rinkynooble.shaderscompanion.client.far;
  * <li>word 1: bits 0-13 the index into {@link #palette}, 14-21 the light of the voxel in front of the face (sky light
  * in the high nibble, block light in the low one, as the store keeps it), 22-29 corner shading (2 bits a corner,
  * corners (u0, v0), (u1, v0), (u1, v1), (u0, v1) from the low bits; 3 is unshaded, 0 the darkest; all 3 while
- * {@link FarMesher#cornerShading} is off), 30-31 zero.</li>
+ * {@link FarMesher#cornerShading} is off), 30 zero, 31 planted ({@link FarMesher#PLANTED}: a level-0 up face with a
+ * plant on it, which the far terrain leaves out; the shaders darken it).</li>
  * </ul>
  * The in-plane axes: down and up faces u = x, v = z; north and south u = x, v = y; west and east u = z, v = y. A face
  * lies on the voxel's side in its direction: an up face of voxel y at height y + 1, a down face at y, and so on, in

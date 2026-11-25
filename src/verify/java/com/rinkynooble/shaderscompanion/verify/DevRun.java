@@ -728,7 +728,8 @@ public final class DevRun {
                 mc.options.hideGui = true;
                 for (String command : new String[]{"time set " + Integer.getInteger("shaderscompanion.devTime", 6000),
                         Boolean.getBoolean("shaderscompanion.devRain") ? "weather rain" : "weather clear",
-                        "gamerule doDaylightCycle false", "gamerule doWeatherCycle false", "gamerule doMobSpawning false"}) {
+                        // Round B: -PdevCycle lets the time run (the far shadow map's redraws as the sun moves)
+                        "gamerule doDaylightCycle " + Boolean.getBoolean("shaderscompanion.devCycle"), "gamerule doWeatherCycle false", "gamerule doMobSpawning false"}) {
                     mc.player.connection.sendCommand(command);
                 }
                 MinecraftServer server = mc.getSingleplayerServer();
@@ -2106,6 +2107,10 @@ public final class DevRun {
             String[] lines = DebugOverlay.statusLines();
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with {} {}: {} | {}", TOGGLE, label, frameTiming(),
                     lines.length > 3 ? lines[1] + " | " + lines[3] : "");
+            if (FAR) {
+                // Round B: the far shadow map over the round
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far shadow map with {} {}: {}", TOGGLE, label, shadowLine());
+            }
             phaseTick = ticks;
             if (timingRound == 1 && Boolean.getBoolean("shaderscompanion.devResourceReload")) {
                 // -PdevResourceReload: block models are baked again before the third round
@@ -2768,8 +2773,11 @@ public final class DevRun {
             return;
         }
         if (TOGGLE.equals("renderDistance")) {
-            // Integration round A: -PdevToggle=renderDistance:5:8, the render distance per round (restored at the end with -PdevFarRender)
-            Minecraft.getInstance().options.renderDistance().set(Integer.parseInt(text));
+            // Integration round A: -PdevToggle=renderDistance:5:8, the render distance per round (restored at the end with -PdevFarRender);
+            // round B: a value "5@0.85" also sets the far terrain's planted faces' colour factor for the round (the mod's own otherwise)
+            String[] parts = text.split("@");
+            Minecraft.getInstance().options.renderDistance().set(Integer.parseInt(parts[0]));
+            FarRenderer.plantShadeForChecks(parts.length > 1 ? Float.parseFloat(parts[1]) : Float.NaN);
             return;
         }
         try {
@@ -3290,6 +3298,8 @@ public final class DevRun {
                 logWhenDone(FarStore.stats());
                 if (FAR_DRAW) {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight start: Far terrain: {}", FarStore.terrainStatus());
+                    // Round B: the far shadow map's redraws counted from here
+                    FarRenderer.shadowNumbersForChecks();
                     startMeshWindow();
                     flightUnbuilt = new java.util.ArrayList<>();
                     flightJitter = FarRenderer.jitterForChecks();
@@ -3362,6 +3372,7 @@ public final class DevRun {
                         ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight with far terrain drawn: {}; {}; {}; frames drawn for the pack {}, with "
                                         + "another frame counter than Oculus's {} | Far terrain: {}", unbuiltSummary(), slowFramesSummary(), meshWindowSummary(),
                                 FarRenderer.jitterForChecks()[0] - flightJitter[0], FarRenderer.jitterForChecks()[1] - flightJitter[1], FarStore.terrainStatus());
+                        ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight's far shadow map: {}", shadowLine());
                     }
                     phase = 54;
                 } else {
@@ -3604,11 +3615,19 @@ public final class DevRun {
         return FarStore.drawMode() == FarStore.MODE_PACK || FarStore.drawMode() == FarStore.MODE_PACK_STILL;
     }
 
+    /** Round B: the far shadow map's redraws since the last call, their GPU time and quads, as a log line. */
+    private static String shadowLine() {
+        long[] s = FarRenderer.shadowNumbersForChecks();
+        return String.format("over %d frames, %d with a redraw; cascade 0 redrawn %d times (GPU median %s ms, max %s, %d quads), cascade 1 %d times "
+                        + "(GPU median %s ms, max %s, %d quads); in use: %s", s[8], s[9], s[0], ms(s[1]), ms(s[2]), s[3], s[4], ms(s[5]), ms(s[6]), s[7],
+                s[10] == 1 ? "yes" : "no");
+    }
+
     /** The info texture's 16 floats as a log line (M3a). */
     private static String infoLine() {
         float[] f = FarTextures.infoForChecks();
         StringBuilder s = new StringBuilder();
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < f.length / 4; i++) {
             s.append(i == 0 ? "" : ", ").append(String.format("texel %d (%s, %s, %s, %s)", i, f[i * 4], f[i * 4 + 1], f[i * 4 + 2], f[i * 4 + 3]));
         }
         float[] planes = FarRenderer.depthPlanesForChecks();

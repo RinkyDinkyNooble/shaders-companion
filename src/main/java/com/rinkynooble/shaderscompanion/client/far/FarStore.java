@@ -268,8 +268,10 @@ public final class FarStore {
             return;
         }
         long start = System.nanoTime();
+        // While the pack binds the far shadow map, the nodes inside the chunk terrain stay resident as its shadow casters
+        boolean keepInside = FarTextures.shadowWanted() && (drawMode == MODE_PACK || drawMode == MODE_PACK_STILL);
         FarResidency.View view = new FarResidency.View(camera.getPosition().x, camera.getPosition().y, camera.getPosition().z, mc.options.getEffectiveRenderDistance(),
-                mc.getWindow().getHeight(), mc.options.fov().get(), Config.FAR_PIXELS_PER_VOXEL.get(), farRange());
+                mc.getWindow().getHeight(), mc.options.fov().get(), Config.FAR_PIXELS_PER_VOXEL.get(), farRange(), keepInside);
         frameView = view;
         if (postedView == null || !view.sameRings(postedView) || view.distance(postedView) >= 32
                 || start - postedAt >= 250_000_000L && view.distance(postedView) >= 1) {

@@ -54,6 +54,15 @@ final class FarMesher {
     static final int TINTED = 8;
     /** FarNodes.meshClass: drawn in the translucent pass (water, stained glass, ice): its quads follow a range's opaque ones. */
     static final int TRANSLUCENT = 16;
+    /** FarNodes.meshClass: a plant without collision (grass, ferns, flowers, crops; class AIR). */
+    static final int PLANT = 32;
+    /** A face layer value's bit for a plant voxel ({@link #layerValue}). */
+    static final int LAYER_PLANT = 1 << 11;
+    /**
+     * Quad word 1's top bit (NodeMesh): a level-0 up face with a plant on it, which the far terrain leaves out; the
+     * shaders darken it ({@code far_terrain.vsh}'s u_PlantShade), as the plants darken the chunk terrain's ground.
+     */
+    static final int PLANTED = 1 << 31;
     /** Seam faces only where the neighbour's voxel is this close (in its face layer) to an open one. */
     static final int SKIRT_REACH = 2;
     /** Corner shading in the quads (2 bits a corner); off: every corner 3 (unshaded), which merges best. */
@@ -186,9 +195,10 @@ final class FarMesher {
         return c;
     }
 
-    /** A face layer's value for one voxel: its mesh class << 8 | its light. */
+    /** A face layer's value for one voxel: its mesh class << 8 | its light, and {@link #LAYER_PLANT} for a plant. */
     static short layerValue(int id, int light, byte[] classes, int classCount, boolean fill) {
-        return (short) (voxelClass(id, light, classes, classCount, fill) << 8 | light & 0xFF);
+        boolean plant = id >= 0 && id < classCount && (classes[id] & PLANT) != 0;
+        return (short) (voxelClass(id, light, classes, classCount, fill) << 8 | light & 0xFF | (plant ? LAYER_PLANT : 0));
     }
 
     /**
@@ -289,6 +299,7 @@ final class FarMesher {
         private int waterId;
         private int stoneId;
         private boolean fill;
+        private int level;
         private boolean exposedReady;
         private boolean skirtAny;
         private int minX;
@@ -322,6 +333,7 @@ final class FarMesher {
             classCount = job.classCount;
             waterId = job.waterId;
             stoneId = job.stoneId;
+            level = job.level;
             fill = job.caveFill();
             boolean uniform;
             int uniformState = job.uniformState;
@@ -473,6 +485,8 @@ final class FarMesher {
             int border = sign > 0 ? 31 : 0;
             short[] layer = layers[d];
             boolean shading = cornerShading;
+            // Level 0's up faces: whether a plant stands on the face (the voxel in front)
+            boolean plants = d == 1 && level == 0;
             skirtAny = false;
             exposedReady = false;
             byte[] c = cls;
@@ -510,18 +524,22 @@ final class FarMesher {
                         }
                         int nc;
                         int nl;
+                        boolean planted;
                         if (!atBorder) {
                             int j = i + sign * sa;
                             nc = c[j];
                             nl = light[j] & 0xFF;
+                            int ns = state[j];
+                            planted = plants && ns >= 0 && ns < classCount && (classes[ns] & PLANT) != 0;
                         } else {
                             int lv = layer.length == 1 ? layer[0] : layer[m];
                             nc = lv >> 8 & 7;
                             nl = lv & 0xFF;
+                            planted = plants && (lv & LAYER_PLANT) != 0;
                         }
                         if (FACE[sc << 3 | nc]) {
                             int shade = shading ? shade(d, i) : FULL_SHADE;
-                            mask[m] = key(i, sc, nl, shade);
+                            mask[m] = key(i, sc, nl, shade) | (planted ? PLANTED : 0);
                             any = true;
                         } else if (atBorder && SKIRT[sc << 3 | nc]) {
                             if (!exposedReady) {
@@ -588,7 +606,8 @@ final class FarMesher {
             for (int v = 0; v < 32; v++) {
                 for (int u = 0; u < 32; u++) {
                     int k = keys[v * 32 + u];
-                    if (k < 0) {
+                    // -1: no face (a planted face's key has its top bit set too)
+                    if (k == -1) {
                         continue;
                     }
                     int w = 1;

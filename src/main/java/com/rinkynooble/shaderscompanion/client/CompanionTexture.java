@@ -7,7 +7,9 @@ import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.server.packs.resources.ResourceManager;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL12C;
+import org.lwjgl.opengl.GL14C;
 import org.lwjgl.opengl.GL21C;
+import org.lwjgl.opengl.GL30C;
 import org.lwjgl.system.MemoryUtil;
 
 /**
@@ -36,24 +38,33 @@ final class CompanionTexture extends AbstractTexture {
     static final int FAR_INFO = FAR + 1;
     /** The same texture as {@code far_info_still} (the layers not jittered). */
     static final int FAR_INFO_STILL = FAR + 2;
+    /** The far terrain's shadow map ({@code far_shadow}). */
+    static final int FAR_SHADOW = FAR + 3;
 
     /** Per group: how often a texture's id was asked for from outside the mod (render thread only). */
-    private static final long[] requests = new long[FAR_INFO_STILL + 1];
+    private static final long[] requests = new long[FAR_SHADOW + 1];
 
     private final int group;
     private final int internalFormat;
     private final int format;
     private final int type;
     private final int filter;
+    /** A depth texture read through a shadow sampler: compared (less or equal) against the lookup's reference. */
+    private final boolean compare;
     private int width;
     private int height;
 
     CompanionTexture(int group, int internalFormat, int format, int type, int filter) {
+        this(group, internalFormat, format, type, filter, false);
+    }
+
+    CompanionTexture(int group, int internalFormat, int format, int type, int filter, boolean compare) {
         this.group = group;
         this.internalFormat = internalFormat;
         this.format = format;
         this.type = type;
         this.filter = filter;
+        this.compare = compare;
     }
 
     @Override
@@ -177,6 +188,10 @@ final class CompanionTexture extends AbstractTexture {
         GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_WRAP_S, GL12C.GL_CLAMP_TO_EDGE);
         GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_WRAP_T, GL12C.GL_CLAMP_TO_EDGE);
         GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL12C.GL_TEXTURE_MAX_LEVEL, 0);
+        if (this.compare) {
+            GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL14C.GL_TEXTURE_COMPARE_MODE, GL30C.GL_COMPARE_REF_TO_TEXTURE);
+            GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL14C.GL_TEXTURE_COMPARE_FUNC, GL11C.GL_LEQUAL);
+        }
         Gl.bindTextureIfAlive(previous);
         this.width = width;
         this.height = height;

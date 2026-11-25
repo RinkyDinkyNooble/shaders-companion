@@ -464,7 +464,9 @@ final class FarNodes {
                 translucent = false;
             }
         }
-        return (byte) (c | (tinted ? FarMesher.TINTED : 0) | (translucent ? FarMesher.TRANSLUCENT : 0));
+        // Plants without collision (grass, ferns, flowers, crops: bushes) over a face darken it at level 0 (FarMesher)
+        boolean plant = (f & THIN) != 0 && state.getBlock() instanceof net.minecraft.world.level.block.BushBlock;
+        return (byte) (c | (tinted ? FarMesher.TINTED : 0) | (translucent ? FarMesher.TRANSLUCENT : 0) | (plant ? FarMesher.PLANT : 0));
     }
 
     /** Every state id's mesh class so far (worker thread; the array is shared with mesh jobs, entries never change). */

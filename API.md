@@ -279,12 +279,12 @@ customTexture.scFarInfo = shaderscompanion:far_info_still
 
 | Texture | Format | Contents |
 |---|---|---|
-| `far_albedo` | RGBA8 | rgb: the face's average colour (its texture's pixels, tinted by the biome as chunk meshes are), encoded like Minecraft's textures (sRGB). a: 1 on a surface, 0 where nothing was drawn. |
+| `far_albedo` | RGBA8 | rgb: the face's average colour (its texture's pixels, tinted by the biome as chunk meshes are), encoded like Minecraft's textures (sRGB). From 3.0.0-dev4 a top face with a plant on it (grass, ferns, flowers, crops: the far terrain draws no plants) is darkened to 0.79 of that (0.59 in linear light, as the plant darkens its block in the chunk terrain), out to 1.25 K blocks (K: the far terrain's level-0 distance, 252 at 1009 pixels high, FOV 90, `farPixelsPerVoxel` 2) and fading out by 2 K, past which the far terrain holds no plants. a: 1 on a surface, 0 where nothing was drawn. |
 | `far_data` | RGBA16 | As `cube_data`, read with `uint v = uint(round(x * 65535.0))`. r: the face's normal (world space, axis-aligned), octahedral, high byte x, low byte y. g: light, high byte block light, low byte sky light (each / 255; the light of the air in front of the face). b: the block's `block.properties` id + 1 (0 for an unlisted block), with the material class bits when the pack reads the material table ("Material classes"). a: the block's own light emission / 15. |
 | `far_depth` | RG32F | r: the opaque surface's depth, g: the translucent surface's depth where one lies in front of the opaque one; 1.0 where there is none. Depth is OpenGL's window depth of the point's view-space z (in `gbufferModelView` space, negative in front) under a perspective depth mapping with near N and far F (texel 1 of the info): `0.5 + 0.5 * ((F + N) / (F - N) - 2 F N / ((F - N) * -z))`, below 1 even past F. So the projection that turns it into a position is `gbufferProjection` with `[2].z = -(F + N) / (F - N)` and `[3].z = -2 F N / (F - N)`, and its inverse `gbufferProjectionInverse` with `[2].w = -(F - N) / (2 F N)` and `[3].w = (F + N) / (2 F N)`, as `dhProjection` relates to Distant Horizons' depth. |
 | `far_translucent_albedo` | RGBA8 | As `far_albedo`; a is the face's coverage (at least 1/255) where the translucent layer has a surface, 0 elsewhere. |
 | `far_translucent_data` | RGBA16 | As `far_data`, for the translucent surface. |
-| `far_info` | RGBA32F, 4 x 1 | Texel 0: `(4242, protocol 1, drawn, frame counter mod 4096)`; drawn is 1 when this frame's layers hold far terrain, 0 otherwise (then the other texels are 0); the frame counter is Oculus's `frameCounter` of this frame. Texel 1: `(N, F, far range, chunk terrain radius)`: the depth mapping's planes, how far the far terrain reaches (blocks from the camera; a pack's fog and far plane), and the radius inside which nothing is drawn (blocks, horizontally and vertically: (render distance - 1) x 16, where Embeddium's chunks still draw). Texel 2: `(projection [0].x, projection [1].y, jitter x, jitter y)`: the projection the layers were drawn with and the jitter added to clip-space x and y (`gl_Position.xy += jitter * gl_Position.w`; 0 with `far_info_still`). Texel 3: `(width, height, 0, 0)` of the layers. |
+| `far_info` | RGBA32F, 12 x 1 (4 x 1 before 3.0.0-dev4) | Texels 4 to 11: the far shadow map's (below). Texel 0: `(4242, protocol 1, drawn, frame counter mod 4096)`; drawn is 1 when this frame's layers hold far terrain, 0 otherwise (then the other texels are 0); the frame counter is Oculus's `frameCounter` of this frame. Texel 1: `(N, F, far range, chunk terrain radius)`: the depth mapping's planes, how far the far terrain reaches (blocks from the camera; a pack's fog and far plane), and the radius inside which nothing is drawn (blocks, horizontally and vertically: (render distance - 1) x 16, where Embeddium's chunks still draw). Texel 2: `(projection [0].x, projection [1].y, jitter x, jitter y)`: the projection the layers were drawn with and the jitter added to clip-space x and y (`gl_Position.xy += jitter * gl_Position.w`; 0 with `far_info_still`). Texel 3: `(width, height, 0, 0)` of the layers. |
 
 All layer textures use nearest filtering; read them with `texelFetch` at the pixel, or `textureLod` at its centre.
 
@@ -300,11 +300,40 @@ All layer textures use nearest filtering; read them with `texelFetch` at the pix
 
 **Not drawn:** without OpenGL 4.3, while Distant Horizons draws far terrain or a Voxy mod is loaded (unless the player sets `farTerrain = companion`), and while the player's far terrain is off (`farStore`, `farTerrain`).
 
+### The far shadow map (3.0.0-dev4, an addition to far protocol 1)
+
+```properties
+customTexture.scFarShadow = shaderscompanion:far_shadow
+```
+
+```glsl
+uniform sampler2DShadow scFarShadow;
+```
+
+The far terrain drawn from the light, depth only, for the far terrain's own shadows past the pack's shadow map. Drawn only while the pack binds `far_shadow` and the far terrain is drawn for it (the pack binds `far_info` or `far_info_still` too); a pack that doesn't bind it costs nothing. The light is the pack's own: the rotation of Oculus's shadow model view (`shadowModelView`: the sun by day, the moon by night, with the pack's `sunPathRotation`), so its shadows fall where the pack's shadow map puts the near ones; nothing is drawn before Oculus's first shadow pass.
+
+`far_shadow` is a `DEPTH_COMPONENT32F` texture of `2N x N` texels (`N` is the player's `farShadowSize`, 2,048 by default): two square cascades side by side, cascade 0 in the left half and cascade 1 in the right half. Each is an orthographic view along the light, centred on the camera: cascade 0 holds 512 blocks around it (in the light's plane), cascade 1 the far range, each with an eighth more as margin. It is set up for a shadow sampler: linear filtering with the comparison on (`GL_COMPARE_REF_TO_TEXTURE`, `GL_LEQUAL`), so one `texture(scFarShadow, vec3(coord, reference))` gives the lit share of the 2 x 2 texels around the coordinate (1 where the reference depth is at or in front of the stored one); read it only through a `sampler2DShadow`.
+
+What it holds: the faces of the far terrain's opaque blocks that look away from the light (back faces), of every far terrain node the main view would draw at this ring choice, and also the nodes inside the chunk terrain's radius (kept for this while the pack binds the map), so the hills around the player shade far terrain too. With back faces a surface lit by the light is never behind a face of its own block, so a small bias is enough, and the chunk terrain's real blocks (a slab, snow, a block the far terrain holds coarser) are still lit when they lie inside the far terrain's voxel. No water, glass or other translucent blocks, and no plants (the far terrain has none).
+
+A cascade is redrawn (at most one a frame) when the camera has moved an eighth of its reach, when the light has turned far enough that the shadow of something 64 blocks high would move half a texel, and when new far terrain meshes arrived (at most every 30 frames for cascade 0, 120 for cascade 1); otherwise it is kept. Its centre is snapped to its texel grid in the light's plane, so a redraw after the camera moved shows the same texels and shadows don't swim.
+
+**The info texture** is 12 x 1 from 3.0.0-dev4 (4 x 1 before; texels 0 to 3 unchanged). Check `textureSize(scFarInfo, 0).x >= 12` before reading texels 4 to 11:
+
+| Texel | Contents |
+|---|---|
+| 4 | `(ready, N, depth per block of cascade 0, depth per block of cascade 1)`: ready is 1 when both cascades hold this light's far terrain (0 otherwise, then texels 5 to 11 are 0); depth per block is how much the depth grows per block away from the light (for a bias in blocks). |
+| 5, 6, 7 | Cascade 0's rows: for a position `p` in player space (`(gbufferModelViewInverse * viewPos).xyz`, relative to the camera this frame), `u = dot(t5.xyz, p) + t5.w`, `v = dot(t6.xyz, p) + t6.w`, `depth = dot(t7.xyz, p) + t7.w`. `u` and `v` run from 0 to 1 across the cascade; the texture coordinate is `((u + cascade) / 2, v)`; depth is 0 at the light's end. |
+| 8, 9, 10 | Cascade 1's rows, the same way. |
+| 11 | `(texel size of cascade 0 in blocks, of cascade 1, 0, 0)`. |
+
+The rows are written every frame for this frame's camera, also between redraws. A point lies in a cascade when `u` and `v` are within 0 and 1; use cascade 0 where it does and cascade 1 beyond, and blend over cascade 0's last stretch (its texels are about 8 times finer). A lookup moved out along the surface's normal by a texel or two and toward the light by half a texel (`reference = depth - blocks * depth per block`) shows no acne.
+
 ## Versions
 
 Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31; Distant Horizons 3.3.2 optional. The protocol number goes up whenever a texture's layout or meaning changes; a pack should check it.
 
-- 3.0.0 (in development): `far_*` (far protocol 1): the mod's own far terrain in two layers with its depth and info texture, drawn while the pack binds `far_info` or `far_info_still` ("Far terrain"). The other protocols and textures are 2.0.0's. The test build 3.0.0-dev3 comes with ABZA Shader 3.0.0-dev1, the first pack that reads it.
+- 3.0.0 (in development): `far_*` (far protocol 1): the mod's own far terrain in two layers with its depth and info texture, drawn while the pack binds `far_info` or `far_info_still` ("Far terrain"). The other protocols and textures are 2.0.0's. The test build 3.0.0-dev3 comes with ABZA Shader 3.0.0-dev1, the first pack that reads it. From 3.0.0-dev4: `far_shadow`, the far terrain's shadow map, and the info texture 12 texels wide ("The far shadow map"); far protocol 1 otherwise unchanged.
 
 - 2.0.0: `lattice_*` (protocol 1): the lattice; from 2.0.0-dev12 its detail (`lattice_detail*`, `lattice_info` texel 4). From 2.0.0-dev16, mirror view protocol 3: up to four planes mirrored at once, as many as the name the pack binds `mirror_info` under asks for (`mirror_info_N`); the mirror textures hold one tile per plane, `mirror_info` one row per plane (9 x 4) with the tile's corner in texel 8. `material_table` (protocol 1): material classes for blocks, block entities, items and entities. Comes with ABZA Shader 2.0.0.
 - 1.0.0: the same protocols and textures. The plane search traces collision shapes (plants no longer stop its rays) and counts water past the chunk terrain's range; chunk terrain is drawn over Distant Horizons LODs in the views by a stencil, so far terrain no longer shows through near terrain; the entity capture frees its kept memory when mods create render types without end. Comes with ABZA Shader 1.1.0.
