@@ -2822,6 +2822,11 @@ public final class DevRun {
             ShadersCompanion.LOGGER.error("Shaders Companion dev run: no setting {}", name);
             return;
         }
+        if (TOGGLE.equals("time")) {
+            // The dev4 smoke check: -PdevToggle=time:6000:12500:18000, the time of day per round (noon, sunset, night)
+            Minecraft.getInstance().player.connection.sendCommand("time set " + text);
+            return;
+        }
         if (TOGGLE.equals("renderDistance")) {
             // Integration round A: -PdevToggle=renderDistance:5:8, the render distance per round (restored at the end with -PdevFarRender);
             // round B: a value "5@0.85" also sets the far terrain's planted faces' colour factor for the round (the mod's own otherwise)

@@ -327,7 +327,7 @@ minecraft {
             // spot, the far store imports it, shots from several views).
             // Integration round A (research/lod/M3.md): -PdevFarHoldY=230 (with -PdevToggle) runs the toggle rounds from a camera held at
             // -PdevFarShiftX, that height, -PdevFarShiftZ, -PdevYaw and -PdevPitch, once the far terrain there is ready.
-            // -PdevToggle=renderDistance:5:8 sets the render distance per round; -PdevFarEncodedAverage averages the far faces' colours as before 3.0.0-dev4.
+            // -PdevToggle=renderDistance:5:8 sets the render distance per round (-PdevToggle=time:6000:12500:18000 the time of day); -PdevFarEncodedAverage averages the far faces' colours as before 3.0.0-dev4.
             // M4 (research/lod/M4.md): -PdevFarGlass puts two black glass walls at the held camera (or the vantage with -PdevFarDhShot)
             // along -PdevFarGlassYaw; -PdevFarViewDump dumps the cube and the mirror view in the first two toggle rounds.
             ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort', 'devFarDraw', 'devFarDhShot', 'devFarOverlay', 'devFarShort', 'devFarDims', 'devFarEncodedAverage',
