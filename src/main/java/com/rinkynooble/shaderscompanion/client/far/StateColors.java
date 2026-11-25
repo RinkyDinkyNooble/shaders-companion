@@ -38,8 +38,8 @@ import net.minecraftforge.client.model.data.ModelData;
  * <p>
  * Per state id and face (Direction ordinal), in {@link #colours()} at {@code id * 6 + face}: the average colour of the
  * state's baked model quads on that face (its culled quads for that side plus its unculled quads facing that way; each
- * quad's sprite pixels in its UV rectangle, from the sprite's original image, weighted by alpha and by the quad's area)
- * as RGBA8 with red in the low byte and alpha the share of the face covered (leaves about 0.8, a fence post less). A
+ * quad's sprite pixels in its UV rectangle, from the sprite's original image, weighted by alpha and by the quad's area,
+ * averaged in linear light and encoded back as the textures are) as RGBA8 with red in the low byte and alpha the share of the face covered (leaves about 0.8, a fence post less). A
  * face with no quads takes the average of the whole model; a block with none (drawn by a block entity renderer, or a
  * fluid) its particle sprite, which for water and lava is the still texture. A face is tinted only when all its quads
  * are (a grass block's top); a face with tinted and untinted quads (its side, a base and a grey overlay) takes the
@@ -364,16 +364,42 @@ public final class StateColors {
         }
     }
 
-    /** RGBA8 (red in the low byte) from premultiplied means and the mean alpha; alpha byte from the coverage. */
+    /**
+     * RGBA8 (red in the low byte) from premultiplied linear means (0 to 255, {@link #linear}) and the mean alpha, encoded
+     * back as the textures are; alpha byte from the coverage.
+     */
     private static int rgba(double r, double g, double b, double alpha, double coverage) {
         if (alpha <= 0) {
             return 0;
         }
-        int ri = (int) Math.round(Math.min(255, r / alpha));
-        int gi = (int) Math.round(Math.min(255, g / alpha));
-        int bi = (int) Math.round(Math.min(255, b / alpha));
+        int ri = (int) Math.round(encoded(Math.min(255, r / alpha)));
+        int gi = (int) Math.round(encoded(Math.min(255, g / alpha)));
+        int bi = (int) Math.round(encoded(Math.min(255, b / alpha)));
         int a = (int) Math.round(Math.max(0, Math.min(1, coverage)) * 255);
         return ri | gi << 8 | bi << 16 | a << 24;
+    }
+
+    /**
+     * A texture channel (0 to 255) in linear light, as a shader pack decodes it (power 2.2), still 0 to 255: the face's
+     * pixels are averaged in linear light, as Minecraft's own mipmaps average them ({@code MipmapGenerator.gammaBlend}),
+     * so a flat face is as bright as the chunk terrain's texture looks from afar, where a pixel covers many texels (an
+     * average of the encoded values is darker the more a texture varies: 2% on grass, 6 to 12% on dirt, cobblestone,
+     * leaves and grass block sides).
+     */
+    private static double linear(double channel) {
+        return encodedAverage ? channel : 255.0 * Math.pow(channel / 255.0, 2.2);
+    }
+
+    /** The inverse of {@link #linear}. */
+    private static double encoded(double linear) {
+        return encodedAverage ? linear : 255.0 * Math.pow(Math.max(0, linear) / 255.0, 1.0 / 2.2);
+    }
+
+    private static volatile boolean encodedAverage;
+
+    /** Dev checks: average the encoded values, as before 3.0.0-dev4 (set before any colour is worked out). */
+    public static void encodedAverageForChecks(boolean on) {
+        encodedAverage = on;
     }
 
     private static int multiply(int rgba, int rgb) {
@@ -457,7 +483,10 @@ public final class StateColors {
         return Math.max(min, Math.min(max, value));
     }
 
-    /** Premultiplied mean colour and mean alpha of a rectangle of a sprite's first frame, worked out once per rectangle. */
+    /**
+     * Premultiplied mean colour in linear light ({@link #linear}) and mean alpha of a rectangle of a sprite's first frame,
+     * worked out once per rectangle.
+     */
     private static float[] region(TextureAtlasSprite sprite, int x0, int y0, int x1, int y1) {
         Region key = new Region(sprite, x0, y0, x1, y1);
         float[] cached = regions.get(key);
@@ -474,9 +503,9 @@ public final class StateColors {
                 // ABGR: red in the low byte
                 int c = sprite.getPixelRGBA(0, x, y);
                 double alpha = (c >>> 24) / 255.0;
-                r += (c & 0xFF) * alpha;
-                g += (c >> 8 & 0xFF) * alpha;
-                b += (c >> 16 & 0xFF) * alpha;
+                r += linear(c & 0xFF) * alpha;
+                g += linear(c >> 8 & 0xFF) * alpha;
+                b += linear(c >> 16 & 0xFF) * alpha;
                 a += alpha;
                 n++;
             }

@@ -325,7 +325,10 @@ minecraft {
             // camera held at -PdevFarShiftX/Y/Z, -PdevYaw, -PdevPitch: shots a, b 16 blocks to the right, c back, m0-m7 moving,
             // d), -PdevFarDims with -PdevChunky (the Nether and the End: Chunky generates -PdevFarDimsRadius blocks around a
             // spot, the far store imports it, shots from several views).
-            ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort', 'devFarDraw', 'devFarDhShot', 'devFarOverlay', 'devFarShort', 'devFarDims'].each { name ->
+            // Integration round A (research/lod/M3.md): -PdevFarHoldY=230 (with -PdevToggle) runs the toggle rounds from a camera held at
+            // -PdevFarShiftX, that height, -PdevFarShiftZ, -PdevYaw and -PdevPitch, once the far terrain there is ready.
+            // -PdevToggle=renderDistance:5:8 sets the render distance per round; -PdevFarEncodedAverage averages the far faces' colours as before 3.0.0-dev4.
+            ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort', 'devFarDraw', 'devFarDhShot', 'devFarOverlay', 'devFarShort', 'devFarDims', 'devFarEncodedAverage'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", 'true'
                 }
@@ -333,7 +336,7 @@ minecraft {
             // -PdevFarDiff=200: the log says what differs in the first 200 stored sections that change.
             // -PdevFov=90: the field of view for the run (restored; the dev client's default is 70, the user's 90).
             ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache', 'devFarImport', 'devFarDiff', 'devFarRawStore', 'devFarRange', 'devFov', 'devFarFillFrom',
-             'devFarShift', 'devFarShiftX', 'devFarShiftY', 'devFarShiftZ', 'devFarDimsRadius'].each { name ->
+             'devFarShift', 'devFarShiftX', 'devFarShiftY', 'devFarShiftZ', 'devFarDimsRadius', 'devFarHoldY'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }

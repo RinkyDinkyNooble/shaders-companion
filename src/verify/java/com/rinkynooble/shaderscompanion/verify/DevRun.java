@@ -370,6 +370,8 @@ public final class DevRun {
                 FarStore.meshingForChecks(FAR_MESH);
                 FarStore.farRangeForChecks(MESH_RANGE);
                 FarStore.cornerShadingForChecks(Boolean.getBoolean("shaderscompanion.devFarCornerShading"));
+                // Integration round A: -PdevFarEncodedAverage, the faces' colours averaged as before 3.0.0-dev4
+                com.rinkynooble.shaderscompanion.client.far.StateColors.encodedAverageForChecks(Boolean.getBoolean("shaderscompanion.devFarEncodedAverage"));
                 // -PdevFarFillFrom=0: dark air filled from level 0 (the plan keeps level 0's caves)
                 FarStore.caveFillFromForChecks(Integer.getInteger("shaderscompanion.devFarFillFrom", 1));
             }
@@ -503,6 +505,9 @@ public final class DevRun {
                 worldTicks = 0;
             }
             return;
+        }
+        if (farHolding && phase == 4) {
+            hold(mc);
         }
         boolean pool = SCENE.equals("pool");
         boolean bathroom = SCENE.equals("bathroom");
@@ -2762,6 +2767,11 @@ public final class DevRun {
             ShadersCompanion.LOGGER.error("Shaders Companion dev run: no setting {}", name);
             return;
         }
+        if (TOGGLE.equals("renderDistance")) {
+            // Integration round A: -PdevToggle=renderDistance:5:8, the render distance per round (restored at the end with -PdevFarRender)
+            Minecraft.getInstance().options.renderDistance().set(Integer.parseInt(text));
+            return;
+        }
         try {
             if (TOGGLE.equals("profile")) {
                 // -PdevToggle=profile:LOW:MEDIUM:HIGH: the pack's preset of that name, all its options at once
@@ -3659,6 +3669,10 @@ public final class DevRun {
                     // Fix round 1: the shift check, then (or only) the trip to the Nether and the End
                     phase = FAR_SHIFT > 0 ? 92 : 100;
                     storeSettledTicks = 0;
+                } else if (!TOGGLE.isEmpty() && FAR_HOLD_Y > 0) {
+                    // Integration round A: the toggle rounds from a camera held elsewhere (phase 120 first)
+                    phase = 120;
+                    storeSettledTicks = 0;
                 } else if (!TOGGLE.isEmpty()) {
                     // M3b: -PdevToggle rounds (with -PdevBurst and -PdevProfile) at the vantage after the shots, then quits:
                     // shots shaderscompanion-far-<tag>-<toggle>-<off|on><round>[-bNNN].png
@@ -3729,6 +3743,28 @@ public final class DevRun {
             farShiftCheck(mc, t);
         } else if (phase >= 100 && phase <= 119) {
             farDimsCheck(mc, t);
+        } else if (phase == 120) {
+            // Integration round A (-PdevFarHoldY with -PdevToggle): the camera held at -PdevFarShiftX, -PdevFarHoldY,
+            // -PdevFarShiftZ, -PdevYaw, -PdevPitch until the far terrain there is meshed and on the GPU, then the toggle
+            // rounds from there (the camera held through them)
+            double x = FAR_SHIFT_X + 0.5;
+            double z = FAR_SHIFT_Z + 0.5;
+            if (t == 1) {
+                mc.player.connection.sendCommand("tp @s " + x + " " + FAR_HOLD_Y + " " + z + " " + FAR_SHIFT_YAW + " " + FAR_PITCH);
+            }
+            if (t > 2) {
+                holdAt(mc, x, FAR_HOLD_Y, z, FAR_SHIFT_YAW, FAR_PITCH);
+            }
+            if ((farReady(t) && t >= 300) || t >= 900) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far hold at {} {} {} (yaw {}, pitch {}) ready after {} s: Far terrain: {}", x, FAR_HOLD_Y, z,
+                        FAR_SHIFT_YAW, FAR_PITCH, t / 20, FarStore.terrainStatus());
+                farHolding = true;
+                prefix = "shaderscompanion-far-" + System.getProperty("shaderscompanion.devTag", "run");
+                timingRound = 0;
+                setPackRound(0);
+                phase = 4;
+                phaseTick = ticks;
+            }
         } else if (phase == 88) {
             // M3a: the Nether has no sky light, so the far terrain draws nothing there and the hook makes no GL call
             if (t == 1) {
@@ -3784,6 +3820,9 @@ public final class DevRun {
     private static final boolean FAR_DIMS = Boolean.getBoolean("shaderscompanion.devFarDims");
     /** -PdevFarDimsRadius: the square Chunky generates around each visit's spot, in blocks (320 by default). */
     private static final int FAR_DIMS_RADIUS = Integer.getInteger("shaderscompanion.devFarDimsRadius", 320);
+    /** Integration round A: -PdevFarHoldY=N holds the -PdevToggle rounds' camera at the shift check's spot, N high. */
+    private static final int FAR_HOLD_Y = Integer.getInteger("shaderscompanion.devFarHoldY", 0);
+    private static boolean farHolding;
     /** The visits: dimension, the spot Chunky generates around (x, z), and per view the camera (y, yaw, pitch); y is searched for open air. */
     private static final String[] DIM_IDS = {"minecraft:the_nether", "minecraft:the_end"};
     private static final int[][] DIM_CENTRES = {{0, 0}, {1300, 0}};
