@@ -96,7 +96,7 @@ public final class FarRenderer {
             "u_Region", "u_OneQuad"};
     private static final String[] TERRAIN_UNIFORMS = {"u_ViewProjection", "u_CameraBlock", "u_CameraFrac", "u_StateCount", "u_BiomeCount", "u_Translucent",
             "u_ChunkRadius", "u_LogDepth", "u_Near"};
-    private static final String[] OVERLAY_UNIFORMS = {"u_InverseProjection", "u_ScreenSize", "u_Alone", "u_UseScene", "u_SunDir", "u_Daylight", "u_FarRange"};
+    private static final String[] OVERLAY_UNIFORMS = {"u_InverseProjection", "u_ScreenSize", "u_Alone", "u_UseScene", "u_SunDir", "u_Daylight", "u_FarRange", "u_FogColor"};
 
     private static FarGpuBuffers buffers;
     private static int vao;
@@ -750,12 +750,7 @@ public final class FarRenderer {
             blendBefore[1] = GL11C.glGetInteger(GL14C.GL_BLEND_DST_RGB);
             blendBefore[2] = GL11C.glGetInteger(GL14C.GL_BLEND_SRC_ALPHA);
             blendBefore[3] = GL11C.glGetInteger(GL14C.GL_BLEND_DST_ALPHA);
-            if (alone) {
-                GlStateManager._disableBlend();
-            } else {
-                GlStateManager._enableBlend();
-                GlStateManager._blendFuncSeparate(GL11C.GL_SRC_ALPHA, GL11C.GL_ONE_MINUS_SRC_ALPHA, GL11C.GL_ZERO, GL11C.GL_ONE);
-            }
+            GlStateManager._disableBlend();
             GL11C.glDisable(GL11C.GL_STENCIL_TEST);
             GlStateManager._colorMask(true, true, true, true);
             Gl.useProgram(overlayProgram);
@@ -771,6 +766,9 @@ public final class FarRenderer {
             float daylight = mc.level == null ? 1.0f : Mth.clamp((mc.level.getSkyDarken(partial) - 0.2f) / 0.8f, 0.0f, 1.0f);
             GL20C.glUniform1f(u[5], daylight);
             GL20C.glUniform1f(u[6], Config.FAR_RANGE.get());
+            // The vanilla fog colour of this frame (FogRenderer: time of day, weather, biome, sunsets)
+            float[] fogColor = RenderSystem.getShaderFogColor();
+            GL20C.glUniform3f(u[7], Mth.clamp(fogColor[0], 0.0f, 1.0f), Mth.clamp(fogColor[1], 0.0f, 1.0f), Mth.clamp(fogColor[2], 0.0f, 1.0f));
             GlStateManager._glBindVertexArray(overlayVao);
             GL11C.glDrawArrays(GL11C.GL_TRIANGLES, 0, 3);
             if (s >= 0) {

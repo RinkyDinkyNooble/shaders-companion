@@ -16,6 +16,7 @@ uniform int u_UseScene;
 uniform vec3 u_SunDir;    // world space, towards the sun (below the horizon at night)
 uniform float u_Daylight; // 0 at night to 1 by day, from the level's sky brightness
 uniform float u_FarRange; // the far range in blocks
+uniform vec3 u_FogColor;  // the game's fog colour this frame (time of day, weather, biome)
 
 out vec4 fragColor;
 
@@ -41,15 +42,11 @@ void main() {
         }
         discard;
     }
-    if (u_Alone == 0 && u_UseScene != 0) {
-        float depth = texelFetch(u_SceneDepth, p, 0).r;
-        if (depth < 1.0) {
-            vec2 ndc = (vec2(p) + 0.5) / u_ScreenSize * 2.0 - 1.0;
-            vec4 view = u_InverseProjection * vec4(ndc, depth * 2.0 - 1.0, 1.0);
-            if (length(view.xyz / view.w) <= distance) {
-                discard;
-            }
-        }
+    // Only where the screen shows sky: wherever the game drew anything, it wins. Comparing distances let the far terrain
+    // and the chunk terrain fight over the band where both exist (the same blocks at the same distance), and the pack's
+    // TAA moves the screen's depth a little every frame, so the winner flickered (the user's dev1 test)
+    if (u_Alone == 0 && u_UseScene != 0 && texelFetch(u_SceneDepth, p, 0).r < 1.0) {
+        discard;
     }
     vec4 albedo = texelFetch(u_Albedo, p, 0);
     vec4 data = texelFetch(u_Data, p, 0);
@@ -65,21 +62,15 @@ void main() {
     float ambient = sky * mix(0.16, 0.55, u_Daylight) * (0.75 + 0.25 * max(normal.y, 0.0));
     float sunLight = sky * u_Daylight * 0.7 * direct;
     vec3 lit = albedo.rgb * (0.03 + ambient + sunLight) + albedo.rgb * TORCH * block * 0.9 * (1.0 - 0.6 * u_Daylight * sky);
-    // Haze by distance, and a fade over the last 15% of the range so its edge doesn't show: over the frame, blended
-    // into the sky the pack drew behind it
+    // Haze by distance towards the game's fog colour, and a fade over the last 15% of the range so its edge doesn't
+    // show. Opaque: blending with the sky behind let the stars and the sun below the horizon show through (dev1)
+    vec3 haze = u_Alone != 0 ? SKY * mix(0.15, 1.0, u_Daylight) : u_FogColor;
     float x = distance / max(u_FarRange, 1.0);
     float fog = max(clamp(1.0 - exp(-2.2 * x * x), 0.0, 1.0) * 0.7, smoothstep(0.85, 1.0, x));
-    // Water and glass (the translucent pass leaves alpha under 1): a dark body that mostly shows the sky behind it,
-    // which is what far water reflects at these grazing angles
-    float body = 1.0;
+    // Water and glass (the translucent pass leaves alpha under 1): a dark body with the haze colour standing in for
+    // the sky it reflects at these grazing angles
     if (albedo.a < 0.999) {
-        lit *= 0.45;
-        body = 0.4;
+        lit = mix(lit * 0.45, haze * 0.85, 0.55);
     }
-    if (u_Alone != 0) {
-        vec3 sky = SKY * mix(0.15, 1.0, u_Daylight);
-        fragColor = vec4(mix(mix(sky, lit, body), sky, fog), 1.0);
-    } else {
-        fragColor = vec4(lit, (1.0 - fog) * body);
-    }
+    fragColor = vec4(mix(lit, haze, fog), 1.0);
 }
