@@ -359,7 +359,7 @@ minecraft {
             // Multiplayer checks (src/verify MultiplayerRun, research/lod/MULTIPLAYER.md): -PdevServer=localhost:25565 joins a server with the
             // far store on and logs its far terrain feed (-PdevServerWait=120 seconds); -PdevWireCheck checks the column wire format on a world's
             // saved chunks (-PdevWireWorld=shaderscompanion-far, -PdevWireChunks=200).
-            ['devServer', 'devServerWait', 'devServerDeny', 'devWireWorld', 'devWireChunks'].each { name ->
+            ['devServer', 'devServerWait', 'devServerDeny', 'devServerStoreOff', 'devWireWorld', 'devWireChunks'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }

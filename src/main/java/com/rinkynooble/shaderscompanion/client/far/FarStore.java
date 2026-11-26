@@ -232,9 +232,12 @@ public final class FarStore {
         ShadersCompanion.LOGGER.info("Shaders Companion far store: stopped");
     }
 
-    /** Whether the store runs for this level (main thread): the server's far terrain is taken only then. */
-    static boolean runningFor(ClientLevel level) {
-        return active && level != null && capture != null && capture.level() == level;
+    /**
+     * Whether the store runs for this level under this world key (main thread): the server's far terrain is taken only
+     * then (not into a store about to be replaced because the server's hello came after the store started).
+     */
+    static boolean runningFor(ClientLevel level, String key) {
+        return active && level != null && capture != null && capture.level() == level && key != null && key.equals(startedKey);
     }
 
     /**

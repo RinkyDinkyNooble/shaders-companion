@@ -59,6 +59,18 @@ public final class FarLink implements FarNet.ClientSide {
     private static final AtomicLong queuedBytes = new AtomicLong();
     private static long lastAck;
     private static long dropped;
+    /** Offers waiting for the worker; past {@link #MAX_OFFERS_WAITING} one is dropped (a server sends one at a time). */
+    private static final java.util.concurrent.atomic.AtomicInteger offersWaiting = new java.util.concurrent.atomic.AtomicInteger();
+    private static final int MAX_OFFERS_WAITING = 8;
+    /**
+     * The world ids this connection's server has named (each one a store of its own); past {@link #MAX_WORLD_IDS} a new
+     * one is ignored and that level is keyed by the address alone, so no server can make endless store folders.
+     */
+    private static final java.util.Set<String> worldIds = new java.util.HashSet<>();
+    private static Object worldIdsOf;
+    private static final int MAX_WORLD_IDS = 8;
+    /** When the client last told the server to stop (a new reply waits out the server's limit on repeated replies). */
+    private static long stoppedAt;
 
     /** Made by the client's init (FarNet.client). */
     public FarLink() {
@@ -69,6 +81,19 @@ public final class FarLink implements FarNet.ClientSide {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null) {
             return;
+        }
+        if (worldIdsOf != mc.getConnection()) {
+            worldIdsOf = mc.getConnection();
+            worldIds.clear();
+        }
+        if (!message.worldId().isEmpty() && !worldIds.contains(message.worldId())) {
+            if (worldIds.size() >= MAX_WORLD_IDS) {
+                com.rinkynooble.shaderscompanion.ShadersCompanion.LOGGER.warn("Shaders Companion far terrain: the server named more than {} worlds on this "
+                        + "connection; this level's far terrain is kept under its address alone", MAX_WORLD_IDS);
+                message = new FarNet.Hello(message.protocol(), message.epoch(), "", message.shares(), message.maxRadius(), message.maxKbps());
+            } else {
+                worldIds.add(message.worldId());
+            }
         }
         hello = message;
         helloLevel = mc.level;
@@ -84,11 +109,13 @@ public final class FarLink implements FarNet.ClientSide {
     public void offer(FarNet.Offer message) {
         int e = epoch;
         FarWorker w = FarStore.worker;
-        if (message.epoch() != e || w == null) {
+        if (message.epoch() != e || w == null || offersWaiting.incrementAndGet() > MAX_OFFERS_WAITING) {
+            offersWaiting.decrementAndGet();
             return;
         }
         int r = radius;
         w.post(worker -> {
+            offersWaiting.decrementAndGet();
             FarFeed feed = worker.feed;
             FarNodes store = worker.store();
             FarNet.Want want = feed != null && store != null && feed.epoch == e
@@ -157,7 +184,14 @@ public final class FarLink implements FarNet.ClientSide {
         if (mc.getConnection() == null) {
             return;
         }
-        if (hello != null && !replied && FarStore.runningFor(mc.level)) {
+        boolean running = hello != null && FarStore.runningFor(mc.level, FarFolders.serverKey(mc.getCurrentServer(), identity(mc).worldId()));
+        long now = System.nanoTime();
+        if (accepted && !running) {
+            // The far store stopped (turned off, or it failed): the server is told, and asked again once it runs
+            outbox.add(new FarNet.Stop(epoch, "the far store is off"));
+            replied = false;
+        }
+        if (hello != null && !replied && running && now - stoppedAt > 6_000_000_000L) {
             reply(mc);
         }
         Object message;
@@ -166,13 +200,15 @@ public final class FarLink implements FarNet.ClientSide {
                 FarNet.CHANNEL.sendToServer(message);
                 if (message instanceof FarNet.Stop stop) {
                     accepted = false;
+                    stoppedAt = now;
                     declined = "stopped: " + stop.reason();
-                    mc.gui.getChat().addMessage(Component.literal("Shaders Companion: no more far terrain from this server (" + stop.reason() + ")")
-                            .withStyle(ChatFormatting.GRAY));
+                    if (!stop.reason().equals("the far store is off")) {
+                        mc.gui.getChat().addMessage(Component.literal("Shaders Companion: no more far terrain from this server (" + stop.reason() + ")")
+                                .withStyle(ChatFormatting.GRAY));
+                    }
                 }
             }
         }
-        long now = System.nanoTime();
         long bytes = ackBytes.get();
         if (bytes > 0 && (bytes >= 256 * 1024 || now - lastAck > 250_000_000L)) {
             ackBytes.addAndGet(-bytes);

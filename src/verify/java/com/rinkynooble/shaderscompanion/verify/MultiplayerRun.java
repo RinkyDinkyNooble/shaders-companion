@@ -48,6 +48,7 @@ public final class MultiplayerRun {
     private static final String SERVER = System.getProperty("shaderscompanion.devServer", "");
     private static final int SERVER_WAIT = Integer.getInteger("shaderscompanion.devServerWait", 120);
     private static final int DENY_AT = Integer.getInteger("shaderscompanion.devServerDeny", 0);
+    private static final int STORE_OFF_AT = Integer.getInteger("shaderscompanion.devServerStoreOff", 0);
     private static final boolean WIRE = Boolean.getBoolean("shaderscompanion.devWireCheck");
     private static final String WIRE_WORLD = System.getProperty("shaderscompanion.devWireWorld", "shaderscompanion-far");
     private static final int WIRE_CHUNKS = Integer.getInteger("shaderscompanion.devWireChunks", 200);
@@ -163,6 +164,15 @@ public final class MultiplayerRun {
         }
         if (DENY_AT > 0 && ticks == (DENY_AT + 30) * 20) {
             ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: far server allow: {}", com.rinkynooble.shaderscompanion.client.far.FarLink.choose(true));
+        }
+        if (STORE_OFF_AT > 0 && ticks == STORE_OFF_AT * 20) {
+            // -PdevServerStoreOff=N: the far store off N seconds in, on again 20 seconds later
+            ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: far store off");
+            FarChecks.force(false, 0);
+        }
+        if (STORE_OFF_AT > 0 && ticks == (STORE_OFF_AT + 20) * 20) {
+            ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: far store on");
+            FarChecks.force(true, 0);
         }
         if (ticks % 100 == 0) {
             ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run at {} s: Far store: {} | Server far terrain: {}", ticks / 20, FarStore.status(),

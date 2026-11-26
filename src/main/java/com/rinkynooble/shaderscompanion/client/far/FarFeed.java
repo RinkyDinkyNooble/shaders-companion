@@ -140,8 +140,9 @@ final class FarFeed {
             return;
         }
         if (store.liveColumns.contains(pos)) {
-            // Shown live meanwhile: what the client saw is as new
+            // Shown live meanwhile: what the client saw is as new as this save, and stored (not asked for again)
             liveSkipped++;
+            store.markServed(pos, column.stamp());
             return;
         }
         List<CapturedSection> sections;
