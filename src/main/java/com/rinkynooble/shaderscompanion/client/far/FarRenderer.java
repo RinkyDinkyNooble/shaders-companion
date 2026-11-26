@@ -156,7 +156,7 @@ public final class FarRenderer {
 
     // This frame
     private static boolean drewThisFrame;
-    /** The mode this frame's layers were drawn for (FarStore.MODE_*). */
+    /** The mode this frame's layers were drawn for (FarTerrain.MODE_*). */
     private static int drawnFor;
     private static int drawSlot = -1;
     private static final Matrix4f projection = new Matrix4f();
@@ -400,10 +400,10 @@ public final class FarRenderer {
         if (startProbe != null) {
             startProbe.run();
         }
-        int mode = FarStore.drawMode();
-        FarResidency.View v = FarStore.frameView();
+        int mode = FarTerrain.drawMode();
+        FarResidency.View v = FarTerrain.frameView();
         RenderTarget main = Minecraft.getInstance().getMainRenderTarget();
-        if (mode == FarStore.MODE_NONE || !FarStore.gpuOn() || buffers == null || paused || v == null || main.width <= 0 || main.height <= 0) {
+        if (mode == FarTerrain.MODE_NONE || !FarTerrain.gpuOn() || buffers == null || paused || v == null || main.width <= 0 || main.height <= 0) {
             notDrawn();
             return;
         }
@@ -414,18 +414,18 @@ public final class FarRenderer {
             readBack();
             ensureLayer(main.width, main.height);
             ensureCommands();
-            boolean forPack = mode == FarStore.MODE_PACK || mode == FarStore.MODE_PACK_STILL;
+            boolean forPack = mode == FarTerrain.MODE_PACK || mode == FarTerrain.MODE_PACK_STILL;
             // Oculus counts the frame at the head of LevelRenderer.renderLevel, after this hook (720720 is a multiple of 16)
             frameCounter = (SystemTimeUniforms.COUNTER.getAsInt() + 1) % 720720;
             int index = frameCounter % 16;
             float jitterX = 0.0F;
             float jitterY = 0.0F;
-            if (mode == FarStore.MODE_PACK) {
+            if (mode == FarTerrain.MODE_PACK) {
                 // The pack's taaOffset (Sundial's R2 sequence, shaders.properties), in clip space per unit of w
                 jitterX = (fract(0.5F + index * 0.7548776269F) * 2.0F - 1.0F) / main.width;
                 jitterY = (fract(0.5F + index * 0.5698402524F) * 2.0F - 1.0F) / main.height;
             }
-            boolean fade = mode == FarStore.MODE_PACK && Config.FAR_EDGE_FADE.get();
+            boolean fade = mode == FarTerrain.MODE_PACK && Config.FAR_EDGE_FADE.get();
             draw(camera, view, v, jitterX, jitterY, fade ? v.farRange() * FADE_FROM : 0.0F, index);
             if (forPack) {
                 // The far shadow map while the pack binds it (a cascade redrawn when due), then the info with its texels
@@ -849,7 +849,7 @@ public final class FarRenderer {
                 history[3][at] = nodesDrawn;
                 history[4][at] = quadsDrawn;
                 history[5][at] = cpuNanos;
-                history[6][at] = FarStore.terrainFrameNanos();
+                history[6][at] = FarTerrain.terrainFrameNanos();
                 historyCount++;
             }
         }
@@ -864,7 +864,7 @@ public final class FarRenderer {
             return;
         }
         drewThisFrame = false;
-        if (drawnFor == FarStore.MODE_PACK || drawnFor == FarStore.MODE_PACK_STILL) {
+        if (drawnFor == FarTerrain.MODE_PACK || drawnFor == FarTerrain.MODE_PACK_STILL) {
             // Drawn for the pack: no overlay. Oculus counted this frame at the head of the world's rendering: the info
             // texture's frame counter (and the jitter) should be the one it used
             jitterFrames++;
@@ -1013,7 +1013,7 @@ public final class FarRenderer {
         if (b == null) {
             return "nothing on the GPU yet";
         }
-        boolean forPack = drawnFor == FarStore.MODE_PACK || drawnFor == FarStore.MODE_PACK_STILL;
+        boolean forPack = drawnFor == FarTerrain.MODE_PACK || drawnFor == FarTerrain.MODE_PACK_STILL;
         String overlay = forPack ? "" : String.format(", overlay %s", ms(overlayNanos));
         String jitter = jitterFrames == 0 ? "" : String.format("; the frame counter was Oculus's in %d of %d frames drawn for the pack", jitterFrames - jitterMismatches,
                 jitterFrames);

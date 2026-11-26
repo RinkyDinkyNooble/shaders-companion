@@ -1,6 +1,7 @@
 package com.rinkynooble.shaderscompanion.client.far;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
+import com.rinkynooble.shaderscompanion.far.CapturedSection;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -39,9 +40,9 @@ final class FarNodes {
      * the next time it is copied or imported ({@link HiddenVoxels}: a voxel next to it opened).
      */
     static final long STALE = 1;
-    /** Dev checks: false stores sections as captured, without replacing hidden voxels (FarStore.hideVoxelsForChecks). */
+    /** Dev checks: false stores sections as captured, without replacing hidden voxels (FarChecks.hideVoxels). */
     static volatile boolean hideVoxels = true;
-    /** Dev checks: false never marks sections stale (the tunnel check's negative control; FarStore.markStaleForChecks). */
+    /** Dev checks: false never marks sections stale (the tunnel check's negative control; FarChecks.markStale). */
     static volatile boolean markStale = true;
     /** Changed nodes not waiting for a rebuild are written this often. */
     static final long WRITE_INTERVAL = 10_000_000_000L;
@@ -113,11 +114,9 @@ final class FarNodes {
      */
     static final byte OPAQUE = 16;
     private byte[] flags = new byte[256];
-    /** Per state id: the far mesher's class and its tint and translucent bits ({@link #meshClasses}, worked out only while something meshes). */
-    private byte[] meshClasses = new byte[256];
+    /** Per state id: the far mesher's class and its tint and translucent bits, worked out only while something meshes. */
+    private final MeshClasses meshClasses = new MeshClasses(this);
     private int flagsKnown = 2;
-    /** Ids whose mesh class is worked out (only while something meshes: {@link #meshClasses}). */
-    private int meshKnown = 2;
     private int waterId = -1;
     private int stoneId = -1;
     /**
@@ -141,7 +140,7 @@ final class FarNodes {
     long changedStates;
     long changedLightOnly;
     long changedBiomesOnly;
-    /** Dev checks: log what differs in the first changed sections (FarStore.logChangesForChecks). */
+    /** Dev checks: log what differs in the first changed sections (FarChecks.logChanges). */
     static volatile int logChanges;
     long sectionsIngested;
     /** The config's blocks the far terrain leaves out (farHiddenBlocks), and per state id whether it is one of them. */
@@ -180,7 +179,7 @@ final class FarNodes {
     private final short[] sectionBiomes = new short[64];
 
     /** Opens the store; {@code folder} null keeps it in memory only. */
-    FarNodes(int generation, String world, String dimension, int minY, int maxY, boolean caveFill, int cacheMb, Path folder) {
+    FarNodes(int generation, String world, String dimension, int minY, int maxY, boolean caveFill, int cacheMb, FarBlockFilter blockFilter, Path folder) {
         this.generation = generation;
         this.world = world;
         this.dimension = dimension;
@@ -188,19 +187,11 @@ final class FarNodes {
         this.maxY = maxY;
         this.caveFill = caveFill;
         setCacheMb(cacheMb);
-        FarBlockFilter filter;
-        try {
-            filter = new FarBlockFilter(com.rinkynooble.shaderscompanion.client.Config.FAR_HIDDEN_BLOCKS.get());
-        } catch (RuntimeException e) {
-            filter = new FarBlockFilter(java.util.List.of());
-        }
-        blockFilter = filter;
-        if (!filter.isEmpty()) {
-            ShadersCompanion.LOGGER.info("Shaders Companion far store: leaving out {} (farHiddenBlocks)", filter);
+        this.blockFilter = blockFilter;
+        if (!blockFilter.isEmpty()) {
+            ShadersCompanion.LOGGER.info("Shaders Companion far store: leaving out {} (farHiddenBlocks)", blockFilter);
         }
         flags[StateIds.AIR] = OPEN;
-        meshClasses[StateIds.UNKNOWN] = FarMesher.UNKNOWN;
-        meshClasses[StateIds.AIR] = FarMesher.AIR;
         FarDisk opened = null;
         String error = null;
         if (folder != null) {
@@ -446,75 +437,9 @@ final class FarNodes {
         return id < flagsKnown ? flags[id] : 0;
     }
 
-    /**
-     * The far mesher's class of a state with these flags (FarMesher's class comment), with {@link FarMesher#TINTED}
-     * when the state has a tint provider (its faces keep their biome in a mesh's palette) or is water-like, and
-     * {@link FarMesher#TRANSLUCENT} when it is drawn in the translucent pass (water-like ones too).
-     */
-    private static byte meshClassOf(BlockState state, byte f) {
-        if (state == null) {
-            // A line of states.txt that no longer parses: an unknown block, still a block
-            return FarMesher.SOLID;
-        }
-        int c;
-        boolean invisible;
-        try {
-            invisible = state.getRenderShape() == net.minecraft.world.level.block.RenderShape.INVISIBLE && state.getFluidState().isEmpty();
-        } catch (RuntimeException e) {
-            invisible = false;
-        }
-        if ((f & OPEN) != 0) {
-            c = state.isAir() ? FarMesher.AIR : FarMesher.WATER;
-        } else if (invisible || (f & THIN) != 0) {
-            // Decorations, and blocks nothing draws (barriers, light blocks, structure voids)
-            c = FarMesher.AIR;
-        } else if ((f & SHEER) != 0) {
-            c = FarMesher.SHEER;
-        } else {
-            c = FarMesher.SOLID;
-        }
-        boolean tinted = c == FarMesher.WATER;
-        boolean translucent = c == FarMesher.WATER;
-        if (!tinted && c != FarMesher.AIR) {
-            try {
-                // A tint provider answers without a world (vanilla's give their default colours); none answers -1
-                tinted = net.minecraft.client.Minecraft.getInstance().getBlockColors().getColor(state, null, null, 0) != -1;
-            } catch (RuntimeException e) {
-                tinted = true;
-            }
-            try {
-                // Drawn in the translucent pass (stained glass, ice, slime): the far terrain's second pass too
-                translucent = net.minecraft.client.Minecraft.getInstance().getBlockRenderer().getBlockModel(state)
-                        .getRenderTypes(state, net.minecraft.util.RandomSource.create(42L), net.minecraftforge.client.model.data.ModelData.EMPTY)
-                        .contains(net.minecraft.client.renderer.RenderType.translucent());
-            } catch (RuntimeException e) {
-                translucent = false;
-            }
-        }
-        // Plants without collision (grass, ferns, flowers, crops: bushes) over a face darken it at level 0 (FarMesher)
-        boolean plant = (f & THIN) != 0 && state.getBlock() instanceof net.minecraft.world.level.block.BushBlock;
-        return (byte) (c | (tinted ? FarMesher.TINTED : 0) | (translucent ? FarMesher.TRANSLUCENT : 0) | (plant ? FarMesher.PLANT : 0));
-    }
-
-    /** Every state id's mesh class so far (worker thread; the array is shared with mesh jobs, entries never change). */
+    /** Every state id's mesh class so far ({@link MeshClasses}; worker thread, the array shared with mesh jobs). */
     byte[] meshClasses() {
-        int size = states.size();
-        if (meshKnown < size) {
-            if (flagsKnown < size) {
-                flagsOfNew(size - 1);
-            }
-            byte[] classes = meshClasses;
-            if (classes.length < size) {
-                // A new array: jobs made before keep the old one, whose entries stay as they were
-                classes = Arrays.copyOf(classes, Math.max(size, classes.length * 2));
-            }
-            for (int i = meshKnown; i < size; i++) {
-                classes[i] = meshClassOf(states.state(i), flags[i]);
-            }
-            meshClasses = classes;
-            meshKnown = size;
-        }
-        return meshClasses;
+        return meshClasses.all();
     }
 
     /** The id of still water (the palette's state for every water-like voxel), assigned when new. */
@@ -538,30 +463,25 @@ final class FarNodes {
         long start = System.nanoTime();
         int[] ids = sectionIds;
         int hiddenByConfig = 0;
-        if (section.states == null) {
+        if (!section.hasBlocks()) {
             Arrays.fill(ids, StateIds.AIR);
         } else {
             // Vanilla's index order (x fastest, then z, then y) is the node's
             BlockState last = null;
             int lastId = 0;
             boolean lastHidden = false;
-            int i = 0;
-            for (int y = 0; y < 16; y++) {
-                for (int z = 0; z < 16; z++) {
-                    for (int x = 0; x < 16; x++, i++) {
-                        BlockState state = section.states.get(x, y, z);
-                        if (state != last) {
-                            last = state;
-                            lastId = states.id(state);
-                            lastHidden = configHides(lastId);
-                        }
-                        if (lastHidden) {
-                            configHiddenAt[hiddenByConfig++] = i;
-                            ids[i] = StateIds.AIR;
-                        } else {
-                            ids[i] = lastId;
-                        }
-                    }
+            for (int i = 0; i < 4096; i++) {
+                BlockState state = section.state(i);
+                if (state != last) {
+                    last = state;
+                    lastId = states.id(state);
+                    lastHidden = configHides(lastId);
+                }
+                if (lastHidden) {
+                    configHiddenAt[hiddenByConfig++] = i;
+                    ids[i] = StateIds.AIR;
+                } else {
+                    ids[i] = lastId;
                 }
             }
         }
@@ -1082,7 +1002,7 @@ final class FarNodes {
 
     /** Face masks kept for nodes on disk ({@link #faceMasks}); M1c measured the hit rate during an import. */
     static final int FACE_MASKS = 8192;
-    /** Dev checks: false keeps M1a's exposure test at node borders, which sees only neighbours in memory (FarStore.diskBordersForChecks). */
+    /** Dev checks: false keeps M1a's exposure test at node borders, which sees only neighbours in memory (FarChecks.diskBorders). */
     static volatile boolean diskBorders = true;
     private static final long[] NO_NODE = new long[0];
     /**

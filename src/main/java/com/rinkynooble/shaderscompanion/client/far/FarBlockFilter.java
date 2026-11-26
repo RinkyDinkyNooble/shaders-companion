@@ -22,6 +22,15 @@ final class FarBlockFilter {
     private final Set<String> namespaces = new HashSet<>();
     private final List<TagKey<Block>> tags = new ArrayList<>();
 
+    /** The config's list (farHiddenBlocks), or none when it can't be read. */
+    static FarBlockFilter fromConfig() {
+        try {
+            return new FarBlockFilter(com.rinkynooble.shaderscompanion.client.Config.FAR_HIDDEN_BLOCKS.get());
+        } catch (RuntimeException e) {
+            return new FarBlockFilter(List.of());
+        }
+    }
+
     FarBlockFilter(List<? extends String> entries) {
         List<String> unreadable = new ArrayList<>();
         for (String raw : entries) {

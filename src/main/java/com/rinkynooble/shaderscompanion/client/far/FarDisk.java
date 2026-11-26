@@ -232,8 +232,9 @@ final class FarDisk {
         Path path = folder.resolve(IMPORTED);
         if (Files.exists(path)) {
             try (java.io.DataInputStream in = new java.io.DataInputStream(new java.io.BufferedInputStream(Files.newInputStream(path)))) {
-                if (in.readInt() == IMPORTED_MAGIC) {
-                    int count = in.readInt();
+                int count = in.readInt() == IMPORTED_MAGIC ? in.readInt() : -1;
+                // A damaged count must not size the map (12 bytes an entry after the 8-byte header)
+                if (count >= 0 && count <= (Files.size(path) - 8) / 12) {
                     it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap stamps = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap(Math.max(16, count));
                     for (int i = 0; i < count; i++) {
                         stamps.put(in.readLong(), in.readInt());

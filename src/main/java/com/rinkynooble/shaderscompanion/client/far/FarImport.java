@@ -1,42 +1,24 @@
 package com.rinkynooble.shaderscompanion.client.far;
 
-import com.mojang.serialization.Codec;
+import com.rinkynooble.shaderscompanion.far.CapturedSection;
+import com.rinkynooble.shaderscompanion.far.SavedChunks;
 import java.io.IOException;
-import java.nio.file.DirectoryStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import net.minecraft.SharedConstants;
-import net.minecraft.core.Holder;
-import net.minecraft.core.Registry;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.biome.Biome;
-import net.minecraft.world.level.biome.Biomes;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.chunk.ChunkStatus;
-import net.minecraft.world.level.chunk.PalettedContainer;
-import net.minecraft.world.level.chunk.PalettedContainerRO;
-import net.minecraft.world.level.chunk.storage.ChunkStorage;
-import net.minecraft.world.level.dimension.DimensionType;
-import net.minecraft.world.level.storage.LevelResource;
 
 /**
  * The singleplayer import ({@code /shaderscompanion lod import [radius]}, M1-PLAN "Import"): the chunks the integrated
  * server has saved for the player's dimension, in a square of the given radius in chunks around the player, read
- * through the server's own chunk storage ({@link ChunkMap#read}: its IO worker, which also answers from writes still
+ * through the server's own chunk storage ({@link SavedChunks}: its IO worker, which also answers from writes still
  * waiting; the region files are never opened here), complete chunks only ({@code minecraft:full}, lit), decoded with
- * vanilla's codecs on the far store's worker ({@link CapturedSection#fromSaved}) and stored like captured sections, so
+ * vanilla's codecs on the far store's worker ({@link SavedChunks#decode}) and stored like captured sections, so
  * the hash skips what is already stored; chunk columns the client has shown this session are left out (what the client
  * saw is newer than the save, or the same). Nearest first, in groups of 4 x 4 chunks (a level-1 node column; each group
  * 2 x 2 at a time, a level-0 node column), so a node gets all its sections while it is in memory; at most
@@ -71,16 +53,8 @@ final class FarImport {
     final int centerX;
     final int centerZ;
     final int radius;
-    private final ServerLevel level;
-    private final ChunkMap chunkMap;
-    private final Path regionFolder;
-    private final int minSection;
-    private final int sectionCount;
-    private final boolean hasSky;
-    private final int dataVersion;
-    private final Codec<PalettedContainer<BlockState>> blockCodec;
-    private final Codec<PalettedContainerRO<Holder<Biome>>> biomeCodec;
-    private final Holder<Biome> plains;
+    /** The level's saved chunks, read through its server's chunk storage. */
+    private final SavedChunks saved;
     /** The auto import: fed by planSaved and add, never finished while the store runs. */
     final boolean auto;
     /** Chunks to read, in order. */
@@ -118,33 +92,19 @@ final class FarImport {
     /** Made on the main thread from the integrated server's level of the player's dimension. */
     FarImport(ServerLevel level, int centerX, int centerZ, int radius, int generation, boolean auto) {
         this.auto = auto;
-        this.level = level;
-        this.chunkMap = level.getChunkSource().chunkMap;
+        this.saved = new SavedChunks(level);
         this.centerX = centerX;
         this.centerZ = centerZ;
         this.radius = Math.max(0, Math.min(MAX_RADIUS, radius));
         this.generation = generation;
-        this.regionFolder = DimensionType.getStorageFolder(level.dimension(), level.getServer().getWorldPath(LevelResource.ROOT)).resolve("region");
-        this.minSection = level.getMinSection();
-        this.sectionCount = level.getSectionsCount();
-        this.hasSky = level.dimensionType().hasSkyLight();
-        this.dataVersion = SharedConstants.getCurrentVersion().getDataVersion().getVersion();
-        this.blockCodec = PalettedContainer.codecRW(Block.BLOCK_STATE_REGISTRY, BlockState.CODEC, PalettedContainer.Strategy.SECTION_STATES,
-                Blocks.AIR.defaultBlockState());
-        Registry<Biome> registry = level.registryAccess().registryOrThrow(Registries.BIOME);
-        this.plains = registry.getHolderOrThrow(Biomes.PLAINS);
-        this.biomeCodec = PalettedContainer.codecRO(registry.asHolderIdMap(), registry.holderByNameCodec(), PalettedContainer.Strategy.SECTION_BIOMES, plains);
     }
 
     /**
      * The command's import (worker thread): lists the region files and orders the chunks of the square that may be
-     * saved ({@link #nearestFirst}).
+     * saved ({@link SavedChunks#nearestFirst}).
      */
     void plan(FarNodes store) throws IOException {
-        LongOpenHashSet regions = new LongOpenHashSet();
-        for (Path file : regionFiles()) {
-            regions.add(regionKey(file));
-        }
+        LongOpenHashSet regions = SavedChunks.regionsOf(saved.regionFiles());
         int side = 2 * radius + 1;
         long[] chunks = new long[side * side];
         int n = 0;
@@ -155,7 +115,7 @@ final class FarImport {
                 }
             }
         }
-        for (long pos : nearestFirst(chunks, n)) {
+        for (long pos : SavedChunks.nearestFirst(chunks, n, centerX, centerZ, radius)) {
             queue.enqueue(pos);
         }
         total = queue.size();
@@ -168,49 +128,17 @@ final class FarImport {
      * file's first 8 KiB are its tables: 1,024 sector offsets (0: no chunk), then 1,024 timestamps in seconds.
      */
     void planSaved(FarNodes store) throws IOException {
-        int rx0 = (centerX - radius) >> 5;
-        int rx1 = (centerX + radius) >> 5;
-        int rz0 = (centerZ - radius) >> 5;
-        int rz1 = (centerZ + radius) >> 5;
-        long[] chunks = new long[1024];
-        int n = 0;
-        java.nio.ByteBuffer header = java.nio.ByteBuffer.allocate(8192);
-        for (Path file : regionFiles()) {
-            long key = regionKey(file);
-            int rx = ChunkPos.getX(key);
-            int rz = ChunkPos.getZ(key);
-            if (rx < rx0 || rx > rx1 || rz < rz0 || rz > rz1) {
-                continue;
-            }
-            header.clear();
-            try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(file, java.nio.file.StandardOpenOption.READ)) {
-                while (header.hasRemaining() && channel.read(header) >= 0) {
-                    // read on
+        long[][] chunks = {new long[1024]};
+        int[] n = {0};
+        saved.stamps(centerX, centerZ, radius, (pos, written) -> {
+            if (written > store.importedAt.get(pos)) {
+                if (n[0] == chunks[0].length) {
+                    chunks[0] = Arrays.copyOf(chunks[0], n[0] * 2);
                 }
-            } catch (IOException e) {
-                // The server may be replacing it: the next join reads it
-                continue;
+                chunks[0][n[0]++] = pos;
             }
-            if (header.hasRemaining()) {
-                continue;
-            }
-            for (int i = 0; i < 1024; i++) {
-                int cx = rx * 32 + (i & 31);
-                int cz = rz * 32 + (i >> 5);
-                if (header.getInt(i * 4) == 0 || Math.abs(cx - centerX) > radius || Math.abs(cz - centerZ) > radius) {
-                    continue;
-                }
-                long pos = ChunkPos.asLong(cx, cz);
-                int written = header.getInt(4096 + i * 4);
-                if (written > store.importedAt.get(pos)) {
-                    if (n == chunks.length) {
-                        chunks = Arrays.copyOf(chunks, n * 2);
-                    }
-                    chunks[n++] = pos;
-                }
-            }
-        }
-        for (long pos : nearestFirst(chunks, n)) {
+        });
+        for (long pos : SavedChunks.nearestFirst(chunks[0], n[0], centerX, centerZ, radius)) {
             add(pos);
         }
         started(store);
@@ -231,67 +159,6 @@ final class FarImport {
         loadsAtStart = store.loads;
     }
 
-    /** The dimension's region files (r.X.Z.mca, not empty). */
-    private List<Path> regionFiles() throws IOException {
-        List<Path> out = new java.util.ArrayList<>();
-        if (Files.isDirectory(regionFolder)) {
-            try (DirectoryStream<Path> files = Files.newDirectoryStream(regionFolder, "r.*.mca")) {
-                for (Path file : files) {
-                    if (regionKey(file) != Long.MIN_VALUE && Files.size(file) > 0) {
-                        out.add(file);
-                    }
-                }
-            }
-        }
-        return out;
-    }
-
-    /** A region file's coordinates as a ChunkPos long, or Long.MIN_VALUE when the name isn't r.X.Z.mca. */
-    private static long regionKey(Path file) {
-        String[] parts = file.getFileName().toString().split("\\.");
-        if (parts.length != 4) {
-            return Long.MIN_VALUE;
-        }
-        try {
-            return ChunkPos.asLong(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
-        } catch (NumberFormatException e) {
-            return Long.MIN_VALUE;
-        }
-    }
-
-    /**
-     * The first n chunks ordered for reading: groups of 4 x 4 chunks nearest the centre first, within a group 2 x 2 at
-     * a time (a level-1 and a level-0 node column, so a node gets all its sections while it is in memory).
-     */
-    private long[] nearestFirst(long[] chunks, int n) {
-        int gx0 = (centerX - radius) >> 2;
-        int gz0 = (centerZ - radius) >> 2;
-        long[] keys = new long[n];
-        for (int i = 0; i < n; i++) {
-            int cx = ChunkPos.getX(chunks[i]);
-            int cz = ChunkPos.getZ(chunks[i]);
-            int gx = cx >> 2;
-            int gz = cz >> 2;
-            // The group's centre against the centre chunk's, in half chunks
-            long dx = gx * 8L + 4 - (centerX * 2L + 1);
-            long dz = gz * 8L + 4 - (centerZ * 2L + 1);
-            int within = (cz >> 1 & 1) << 3 | (cx >> 1 & 1) << 2 | (cz & 1) << 1 | (cx & 1);
-            keys[i] = (dx * dx + dz * dz) << 28 | (long) (gx - gx0) << 16 | (long) (gz - gz0) << 4 | within;
-        }
-        Arrays.sort(keys);
-        long[] order = new long[n];
-        for (int i = 0; i < n; i++) {
-            long key = keys[i];
-            int gx = (int) (key >> 16 & 0xFFF) + gx0;
-            int gz = (int) (key >> 4 & 0xFFF) + gz0;
-            int within = (int) (key & 15);
-            int cx = gx * 4 + (within >> 2 & 1) * 2 + (within & 1);
-            int cz = gz * 4 + (within >> 3 & 1) * 2 + (within >> 1 & 1);
-            order[i] = ChunkPos.asLong(cx, cz);
-        }
-        return order;
-    }
-
     int total() {
         return total;
     }
@@ -309,7 +176,7 @@ final class FarImport {
             queued.remove(pos);
             CompletableFuture<Optional<CompoundTag>> read;
             try {
-                read = chunkMap.read(new ChunkPos(pos));
+                read = saved.read(pos);
             } catch (RuntimeException e) {
                 failed++;
                 done++;
@@ -341,27 +208,24 @@ final class FarImport {
             store.markImported(loaded.pos(), readAt);
             return;
         }
-        if (ChunkStorage.getVersion(tag) < dataVersion) {
-            // Saved by an older game: brought up to date as the server does when it loads it (on a copy: the tag may be
-            // the server's own, waiting to be written)
-            tag = chunkMap.upgradeChunkTag(level.dimension(), () -> level.getServer().overworld().getDataStorage(), tag.copy(),
-                    level.getChunkSource().getGenerator().getTypeNameForDataFixer());
+        CompoundTag current = saved.upgraded(tag);
+        if (current != tag) {
             upgraded++;
         }
+        tag = current;
         // Not complete or not lit yet: stamped too, since the chunk is saved again when that changes
-        if (ChunkStatus.byName(tag.getString("Status")) != ChunkStatus.FULL) {
-            notFull++;
-            store.markImported(loaded.pos(), readAt);
-            return;
-        }
-        if (!tag.getBoolean("isLightOn")) {
-            notLit++;
+        SavedChunks.Status status = SavedChunks.check(tag);
+        if (status != SavedChunks.Status.COMPLETE) {
+            if (status == SavedChunks.Status.NOT_FULL) {
+                notFull++;
+            } else {
+                notLit++;
+            }
             store.markImported(loaded.pos(), readAt);
             return;
         }
         long start = System.nanoTime();
-        List<CapturedSection> decoded = CapturedSection.fromSaved(tag, ChunkPos.getX(loaded.pos()), ChunkPos.getZ(loaded.pos()), minSection, sectionCount, hasSky,
-                blockCodec, biomeCodec, plains, generation, decodeErrors);
+        List<CapturedSection> decoded = saved.decode(tag, ChunkPos.getX(loaded.pos()), ChunkPos.getZ(loaded.pos()), generation, decodeErrors);
         long decodedAt = System.nanoTime();
         decodeNanos += decodedAt - start;
         long newBefore = store.sessionNew;

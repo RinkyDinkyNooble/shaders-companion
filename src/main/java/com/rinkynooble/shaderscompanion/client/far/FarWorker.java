@@ -1,6 +1,7 @@
 package com.rinkynooble.shaderscompanion.client.far;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
+import com.rinkynooble.shaderscompanion.far.CapturedSection;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;

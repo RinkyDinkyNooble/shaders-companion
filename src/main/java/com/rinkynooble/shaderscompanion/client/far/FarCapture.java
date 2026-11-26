@@ -1,6 +1,7 @@
 package com.rinkynooble.shaderscompanion.client.far;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
+import com.rinkynooble.shaderscompanion.far.CapturedSection;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.util.ArrayList;
 import java.util.Comparator;

@@ -7,7 +7,9 @@ import com.rinkynooble.shaderscompanion.client.CubeView;
 import com.rinkynooble.shaderscompanion.client.DebugOverlay;
 import com.rinkynooble.shaderscompanion.client.FarTextures;
 import com.rinkynooble.shaderscompanion.client.far.FarRenderer;
+import com.rinkynooble.shaderscompanion.client.far.FarChecks;
 import com.rinkynooble.shaderscompanion.client.far.FarStore;
+import com.rinkynooble.shaderscompanion.client.far.FarTerrain;
 import com.rinkynooble.shaderscompanion.client.far.FarViews;
 import net.irisshaders.iris.Iris;
 import net.minecraft.client.Minecraft;
@@ -351,30 +353,30 @@ public final class DevRun {
         Minecraft mc = Minecraft.getInstance();
         if (FAR_STORE) {
             // On for this run only, before the world loads so the whole join is captured
-            FarStore.forceForChecks(true, FAR_STORE_CACHE);
+            FarChecks.force(true, FAR_STORE_CACHE);
             // -PdevFarDiff=N: what differs in the first N sections that change
-            FarStore.logChangesForChecks(Integer.getInteger("shaderscompanion.devFarDiff", 0));
+            FarChecks.logChanges(Integer.getInteger("shaderscompanion.devFarDiff", 0));
             // -PdevFarRaw: sections stored as captured, hidden voxels kept (M1c)
-            FarStore.hideVoxelsForChecks(!Boolean.getBoolean("shaderscompanion.devFarRaw"));
+            FarChecks.hideVoxels(!Boolean.getBoolean("shaderscompanion.devFarRaw"));
             // -PdevFarMemoryBorders: the coarser levels' exposure test at node borders sees only nodes in memory (M1a, M1b)
-            FarStore.diskBordersForChecks(!Boolean.getBoolean("shaderscompanion.devFarMemoryBorders"));
+            FarChecks.diskBorders(!Boolean.getBoolean("shaderscompanion.devFarMemoryBorders"));
             // -PdevFarNoStale: sections next to an opened voxel are not marked stale (the tunnel check's negative control)
-            FarStore.markStaleForChecks(!Boolean.getBoolean("shaderscompanion.devFarNoStale"));
+            FarChecks.markStale(!Boolean.getBoolean("shaderscompanion.devFarNoStale"));
             if (FAR_DRAW) {
                 // M2b, M3a: far terrain on for the run (for the pack when it binds the far textures, else the debug view;
                 // meshing follows it); -PdevFarOverlay: the debug view even while the pack binds them
-                FarStore.drawForChecks(true);
-                FarStore.overlayForChecks(FAR_OVERLAY);
+                FarChecks.draw(true);
+                FarChecks.overlay(FAR_OVERLAY);
             }
             if (FAR_MESH || FAR_DRAW) {
                 // M2a: the far terrain meshed for the run, at -PdevFarRange (the config's by default), corner shading with -PdevFarCornerShading
-                FarStore.meshingForChecks(FAR_MESH);
-                FarStore.farRangeForChecks(MESH_RANGE);
-                FarStore.cornerShadingForChecks(Boolean.getBoolean("shaderscompanion.devFarCornerShading"));
+                FarChecks.meshing(FAR_MESH);
+                FarChecks.farRange(MESH_RANGE);
+                FarChecks.cornerShading(Boolean.getBoolean("shaderscompanion.devFarCornerShading"));
                 // Integration round A: -PdevFarEncodedAverage, the faces' colours averaged as before 3.0.0-dev4
                 com.rinkynooble.shaderscompanion.client.far.StateColors.encodedAverageForChecks(Boolean.getBoolean("shaderscompanion.devFarEncodedAverage"));
                 // -PdevFarFillFrom=1: dark air filled from level 1, as before 3.0.0-dev6 (level 0's caves kept)
-                FarStore.caveFillFromForChecks(Integer.getInteger("shaderscompanion.devFarFillFrom", 0));
+                FarChecks.caveFillFrom(Integer.getInteger("shaderscompanion.devFarFillFrom", 0));
             }
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: far store on for the run, heap {} MB", Runtime.getRuntime().maxMemory() >> 20);
         }
@@ -547,7 +549,7 @@ public final class DevRun {
             if (mc.player != null && Boolean.getBoolean("shaderscompanion.devLateShots") && lateTicks % 40 == 0) {
                 Screenshot.grab(mc.gameDirectory, String.format("shaderscompanion-late-%s-t%04d.png", System.getProperty("shaderscompanion.devTag", "run"), lateTicks),
                         mc.getMainRenderTarget(), message -> { });
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, shaders off {} ticks: Far terrain: {}", lateTicks, FarStore.terrainStatus());
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, shaders off {} ticks: Far terrain: {}", lateTicks, FarTerrain.terrainStatus());
             }
             // -PdevShadersLate: shaders come on once the world has run that long without them (with -PdevLateQuit the game
             // quits instead)
@@ -1751,7 +1753,7 @@ public final class DevRun {
             }
             if (ticks - phaseTick == 200 && FAR_DRAW) {
                 dhGlFramesFrom = FarRenderer.glFramesForChecks();
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene with Distant Horizons: Far terrain: {}", FarStore.terrainStatus());
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene with Distant Horizons: Far terrain: {}", FarTerrain.terrainStatus());
             }
             if (farSettled(mc) && (!FAR_DRAW || ticks - phaseTick > 200)) {
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-" + System.getProperty("shaderscompanion.devTag", "run") + "-dh.png",
@@ -1760,7 +1762,7 @@ public final class DevRun {
                 if (FAR_DRAW) {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene with Distant Horizons drawing: frames whose hook made far terrain GL calls "
                                     + "since 10 s in: {} (of {} s); Far terrain: {} | Far store: {}", FarRenderer.glFramesForChecks() - dhGlFramesFrom,
-                            (ticks - phaseTick - 200) / 20, FarStore.terrainStatus(), FarStore.status());
+                            (ticks - phaseTick - 200) / 20, FarTerrain.terrainStatus(), FarStore.status());
                     // M4: the mod's views draw its far terrain while Distant Horizons draws the screen
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain in the views with Distant Horizons drawing: {} | {}", viewsLine(),
                             String.join(" | ", DebugOverlay.statusLines()));
@@ -1781,7 +1783,7 @@ public final class DevRun {
             if (dhOff && ticks - phaseTick == 1) {
                 DhProbe.setRendering(false);
             } else if (dhOff && ticks - phaseTick == 200) {
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene with Distant Horizons' rendering turned off: Far terrain: {}", FarStore.terrainStatus());
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far scene with Distant Horizons' rendering turned off: Far terrain: {}", FarTerrain.terrainStatus());
                 DhProbe.clearRendering();
             }
             if (ticks - phaseTick >= (dhOff ? 240 : 40)) {
@@ -2200,7 +2202,7 @@ public final class DevRun {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far shadow map with {} {}: {}", TOGGLE, label, shadowLine());
                 // M4: the far terrain in the views over the round
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain in the views with {} {}: {} | Far terrain: {}", TOGGLE, label, viewsLine(),
-                        FarStore.terrainStatus());
+                        FarTerrain.terrainStatus());
                 if (FAR_VIEW_DUMP && timingRound < 2) {
                     try {
                         ShadersCompanion.LOGGER.info("Shaders Companion dev run, views dumped with {} {} as {}", TOGGLE, label, CubeDump.dump());
@@ -2939,7 +2941,7 @@ public final class DevRun {
      */
     private static void farStoreCheck(Minecraft mc) {
         int t = ticks - phaseTick;
-        double[] frame = FarStore.frameMicrosForChecks();
+        double[] frame = FarChecks.frameMicros();
         if (phase == 1) {
             phase = FAR_IMPORT > 0 ? 40 : FAR_FLIGHT ? 50 : FAR_DRAW ? 80 : FAR_MESH ? 60 : 10;
             phaseTick = ticks;
@@ -2967,7 +2969,7 @@ public final class DevRun {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store {} s: main thread {} us a frame (max {}), {} sections waiting, frame {} ms | {}", t / 20,
                         String.format("%.0f", frame[0]), String.format("%.0f", frame[1]), (int) frame[2], String.format("%.2f", median(frameMillis)), FarStore.status());
             }
-            storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+            storeSettledTicks = FarChecks.settled() ? storeSettledTicks + 1 : 0;
             boolean timeUp = t >= Math.min(FAR_WAIT_TICKS, 6000);
             if (t >= 1200 && storeSettledTicks >= 100 || timeUp) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store {} after {} s: {}", timeUp ? "not settled" : "settled", t / 20, FarStore.status());
@@ -2992,14 +2994,14 @@ public final class DevRun {
         } else if (phase == 11) {
             if (storeMapsLeft == 0 || t >= 1200) {
                 // The switch off at runtime: capture stops and the store is let go
-                FarStore.forceForChecks(false, FAR_STORE_CACHE);
+                FarChecks.force(false, FAR_STORE_CACHE);
                 phase = 12;
                 phaseTick = ticks;
             }
         } else if (phase == 12) {
             if (t == 40) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store turned off: {}", FarStore.status());
-                FarStore.forceForChecks(true, FAR_STORE_CACHE);
+                FarChecks.force(true, FAR_STORE_CACHE);
             } else if (t == 80) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store on again: {}", FarStore.status());
                 if (FAR_RENDER > 0) {
@@ -3124,7 +3126,7 @@ public final class DevRun {
             if (t % 100 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store second join {} s: {}", t / 20, FarStore.status());
             }
-            storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+            storeSettledTicks = FarChecks.settled() ? storeSettledTicks + 1 : 0;
             if (t >= 1200 && storeSettledTicks >= 100 || t >= 6000) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store second join {} after {} s: {}", t >= 6000 ? "not settled" : "settled", t / 20,
                         FarStore.status());
@@ -3139,13 +3141,13 @@ public final class DevRun {
             }
         } else if (phase == 40) {
             if (t == 40) {
-                importBefore = FarStore.importForChecks();
+                importBefore = FarChecks.importProgress();
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store import: {}", FarStore.startImport(FAR_IMPORT));
                 phase = 41;
                 phaseTick = ticks;
             }
         } else if (phase == 41 || phase == 44) {
-            String state = FarStore.importForChecks();
+            String state = FarChecks.importProgress();
             if (t % 200 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store importing {} s: {}", t / 20, FarStore.status());
             }
@@ -3162,7 +3164,7 @@ public final class DevRun {
                 phaseTick = ticks;
             }
         } else if (phase == 42) {
-            storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+            storeSettledTicks = FarChecks.settled() ? storeSettledTicks + 1 : 0;
             if (t % 200 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store after the import {} s: {}", t / 20, FarStore.status());
             }
@@ -3183,7 +3185,7 @@ public final class DevRun {
                     // The chunks the client showed (render distance 5 around the vantage, and one more) are left out
                     int cx = FAR_X >> 4;
                     int cz = FAR_Z >> 4;
-                    logWhenDone(FarStore.compareWithRawStoreForChecks(java.nio.file.Path.of(FAR_RAW_STORE), new int[]{cx - 7, cz - 7, cx + 7, cz + 7}));
+                    logWhenDone(FarChecks.compareWithRawStore(java.nio.file.Path.of(FAR_RAW_STORE), new int[]{cx - 7, cz - 7, cx + 7, cz + 7}));
                 }
                 for (int level = 0; level <= 4; level++) {
                     logWhenDone(FarStore.map(level, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, STORE_MAP_SIZE, "shaderscompanion-lod-import-L" + level + ".png")
@@ -3195,7 +3197,7 @@ public final class DevRun {
                 logWhenDone(FarStore.map(3, x0, z0, 2 * all + 64, 2 * all + 64, "shaderscompanion-lod-import-L3-all.png").thenApply(line -> new String[]{line}));
                 logWhenDone(FarStore.mapAroundCamera(0, 4).thenApply(line -> new String[]{line}));
                 logWhenDone(FarStore.stats());
-                logWhenDone(FarStore.compressionForChecks());
+                logWhenDone(FarChecks.compression());
                 phase = 43;
                 phaseTick = ticks;
             }
@@ -3205,7 +3207,7 @@ public final class DevRun {
             if (phase == 47 && t == 40) {
                 server.execute(() -> farTunnel(server.overworld(), 1));
             }
-            storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+            storeSettledTicks = FarChecks.settled() ? storeSettledTicks + 1 : 0;
             if (t >= 240 && storeSettledTicks >= 100 || t >= 1200) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store tunnel {} ({} s): comparing with the world | {}", phase == 47 ? "dug" : "filled again",
                         t / 20, FarStore.status());
@@ -3222,7 +3224,7 @@ public final class DevRun {
             }
         } else if (phase == 43) {
             if (storeMapsLeft <= 0 || t >= 6000) {
-                importBefore = FarStore.importForChecks();
+                importBefore = FarChecks.importProgress();
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store import again: {}", FarStore.startImport(FAR_IMPORT));
                 phase = 44;
                 phaseTick = ticks;
@@ -3361,11 +3363,11 @@ public final class DevRun {
     private static void farStoreFlight(Minecraft mc, int t) {
         double flightLength = Math.hypot(FLIGHT_BX - FLIGHT_AX, FLIGHT_BZ - FLIGHT_AZ);
         int flightTicks = (int) Math.ceil(flightLength / FILL_SPEED);
-        double[] frame = FarStore.frameMicrosForChecks();
+        double[] frame = FarChecks.frameMicros();
         if (phase == 50) {
             if (t == 20) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store flight: joined, teleporting to the start | {}", FarStore.status());
-                FarStore.recordFramesForChecks(true);
+                FarChecks.recordFrames(true);
                 mc.player.connection.sendCommand("tp @s " + FLIGHT_AX + " " + STORE_FLY_Y + " " + FLIGHT_AZ + " " + FAR_YAW + " " + FAR_PITCH);
                 phase = 51;
                 phaseTick = ticks;
@@ -3380,7 +3382,7 @@ public final class DevRun {
                         mc.getMainRenderTarget(), message -> { });
                 int[] u = unbuiltColumns(mc);
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight teleport shot {} s: {} of {} columns inside the radius not built ({} ahead) | Far terrain: {}",
-                        t / 20, u[1], u[0], u[2], FarStore.terrainStatus());
+                        t / 20, u[1], u[0], u[2], FarTerrain.terrainStatus());
             }
             if (t % 20 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store after the teleport {} s: main thread {} us a frame (max {}), {} sections waiting | {}", t / 20,
@@ -3388,21 +3390,21 @@ public final class DevRun {
             }
             if (t >= 400) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store teleport after joining, the 20 s from the teleport: {}",
-                        framesSummary(FarStore.recordFramesForChecks(false)));
+                        framesSummary(FarChecks.recordFrames(false)));
                 phase = 52;
                 phaseTick = ticks;
                 storeSettledTicks = 0;
             }
         } else if (phase == 52) {
             holdAt(mc, FLIGHT_AX, FLIGHT_AZ);
-            boolean ready = FarStore.settledForChecks();
+            boolean ready = FarChecks.settled();
             if (FAR_DRAW) {
                 // M3c: the far terrain meshed and on the GPU too before the flight
                 if (t % 20 == 0) {
-                    FarStore.terrainNumbersForChecks().whenComplete((n, e) -> meshNumbers = n);
+                    FarChecks.terrainNumbers().whenComplete((n, e) -> meshNumbers = n);
                 }
                 long[] n = meshNumbers;
-                ready &= n != null && n[n.length - 11 + 5] == 0 && FarStore.gpuNumbersForChecks(false)[0] == 0;
+                ready &= n != null && n[n.length - 11 + 5] == 0 && FarChecks.gpuNumbers(false)[0] == 0;
             }
             storeSettledTicks = ready ? storeSettledTicks + 1 : 0;
             if (storeSettledTicks >= 100 || t >= 2400) {
@@ -3410,7 +3412,7 @@ public final class DevRun {
                         t / 20, FarStore.status());
                 logWhenDone(FarStore.stats());
                 if (FAR_DRAW) {
-                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight start: Far terrain: {}", FarStore.terrainStatus());
+                    ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight start: Far terrain: {}", FarTerrain.terrainStatus());
                     // Round B: the far shadow map's redraws counted from here
                     FarRenderer.shadowNumbersForChecks();
                     startMeshWindow();
@@ -3450,7 +3452,7 @@ public final class DevRun {
                     }
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight {} s: columns inside the radius {}, not built {} on average (at most {}), {} ahead "
                                     + "| Far terrain: {}", t / 20, flightUnbuilt.get(s - 1)[0], String.format("%.1f", sum / 20.0), max, String.format("%.1f", ahead / 20.0),
-                            FarStore.terrainStatus());
+                            FarTerrain.terrainStatus());
                 }
             }
             if (t % 20 == 19) {
@@ -3466,25 +3468,25 @@ public final class DevRun {
             }
             if (t >= flightTicks) {
                 if (out) {
-                    long[] frames = FarStore.recordFramesForChecks(false);
-                    String loads = loadsSummary(FarStore.recordedLoadsForChecks());
+                    long[] frames = FarChecks.recordFrames(false);
+                    String loads = loadsSummary(FarChecks.recordedLoads());
                     long[] before = flightCounters;
                     long wall = System.nanoTime() - flightWall;
-                    long worker = FarStore.workerCpuNanosForChecks() - flightWorkerCpu;
+                    long worker = FarChecks.workerCpuNanos() - flightWorkerCpu;
                     long render = renderCpu() - flightRenderCpu;
                     long server = serverCpu() - flightServerCpu;
                     String frameTimes = frameTimesSummary();
                     int distance = mc.options.getEffectiveRenderDistance();
-                    FarStore.countersForChecks().whenComplete((after, error) -> mc.execute(() -> ShadersCompanion.LOGGER.info(
+                    FarChecks.counters().whenComplete((after, error) -> mc.execute(() -> ShadersCompanion.LOGGER.info(
                             "Shaders Companion dev run, far store flight with the store on ({} s, render distance {}): main thread {}; {}; {}; "
                                     + "processor: the far store's worker {}% of a core, the render thread {}%, the server thread {}%; worker: {}",
                             String.format("%.1f", wall / 1.0e9), distance, framesSummary(frames), loads, frameTimes, String.format("%.1f", 100.0 * worker / wall),
-                            String.format("%.1f", 100.0 * render / wall), String.format("%.1f", 100.0 * server / wall), FarStore.countersSummary(before, after))));
+                            String.format("%.1f", 100.0 * render / wall), String.format("%.1f", 100.0 * server / wall), FarChecks.countersSummary(before, after))));
                     logWhenDone(FarStore.stats());
                     if (FAR_DRAW) {
                         ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight with far terrain drawn: {}; {}; {}; frames drawn for the pack {}, with "
                                         + "another frame counter than Oculus's {} | Far terrain: {}", unbuiltSummary(), slowFramesSummary(), meshWindowSummary(),
-                                FarRenderer.jitterForChecks()[0] - flightJitter[0], FarRenderer.jitterForChecks()[1] - flightJitter[1], FarStore.terrainStatus());
+                                FarRenderer.jitterForChecks()[0] - flightJitter[0], FarRenderer.jitterForChecks()[1] - flightJitter[1], FarTerrain.terrainStatus());
                         ShadersCompanion.LOGGER.info("Shaders Companion dev run, far flight's far shadow map: {}", shadowLine());
                     }
                     phase = 54;
@@ -3503,7 +3505,7 @@ public final class DevRun {
             if (t == 100) {
                 flightFrames = null;
                 flightGpu = null;
-                FarStore.forceForChecks(false, FAR_STORE_CACHE);
+                FarChecks.force(false, FAR_STORE_CACHE);
             } else if (t == 200) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store off for the flight back: {}", FarStore.status());
                 startFlightWindow(false);
@@ -3545,15 +3547,15 @@ public final class DevRun {
      */
     private static void farMeshCheck(Minecraft mc, int t) {
         // Settled first: the numbers' request below is a task in the worker's queue for a moment
-        storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+        storeSettledTicks = FarChecks.settled() ? storeSettledTicks + 1 : 0;
         if (t % 20 == 0) {
-            FarStore.terrainNumbersForChecks().whenComplete((n, e) -> meshNumbers = n);
+            FarChecks.terrainNumbers().whenComplete((n, e) -> meshNumbers = n);
         }
         long[] n = meshNumbers;
         int at = n == null ? 0 : n.length - 11;
         long fills = n == null ? 0 : n[at + 7];
         boolean filledSince = n != null && n[at + 5] == 0 && fills > meshFillsBefore;
-        double[] frame = FarStore.frameMicrosForChecks();
+        double[] frame = FarChecks.frameMicros();
         if (phase == 60 || phase == 62 || phase == 63 || phase == 64) {
             if (!meshWindowOpen) {
                 meshWindowOpen = true;
@@ -3561,9 +3563,9 @@ public final class DevRun {
                 meshFillsBefore = phase == 60 ? 0 : fills;
                 startMeshWindow();
                 if (phase == 62) {
-                    FarStore.farRangeForChecks(4096);
+                    FarChecks.farRange(4096);
                 } else if (phase == 63) {
-                    FarStore.farRangeForChecks(MESH_RANGE);
+                    FarChecks.farRange(MESH_RANGE);
                 } else if (phase == 64) {
                     mc.player.connection.sendCommand("tp @s " + FLIGHT_AX + " " + STORE_FLY_Y + " " + FLIGHT_AZ + " " + FAR_YAW + " " + FAR_PITCH);
                 }
@@ -3574,7 +3576,7 @@ public final class DevRun {
             }
             if (t % 40 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain {} s (phase {}): main thread {} us a frame (max {}) | Far store: {} | Far terrain: {}", t / 20, phase,
-                        String.format("%.0f", frame[0]), String.format("%.0f", frame[1]), FarStore.status(), FarStore.terrainStatus());
+                        String.format("%.0f", frame[0]), String.format("%.0f", frame[1]), FarStore.status(), FarTerrain.terrainStatus());
             }
             boolean done = filledSince && meshNumbers != null && storeSettledTicks >= 60 && t >= 200;
             if (done || t >= 4800) {
@@ -3587,14 +3589,14 @@ public final class DevRun {
                 phaseTick = ticks;
                 // The stats, and at 61 the three maps the next phase waits for
                 storeMapsLeft = phase == 61 ? 4 : 1;
-                logWhenDone(FarStore.terrainStats());
+                logWhenDone(FarTerrain.terrainStats());
                 if (phase == 61) {
                     for (int level = 0; level <= 2; level++) {
-                        logWhenDone(FarStore.meshMap(level, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, "shaderscompanion-far"));
+                        logWhenDone(FarTerrain.meshMap(level, STORE_MAP_X, STORE_MAP_Z, STORE_MAP_SIZE, "shaderscompanion-far"));
                     }
                 } else if (phase == 65) {
                     startMeshWindow();
-                    FarStore.recordFramesForChecks(true);
+                    FarChecks.recordFrames(true);
                     storeFlyMax = 0;
                     storeFlySum = 0;
                     storeFlySeconds = 0;
@@ -3619,14 +3621,14 @@ public final class DevRun {
                 storeFlySeconds++;
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain flying {} s at x {} z {}: main thread {} us a frame (max {}), frame {} ms | Far terrain: {}",
                         t / 20, String.format("%.0f", x), String.format("%.0f", z), String.format("%.0f", frame[0]), String.format("%.0f", frame[1]),
-                        String.format("%.2f", median(frameMillis)), FarStore.terrainStatus());
+                        String.format("%.2f", median(frameMillis)), FarTerrain.terrainStatus());
             }
             if (t >= flightTicks) {
-                String frames = framesSummary(FarStore.recordFramesForChecks(false));
-                FarStore.recordedLoadsForChecks();
+                String frames = framesSummary(FarChecks.recordFrames(false));
+                FarChecks.recordedLoads();
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain flight ({} blocks at 30 a second, render distance {}): the store's main thread {}; {}; {}",
                         String.format("%.0f", flightLength), mc.options.getEffectiveRenderDistance(), frames, meshWindowSummary(), meshCountersSummary(n));
-                logWhenDone(FarStore.terrainStats());
+                logWhenDone(FarTerrain.terrainStats());
                 logWhenDone(FarStore.stats());
                 phase = 66;
                 phaseTick = ticks;
@@ -3642,22 +3644,22 @@ public final class DevRun {
 
     private static void startMeshWindow() {
         meshWall = System.nanoTime();
-        meshWorkerCpu = FarStore.workerCpuNanosForChecks();
-        meshMesherCpu = Math.max(0, FarStore.mesherCpuNanosForChecks());
+        meshWorkerCpu = FarChecks.workerCpuNanos();
+        meshMesherCpu = Math.max(0, FarChecks.mesherCpuNanos());
         meshRenderCpu = renderCpu();
         meshServerCpu = serverCpu();
-        FarStore.colourNumbersForChecks(true);
+        FarChecks.colourNumbers(true);
         meshCounters = meshNumbers;
     }
 
     /** The threads' share of a core since startMeshWindow, and the render thread's far terrain part a frame. */
     private static String meshWindowSummary() {
         long wall = System.nanoTime() - meshWall;
-        long worker = FarStore.workerCpuNanosForChecks() - meshWorkerCpu;
-        long mesher = Math.max(0, FarStore.mesherCpuNanosForChecks()) - meshMesherCpu;
+        long worker = FarChecks.workerCpuNanos() - meshWorkerCpu;
+        long mesher = Math.max(0, FarChecks.mesherCpuNanos()) - meshMesherCpu;
         long render = renderCpu() - meshRenderCpu;
         long server = serverCpu() - meshServerCpu;
-        long[] c = FarStore.colourNumbersForChecks(false);
+        long[] c = FarChecks.colourNumbers(false);
         return String.format("over %.1f s: the far store's worker %.1f%% of a core, the far mesher %.1f%%, the render thread %.1f%%, the server thread %.1f%%; "
                         + "the render thread's far terrain part %.1f us a frame (at most %.0f, %d frames); colour table so far: %d states, %.1f us a state (at most %.0f), "
                         + "%d frames working, %.0f us each (at most %.0f), all states in %.0f ms", wall / 1.0e9, 100.0 * worker / wall, 100.0 * mesher / wall,
@@ -3725,7 +3727,7 @@ public final class DevRun {
 
     /** The far terrain is drawn for the shader pack this frame (it binds the far textures). */
     private static boolean forPack() {
-        return FarStore.drawMode() == FarStore.MODE_PACK || FarStore.drawMode() == FarStore.MODE_PACK_STILL;
+        return FarTerrain.drawMode() == FarTerrain.MODE_PACK || FarTerrain.drawMode() == FarTerrain.MODE_PACK_STILL;
     }
 
     /** Round B: the far shadow map's redraws since the last call, their GPU time and quads, as a log line. */
@@ -3755,19 +3757,19 @@ public final class DevRun {
      * at level 0 too and everything meshed again, and 84 to 86 do the same; 87 hides the debug view and quits.
      */
     private static void farDrawCheck(Minecraft mc, int t) {
-        storeSettledTicks = FarStore.settledForChecks() ? storeSettledTicks + 1 : 0;
+        storeSettledTicks = FarChecks.settled() ? storeSettledTicks + 1 : 0;
         if (t % 20 == 0) {
-            FarStore.terrainNumbersForChecks().whenComplete((n, e) -> meshNumbers = n);
+            FarChecks.terrainNumbers().whenComplete((n, e) -> meshNumbers = n);
         }
         long[] n = meshNumbers;
         int at = n == null ? 0 : n.length - 11;
         long fills = n == null ? 0 : n[at + 7];
         boolean filledSince = n != null && n[at + 5] == 0 && fills > meshFillsBefore;
         if (phase == 80 || phase == 84) {
-            long[] gpu = FarStore.gpuNumbersForChecks(false);
+            long[] gpu = FarChecks.gpuNumbers(false);
             if (t % 40 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain drawn {} s (phase {}): {} waiting to upload | Far terrain: {}", t / 20, phase, gpu[0],
-                        FarStore.terrainStatus());
+                        FarTerrain.terrainStatus());
             }
             boolean done = filledSince && gpu[0] == 0 && storeSettledTicks >= 60 && t >= 200;
             if (done || t >= 4800) {
@@ -3778,7 +3780,7 @@ public final class DevRun {
                         done ? "meshed, uploaded and settled" : "NOT settled after 240 s", fillSummary(n), gpu[1], String.format("%.1f", gpu[2] / 1048576.0),
                         String.format("%.1f", seconds), String.format("%.1f", seconds > 0 ? gpu[2] / 1048576.0 / seconds : 0.0), gpu[5],
                         String.format("%.0f", gpu[7] == 0 ? 0.0 : gpu[6] / 1.0e3 / gpu[7]), gpu[7], gpu[8] / 1000);
-                logWhenDone(FarStore.terrainStats());
+                logWhenDone(FarTerrain.terrainStats());
                 phase++;
                 phaseTick = ticks;
             }
@@ -3792,7 +3794,7 @@ public final class DevRun {
                 // M3a: with the pack reading the far terrain this is the pack's frame (the debug view stays off)
                 boolean pack = forPack();
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-" + drawTag() + (pack ? "-pack.png" : "-over.png"), mc.getMainRenderTarget(), message -> { });
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain {} shot: Far terrain: {}", pack ? "pack" : "over", FarStore.terrainStatus());
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain {} shot: Far terrain: {}", pack ? "pack" : "over", FarTerrain.terrainStatus());
                 if (pack) {
                     ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain info texture: {}", infoLine());
                 }
@@ -3837,7 +3839,7 @@ public final class DevRun {
                                 + "all its buffers and the far layer {} MB | {} | {}",
                         drawTag(), mc.options.getEffectiveRenderDistance(), h[14], ms(h[0]), ms(h[1]), ms(h[2]), ms(h[3]), ms(h[0] + h[2]), ms(h[4]), h[6], h[8], h[9],
                         h[10] / 1000, h[11] / 1000, h[12] / 1000, h[13] / 1000, memory[0] >> 20, memory[1] >> 20, memory[2] >> 20, vram(), frameTiming());
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain status: {}", FarStore.terrainStatus());
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain status: {}", FarTerrain.terrainStatus());
                 FarRenderer.pauseForChecks(true);
             } else if (t == 400) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain timing ({}), its drawing paused: {}", drawTag(), frameTiming());
@@ -3855,21 +3857,21 @@ public final class DevRun {
                 if (phase == 82 && FAR_SHORT) {
                     phase = FAR_DIM ? 88 : 87;
                     if (!FAR_DIM) {
-                        FarStore.drawForChecks(false);
+                        FarChecks.draw(false);
                     }
                 } else if (phase == 82) {
                     // The same with level 0's caves filled: everything meshed again
-                    FarStore.caveFillFromForChecks(0);
+                    FarChecks.caveFillFrom(0);
                     // A new residency counts its fills from 0
                     meshFillsBefore = 0;
                     meshNumbers = null;
-                    FarStore.restartMeshingForChecks();
-                    FarStore.gpuNumbersForChecks(true);
+                    FarChecks.restartMeshing();
+                    FarChecks.gpuNumbers(true);
                     phase = 84;
                 } else if (FAR_DIM) {
                     phase = 88;
                 } else {
-                    FarStore.drawForChecks(false);
+                    FarChecks.draw(false);
                     phase = 87;
                 }
                 phaseTick = ticks;
@@ -3903,7 +3905,7 @@ public final class DevRun {
             }
             if ((farReady(t) && t >= 300) || t >= 900) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far hold at {} {} {} (yaw {}, pitch {}) ready after {} s: Far terrain: {}", x, FAR_HOLD_Y, z,
-                        FAR_SHIFT_YAW, FAR_PITCH, t / 20, FarStore.terrainStatus());
+                        FAR_SHIFT_YAW, FAR_PITCH, t / 20, FarTerrain.terrainStatus());
                 farHolding = true;
                 prefix = "shaderscompanion-far-" + System.getProperty("shaderscompanion.devTag", "run");
                 timingRound = 0;
@@ -3919,7 +3921,7 @@ public final class DevRun {
                 dimGlFramesFrom = FarRenderer.glFramesForChecks();
             } else if (t % 100 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain in {} {} s: Far terrain: {} | Far store: {}", mc.level.dimension().location(), t / 20,
-                        FarStore.terrainStatus(), FarStore.status());
+                        FarTerrain.terrainStatus(), FarStore.status());
             }
             if (t == 400) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain in {}: frames whose hook made far terrain GL calls from 10 s in: {} (of 10 s); "
@@ -3931,10 +3933,10 @@ public final class DevRun {
         } else if (phase == 89) {
             if (t % 100 == 0) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain back in {} {} s: Far terrain: {}", mc.level.dimension().location(), t / 20,
-                        FarStore.terrainStatus());
+                        FarTerrain.terrainStatus());
             }
             if (t >= 600) {
-                FarStore.drawForChecks(false);
+                FarChecks.draw(false);
                 phase = 87;
                 phaseTick = ticks;
             }
@@ -3943,7 +3945,7 @@ public final class DevRun {
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardraw-off.png", mc.getMainRenderTarget(), message -> { });
                 long[] memory = FarRenderer.memoryForChecks();
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far terrain debug view off: its buffers {} MB | Far terrain: {} | {}", memory[2] >> 20,
-                        FarStore.terrainStatus(), frameTiming());
+                        FarTerrain.terrainStatus(), frameTiming());
             } else if (t >= 100) {
                 finish(mc);
             }
@@ -4006,7 +4008,7 @@ public final class DevRun {
     private static int farAutoQuietTicks;
 
     private static void farAutoCheck(Minecraft mc, int t) {
-        int[] auto = FarStore.autoImportForChecks();
+        int[] auto = FarChecks.autoImport();
         boolean upToDate = auto != null && auto[0] == 0;
         if (t % 200 == 0 || t == 1) {
             ShadersCompanion.LOGGER.info("Shaders Companion dev run, auto import {} s (step {}): waiting {}, read {}{} | Far store: {}", t / 20, farAutoStep,
@@ -4131,10 +4133,10 @@ public final class DevRun {
     /** The far terrain meshed and on the GPU, and the store settled, for this many ticks in a row (counted in storeSettledTicks). */
     private static boolean farReady(int t) {
         if (t % 20 == 0) {
-            FarStore.terrainNumbersForChecks().whenComplete((n, e) -> meshNumbers = n);
+            FarChecks.terrainNumbers().whenComplete((n, e) -> meshNumbers = n);
         }
         long[] n = meshNumbers;
-        boolean ready = FarStore.settledForChecks() && n != null && n[n.length - 11 + 5] == 0 && FarStore.gpuNumbersForChecks(false)[0] == 0;
+        boolean ready = FarChecks.settled() && n != null && n[n.length - 11 + 5] == 0 && FarChecks.gpuNumbers(false)[0] == 0;
         storeSettledTicks = ready ? storeSettledTicks + 1 : 0;
         return storeSettledTicks >= 100;
     }
@@ -4143,7 +4145,7 @@ public final class DevRun {
         String tag = System.getProperty("shaderscompanion.devTag", "run");
         Screenshot.grab(mc.gameDirectory, "shaderscompanion-farshift-" + tag + "-" + name + ".png", mc.getMainRenderTarget(), message -> { });
         ShadersCompanion.LOGGER.info("Shaders Companion dev run, far shift shot {} at {} {} {} (yaw {}, pitch {}): Far terrain: {}", name, String.format("%.2f", holdX),
-                String.format("%.2f", holdY), String.format("%.2f", holdZ), holdYaw, holdPitch, FarStore.terrainStatus());
+                String.format("%.2f", holdY), String.format("%.2f", holdZ), holdYaw, holdPitch, FarTerrain.terrainStatus());
     }
 
     /**
@@ -4169,7 +4171,7 @@ public final class DevRun {
             if (t % 200 == 0) {
                 long[] n = meshNumbers;
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far shift waiting {} s: store settled {}, filling {}, meshes waiting to upload {} | Far terrain: {}", t / 20,
-                        FarStore.settledForChecks(), n == null ? -1 : n[n.length - 11 + 5], FarStore.gpuNumbersForChecks(false)[0], FarStore.terrainStatus());
+                        FarChecks.settled(), n == null ? -1 : n[n.length - 11 + 5], FarChecks.gpuNumbers(false)[0], FarTerrain.terrainStatus());
             }
             if ((farReady(t) && t >= 300) || t >= 900) {
                 shiftShot(mc, "a");
@@ -4210,7 +4212,7 @@ public final class DevRun {
                     storeSettledTicks = 0;
                 } else {
                     mc.player.connection.sendCommand("tp @s " + FAR_X + ".5 " + farY + " " + FAR_Z + ".5 " + FAR_YAW + " " + FAR_PITCH);
-                    FarStore.drawForChecks(false);
+                    FarChecks.draw(false);
                     phase = 87;
                 }
                 phaseTick = ticks;
@@ -4319,7 +4321,7 @@ public final class DevRun {
         } else if (phase == 101) {
             holdAt(mc, cx + 0.5, view[0], cz + 0.5, view[1], view[2]);
             if (t == 100) {
-                dimImportBefore = FarStore.importForChecks();
+                dimImportBefore = FarChecks.importProgress();
                 String line = FarStore.startImport(FAR_DIMS_RADIUS / 16 + 2);
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} import: {}", dim, line);
                 phase = 102;
@@ -4328,16 +4330,16 @@ public final class DevRun {
             }
         } else if (phase == 102) {
             holdAt(mc, cx + 0.5, view[0], cz + 0.5, view[1], view[2]);
-            String imported = FarStore.importForChecks();
+            String imported = FarChecks.importProgress();
             boolean importDone = imported != null && imported.startsWith("Far store import") && !imported.equals(dimImportBefore);
             boolean ready = farReady(t) && importDone;
             if (t % 200 == 0) {
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} {} s, import {} | Far terrain: {}", dim, t / 20, imported, FarStore.terrainStatus());
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} {} s, import {} | Far terrain: {}", dim, t / 20, imported, FarTerrain.terrainStatus());
             }
             if (ready && t >= 400 || t >= 1200) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} {} after {} s: import {} | Far store: {} | Far terrain: {}", dim,
-                        ready ? "ready" : "NOT ready", t / 20, imported, FarStore.status(), FarStore.terrainStatus());
-                logWhenDone(FarStore.terrainStats());
+                        ready ? "ready" : "NOT ready", t / 20, imported, FarStore.status(), FarTerrain.terrainStatus());
+                logWhenDone(FarTerrain.terrainStats());
                 dimView = 0;
                 phase = 103;
                 phaseTick = ticks;
@@ -4356,7 +4358,7 @@ public final class DevRun {
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardims-" + tag + "-" + DIM_TAGS[dimIndex] + "-" + dimView + ".png", mc.getMainRenderTarget(), message -> { });
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: {} view {} at {} {} {} (yaw {}, pitch {}): frames with far terrain GL calls {} of the last 10 s; "
                                 + "info texture: {} | Far terrain: {} | {}", dim, dimView, String.format("%.1f", holdX), String.format("%.1f", holdY), String.format("%.1f", holdZ),
-                        holdYaw, holdPitch, FarRenderer.glFramesForChecks() - dimGlFrom, infoLine(), FarStore.terrainStatus(), frameTiming());
+                        holdYaw, holdPitch, FarRenderer.glFramesForChecks() - dimGlFrom, infoLine(), FarTerrain.terrainStatus(), frameTiming());
                 // The far terrain alone over a plain sky, for what it holds there
                 FarRenderer.aloneForChecks(true);
             } else if (t == 230) {
@@ -4373,7 +4375,7 @@ public final class DevRun {
             }
         } else if (phase == 104) {
             if (t == 1) {
-                logWhenDone(FarStore.terrainStats());
+                logWhenDone(FarTerrain.terrainStats());
             } else if (t >= 40) {
                 dimIndex++;
                 dimView = 0;
@@ -4388,12 +4390,12 @@ public final class DevRun {
             }
         } else if (phase == 105) {
             if (t % 100 == 0) {
-                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: back in {} {} s | Far terrain: {}", mc.level.dimension().location(), t / 20, FarStore.terrainStatus());
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far dims: back in {} {} s | Far terrain: {}", mc.level.dimension().location(), t / 20, FarTerrain.terrainStatus());
             }
             if (t >= 600) {
                 String tag = System.getProperty("shaderscompanion.devTag", "run");
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-fardims-" + tag + "-overworld.png", mc.getMainRenderTarget(), message -> { });
-                FarStore.drawForChecks(false);
+                FarChecks.draw(false);
                 phase = 87;
                 phaseTick = ticks;
             }
@@ -4419,12 +4421,12 @@ public final class DevRun {
         flightGpu = new java.util.ArrayList<>();
         flightWall = System.nanoTime();
         if (store) {
-            FarStore.recordFramesForChecks(true);
-            flightWorkerCpu = FarStore.workerCpuNanosForChecks();
+            FarChecks.recordFrames(true);
+            flightWorkerCpu = FarChecks.workerCpuNanos();
             flightRenderCpu = renderCpu();
             flightServerCpu = serverCpu();
             flightCounters = null;
-            FarStore.countersForChecks().whenComplete((counters, error) -> flightCounters = counters);
+            FarChecks.counters().whenComplete((counters, error) -> flightCounters = counters);
         }
     }
 
@@ -4499,7 +4501,7 @@ public final class DevRun {
 
     /** The world check around the tunnel: chunks -37 to -33 by -22 to -18, sections 2 to 6 (y 32 to 111). */
     private static java.util.concurrent.CompletableFuture<String[]> tunnelCheck() {
-        return FarStore.compareWithWorldForChecks(-35, -20, 2, 2, 6);
+        return FarChecks.compareWithWorld(-35, -20, 2, 2, 6);
     }
 
     /**

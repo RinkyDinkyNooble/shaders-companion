@@ -134,12 +134,12 @@ public final class FarViews {
 
     /** Whether the far terrain can be drawn into this frame's views (the far store has it on for them, on the GPU). */
     public static boolean wanted() {
-        return problem == null && FarStore.viewsDraw() && FarRenderer.hasBuffers() && FarRenderer.problem() == null;
+        return problem == null && FarTerrain.viewsDraw() && FarRenderer.hasBuffers() && FarRenderer.problem() == null;
     }
 
     /** How far the far terrain reaches from the camera (blocks) while {@link #wanted}, 0 otherwise. */
     public static int range() {
-        FarResidency.View v = FarStore.frameView();
+        FarResidency.View v = FarTerrain.frameView();
         return wanted() && v != null ? v.farRange() : 0;
     }
 
@@ -152,7 +152,7 @@ public final class FarViews {
         active = false;
         drewThisFrame = false;
         used = 0;
-        FarResidency.View v = FarStore.frameView();
+        FarResidency.View v = FarTerrain.frameView();
         if (!wanted() || v == null || maxViews <= 0) {
             return false;
         }
