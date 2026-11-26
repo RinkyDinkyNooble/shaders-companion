@@ -629,10 +629,18 @@ public final class FarStore {
         int maxY = level.getMaxBuildHeight();
         boolean caveFill = level.dimensionType().hasSkyLight() && !level.dimensionType().hasCeiling();
         int mb = cacheMb;
-        Path folder = mc.gameDirectory.toPath().resolve("shaderscompanion").resolve("lod").resolve(world).resolve(dimension);
+        Path storeRoot = mc.gameDirectory.toPath().resolve("shaderscompanion").resolve("lod").resolve(world);
+        Path folder = storeRoot.resolve(dimension);
+        // Singleplayer: the store must be this world's, not a deleted one's of the same name (FarWorldId)
+        Path saveRoot = mc.getSingleplayerServer() == null ? null : mc.getSingleplayerServer().getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
         // Sections of the store before are let go by their generation; the old store closes first (the queue's order)
         worker.messages.clear();
-        worker.post(w -> w.replaceStore(() -> new FarNodes(gen, world, dimension, minY, maxY, caveFill, mb, folder)));
+        worker.post(w -> w.replaceStore(() -> {
+            if (saveRoot != null) {
+                FarWorldId.claim(storeRoot, saveRoot);
+            }
+            return new FarNodes(gen, world, dimension, minY, maxY, caveFill, mb, folder);
+        }));
         FarWorker sink = worker;
         capture = new FarCapture(level, gen, sink::post);
         active = true;
