@@ -29,7 +29,8 @@ import net.minecraft.world.level.storage.LevelResource;
  * The store lives on disk in {@code <game dir>/shaderscompanion/lod/<world>/<dimension>/} ({@link FarDisk}); a world
  * or dimension change, leaving the world or turning the setting off closes it (every change written), and the game's
  * end waits for that. In singleplayer, {@code /shaderscompanion lod import} adds the chunks the world has saved
- * ({@link FarImport}).
+ * ({@link FarImport}), and with {@code farAutoImport} the store reads them by itself: on joining the ones new or changed
+ * since it last read them, then each one the integrated server saves ({@link #chunkSaved}).
  * <p>
  * Far terrain (M2, M3): while it is drawn ({@link #drawMode}: for the shader pack, which binds its textures, or for the
  * debug view {@code farTerrainDebug}; research/lod/M3-PLAN.md, "Coexistence"), or meshing is on alone ({@code far mesh
@@ -51,6 +52,13 @@ public final class FarStore {
     private static volatile String failure;
     /** The import's progress line in the chat: when it was last sent. */
     private static long lastImportChat;
+    /**
+     * The auto import (farAutoImport): the dimension whose saved chunks the store reads as the integrated server saves
+     * them, and the store's generation, set on the main thread and read by the server thread's save hook; null while
+     * none runs.
+     */
+    private static volatile net.minecraft.resources.ResourceKey<Level> autoDimension;
+    private static volatile int autoGeneration;
 
     // Dev checks (src/verify): the store on for a run and its cache size, without touching the config file
     private static boolean forcedOn;
@@ -422,7 +430,8 @@ public final class FarStore {
         Config.FAR_TERRAIN_DEBUG.set(on);
         Config.FAR_TERRAIN_DEBUG.save();
         FarRenderer.alone = false;
-        return on ? "Far terrain on: the store fills from the chunks you load (in singleplayer, /shaderscompanion lod import adds the world's saved chunks); "
+        return on ? "Far terrain on: the store fills from the chunks you load (in singleplayer also from the world's saved chunks, by itself with farAutoImport, "
+                + "or /shaderscompanion lod import); "
                 + "a shader pack that reads it (ABZA Shader 3) lights it, otherwise the debug view shows it" : "Far terrain off (what is stored stays on disk)";
     }
 
@@ -641,6 +650,44 @@ public final class FarStore {
             }
         }
         ShadersCompanion.LOGGER.info("Shaders Companion far store: started for {} {} ({} chunks already loaded, cache {} MB)", world, dimension, loaded, mb);
+        startAutoImport(mc, level, cx, cz, gen);
+    }
+
+    /**
+     * The auto import (singleplayer, farAutoImport): the world's saved chunks within the far range that are new or
+     * changed since the store last read them, then every complete chunk the integrated server saves in this dimension
+     * ({@link #chunkSaved}); read on the worker while little else waits (FarWorker).
+     */
+    private static void startAutoImport(Minecraft mc, ClientLevel level, int cx, int cz, int gen) {
+        autoDimension = null;
+        IntegratedServer server = mc.getSingleplayerServer();
+        if (server == null || !Config.FAR_AUTO_IMPORT.get()) {
+            return;
+        }
+        ServerLevel serverLevel = server.getLevel(level.dimension());
+        if (serverLevel == null) {
+            return;
+        }
+        FarImport auto = new FarImport(serverLevel, cx, cz, farRange() / 16 + 1, gen, true);
+        autoGeneration = gen;
+        autoDimension = level.dimension();
+        worker.post(w -> w.startAutoImport(auto));
+    }
+
+    /**
+     * The integrated server is saving a chunk (its thread, {@code ChunkDataEvent.Save}): a complete chunk of the
+     * dimension the auto import runs for goes to the worker, which reads it through the server's chunk storage later.
+     */
+    public static void chunkSaved(ServerLevel level, net.minecraft.world.level.chunk.ChunkAccess chunk) {
+        net.minecraft.resources.ResourceKey<Level> dimension = autoDimension;
+        FarWorker w = worker;
+        if (dimension == null || w == null || level.dimension() != dimension || chunk.getStatus() != net.minecraft.world.level.chunk.ChunkStatus.FULL
+                || level.getServer() != Minecraft.getInstance().getSingleplayerServer()) {
+            return;
+        }
+        long pos = chunk.getPos().toLong();
+        int gen = autoGeneration;
+        w.post(x -> x.autoSaved(pos, gen));
     }
 
     /**
@@ -658,6 +705,7 @@ public final class FarStore {
         }
         active = false;
         capture = null;
+        autoDimension = null;
         generation++;
         if (worker != null) {
             worker.post(w -> w.replaceStore(() -> null));
@@ -768,6 +816,11 @@ public final class FarStore {
         if (progress != null && progress.end() == null) {
             line.append(String.format(", importing: %d of %d chunks, %.0f a second", progress.done(), progress.total(), progress.perSecond()));
         }
+        if (w.autoWaiting > 0) {
+            line.append(String.format(", auto import: %d saved chunks to read (%d read)", w.autoWaiting, w.autoComplete));
+        } else if (w.autoWaiting == 0) {
+            line.append(String.format(", auto import: up to date (%d read)", w.autoComplete));
+        }
         if (w.diskError != null) {
             return line.append(", no disk (").append(w.diskError).append(")").toString();
         }
@@ -835,7 +888,7 @@ public final class FarStore {
         if (level == null) {
             return "The far store's import found no saved dimension " + capture.level().dimension().location();
         }
-        FarImport next = new FarImport(level, mc.player.chunkPosition().x, mc.player.chunkPosition().z, radius, generation);
+        FarImport next = new FarImport(level, mc.player.chunkPosition().x, mc.player.chunkPosition().z, radius, generation, false);
         lastImportChat = System.nanoTime();
         worker.post(w -> w.startImport(next));
         return "Far store import of the saved chunks within " + next.radius + " chunks of you: starting";
@@ -862,6 +915,12 @@ public final class FarStore {
                 return new String[]{"Compression check failed: " + e};
             }
         });
+    }
+
+    /** Dev checks: the auto import's chunks waiting (-1: none runs) and read complete this session; null without a worker. */
+    public static int[] autoImportForChecks() {
+        FarWorker w = worker;
+        return w == null ? null : new int[]{w.autoWaiting, w.autoComplete};
     }
 
     /** Dev checks: null before any import; while one runs, "N of M"; once it has ended, its summary line. */

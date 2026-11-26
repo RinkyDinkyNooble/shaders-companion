@@ -23,11 +23,15 @@ import java.util.function.Supplier;
  */
 final class FarWorker {
     private static final long REBUILD_PASS_NANOS = 100_000_000L;
+    /** The auto import reads more chunks only while fewer tasks than this wait (live captures go first). */
+    private static final int AUTO_QUEUE = 64;
 
     private final LinkedBlockingQueue<Object> tasks = new LinkedBlockingQueue<>();
     final Thread thread;
     private FarNodes store;
     private FarImport importer;
+    /** The auto import of the current store (farAutoImport, singleplayer), or null. */
+    private FarImport autoImporter;
     private long lastRebuildPass;
     private long lastPublish;
 
@@ -48,6 +52,9 @@ final class FarWorker {
     volatile int regionFiles;
     volatile String diskError;
     volatile FarImport.Progress importProgress;
+    /** The auto import: chunks waiting, and chunks read complete this session (-1: none runs). */
+    volatile int autoWaiting = -1;
+    volatile int autoComplete;
     /** The store's sections to copy again (FarNodes.recaptures), for the main thread; null without a store. */
     volatile java.util.Queue<Long> recaptures;
     /** Lines for the chat (an import's start and end), taken by the main thread. */
@@ -116,6 +123,7 @@ final class FarWorker {
             importer.stopped = true;
             endImport();
         }
+        stopAutoImport();
         FarNodes old = store;
         store = null;
         if (old != null) {
@@ -157,6 +165,43 @@ final class FarWorker {
         messages.add(line);
     }
 
+    /**
+     * Starts the auto import of this store (worker thread): the saved chunks new or changed since last read, then the
+     * ones the server saves ({@link #autoSaved}).
+     */
+    void startAutoImport(FarImport next) {
+        stopAutoImport();
+        if (store == null || store.generation != next.generation) {
+            return;
+        }
+        try {
+            next.planSaved(store);
+        } catch (java.io.IOException e) {
+            ShadersCompanion.LOGGER.warn("Shaders Companion far store auto import not started: {}", e.toString());
+            return;
+        }
+        autoImporter = next;
+        ShadersCompanion.LOGGER.info("Shaders Companion far store auto import: {} saved chunks new or changed since last read within {} chunks of {}, {}", next.total(),
+                next.radius, next.centerX, next.centerZ);
+    }
+
+    /** The integrated server saved a complete chunk of the store's dimension (worker thread). */
+    void autoSaved(long pos, int generation) {
+        if (autoImporter != null && autoImporter.generation == generation) {
+            autoImporter.add(pos);
+        }
+    }
+
+    private void stopAutoImport() {
+        if (autoImporter != null) {
+            autoImporter.stopped = true;
+            if (store != null) {
+                ShadersCompanion.LOGGER.info("Shaders Companion {}", autoImporter.summary(store));
+            }
+            autoImporter = null;
+        }
+    }
+
     /** Stops the import (worker thread). */
     void stopImport() {
         if (importer != null) {
@@ -182,6 +227,10 @@ final class FarWorker {
             try {
                 long now = System.nanoTime();
                 long wait = store == null ? Long.MAX_VALUE : store.nanosUntilWork(now);
+                if (autoImporter != null && autoImporter.waiting() > 0) {
+                    // Chunks to read while the worker is quiet (the pump holds back while other work waits)
+                    wait = Math.min(wait, 100_000_000L);
+                }
                 FarResidency r = residency;
                 if (r != null) {
                     wait = Math.min(wait, r.nanosUntilWork());
@@ -206,8 +255,10 @@ final class FarWorker {
                         store.ingest(section, now);
                     }
                 } else if (task instanceof FarImport.Loaded loaded) {
-                    if (importer != null && loaded.owner() == importer && store != null) {
+                    if (store != null && loaded.owner() == importer && importer != null) {
                         importer.accept(loaded, store, now);
+                    } else if (store != null && loaded.owner() == autoImporter && autoImporter != null) {
+                        autoImporter.accept(loaded, store, now);
                     }
                 } else if (task != null) {
                     ((Consumer<FarWorker>) task).accept(this);
@@ -227,6 +278,9 @@ final class FarWorker {
                         } else if (now - lastPublish >= 50_000_000L) {
                             importProgress = importer.progress(null);
                         }
+                    } else if (autoImporter != null && tasks.size() < AUTO_QUEUE && com.rinkynooble.shaderscompanion.client.Config.FAR_AUTO_IMPORT.get()) {
+                        // The auto import only while the command's import doesn't run and little else waits
+                        autoImporter.pump(this);
                     }
                 }
                 syncResidency();
@@ -242,6 +296,7 @@ final class FarWorker {
                 }
                 store = null;
                 importer = null;
+                autoImporter = null;
                 tasks.clear();
                 syncResidency();
                 publish(System.nanoTime());
@@ -301,6 +356,9 @@ final class FarWorker {
         lastPublish = now;
         FarResidency r = residency;
         meshStatus = r == null ? null : r.status();
+        FarImport auto = autoImporter;
+        autoWaiting = auto == null ? -1 : auto.waiting();
+        autoComplete = auto == null ? 0 : auto.complete;
         FarNodes s = store;
         recaptures = s == null ? null : s.recaptures;
         publishedStates = s == null ? null : s.states;

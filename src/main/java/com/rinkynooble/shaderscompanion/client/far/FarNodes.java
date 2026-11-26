@@ -87,6 +87,14 @@ final class FarNodes {
      * saved copy can be older than what the client saw (changes not saved yet).
      */
     final LongOpenHashSet liveColumns = new LongOpenHashSet();
+    /**
+     * Per chunk column, when an import last read its saved copy or found it shown live (seconds since 1970; 0:
+     * never): the auto import reads a saved chunk again only when its region file says it was written later
+     * ({@link FarImport#planSaved}). Kept in the store's folder ({@link FarDisk#readImported}).
+     */
+    final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap importedAt;
+    private boolean importedChanged;
+    private long lastImportedWrite;
     private long lastWrite;
     private boolean changedSinceWrite;
 
@@ -198,6 +206,7 @@ final class FarNodes {
             }
         }
         disk = opened;
+        importedAt = opened != null ? opened.readImported() : new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
         diskError = error;
         lastWrite = System.nanoTime();
     }
@@ -904,6 +913,26 @@ final class FarNodes {
         if (disk != null && now - lastWrite >= WRITE_INTERVAL && (changedSinceWrite || !disk.batchEmpty())) {
             writeChanged(now, false);
         }
+        if (disk != null && importedChanged && now - lastImportedWrite >= WRITE_INTERVAL) {
+            lastImportedWrite = now;
+            writeImported();
+        }
+    }
+
+    /** An import read a chunk column's saved copy, or found it shown live, at this time (seconds since 1970). */
+    void markImported(long column, int seconds) {
+        importedAt.put(column, seconds);
+        importedChanged = true;
+    }
+
+    private void writeImported() {
+        try {
+            disk.writeImported(importedAt);
+            importedChanged = false;
+        } catch (IOException e) {
+            // The stamps only save reading chunks again
+            ShadersCompanion.LOGGER.warn("Shaders Companion far store: writing the import stamps of {} {} failed: {}", world, dimension, e.toString());
+        }
     }
 
     /** Writes every changed node in memory (but those waiting for a rebuild, unless {@code all}), then the batch. */
@@ -949,6 +978,9 @@ final class FarNodes {
         }
         long rebuilt = System.nanoTime();
         writeChanged(t, true);
+        if (importedChanged) {
+            writeImported();
+        }
         try {
             disk.close();
         } catch (IOException e) {

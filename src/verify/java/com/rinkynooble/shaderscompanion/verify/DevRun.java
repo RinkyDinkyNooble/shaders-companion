@@ -2140,6 +2140,9 @@ public final class DevRun {
             String[] lines = DebugOverlay.statusLines();
             ShadersCompanion.LOGGER.info("Shaders Companion dev run timing with {} {}: {} | {}", TOGGLE, label, frameTiming(),
                     lines.length > 3 ? lines[1] + " | " + lines[3] : "");
+            if (HEAP) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, heap with {} {}: {}", TOGGLE, label, heapLine());
+            }
             if (FAR) {
                 // Round B: the far shadow map over the round
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far shadow map with {} {}: {}", TOGGLE, label, shadowLine());
@@ -2362,6 +2365,9 @@ public final class DevRun {
                 lines.length > 4 ? lines[1] + " | " + lines[3] + " | " + lines[4] : "", farProbe(mc, false));
         profileTitle = null;
         Screenshot.grab(mc.gameDirectory, prefix + "-far" + timingRound + ".png", mc.getMainRenderTarget(), message -> { });
+        if (HEAP) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, heap in far round {} ({}): {}", timingRound, farLabel(spec), heapLine());
+        }
         phaseTick = ticks;
         if (++timingRound < FAR_ROUNDS.length) {
             farRound(mc, timingRound);
@@ -3743,6 +3749,9 @@ public final class DevRun {
                     // Fix round 1: the shift check, then (or only) the trip to the Nether and the End
                     phase = FAR_SHIFT > 0 ? 92 : 100;
                     storeSettledTicks = 0;
+                } else if (FAR_AUTO) {
+                    // Fix round 2: the auto import (phase 130)
+                    phase = 130;
                 } else if (!TOGGLE.isEmpty() && FAR_HOLD_Y > 0) {
                     // Integration round A: the toggle rounds from a camera held elsewhere (phase 120 first)
                     phase = 120;
@@ -3817,6 +3826,8 @@ public final class DevRun {
             farShiftCheck(mc, t);
         } else if (phase >= 100 && phase <= 119) {
             farDimsCheck(mc, t);
+        } else if (phase == 130) {
+            farAutoCheck(mc, t);
         } else if (phase == 120) {
             // Integration round A (-PdevFarHoldY with -PdevToggle): the camera held at -PdevFarShiftX, -PdevFarHoldY,
             // -PdevFarShiftZ, -PdevYaw, -PdevPitch until the far terrain there is meshed and on the GPU, then the toggle
@@ -3827,6 +3838,12 @@ public final class DevRun {
                 mc.player.connection.sendCommand("tp @s " + x + " " + FAR_HOLD_Y + " " + z + " " + FAR_SHIFT_YAW + " " + FAR_PITCH);
                 if (FAR_GLASS) {
                     placeGlass(mc, BlockPos.containing(x, FAR_HOLD_Y, z), FAR_GLASS_YAW);
+                }
+                if (FAR_NEAR_BLOCKS) {
+                    nearBlocksAt = BlockPos.containing(x, FAR_HOLD_Y - FAR_NEAR_DROP, z);
+                    MinecraftServer server = mc.getSingleplayerServer();
+                    BlockPos nearAt = nearBlocksAt;
+                    server.execute(() -> nearBlocks(server.overworld(), nearAt, FAR_SHIFT_YAW, true));
                 }
             }
             if (t > 2) {
@@ -3912,6 +3929,102 @@ public final class DevRun {
     private static BlockPos glassAt;
     private static int stopAt = -1;
     private static float glassYaw;
+    /**
+     * Fix round 2: -PdevFarNearBlocks puts a smooth quartz platform (9 x 9, the feet's block row below the held camera)
+     * with birch planks and oak slabs on it ahead of the camera, as on the user's rooftop (far shadows on a near slab);
+     * placed only in air, removed at the end only where they are those blocks.
+     */
+    private static final boolean FAR_NEAR_BLOCKS = Boolean.getBoolean("shaderscompanion.devFarNearBlocks");
+    /** -PdevFarNearDrop=N: the platform N blocks below the held camera (0: at its feet). */
+    private static final int FAR_NEAR_DROP = Integer.getInteger("shaderscompanion.devFarNearDrop", 0);
+    private static BlockPos nearBlocksAt;
+    /**
+     * Fix round 2: -PdevFarAuto (with -PdevChunky, in the far draw check) checks the far store's auto import: the join's
+     * scan of the saved chunks (logged until it is up to date), then Chunky generates a square of -PdevFarAutoRadius
+     * blocks (160) around -PdevFarAutoX, -PdevFarAutoZ (3000, -320: land the client never loads) while the camera stays
+     * at the vantage; once Chunky has ended and the auto import is up to date again, the store's level-2 map of the square
+     * (screenshots/shaderscompanion-farauto-L2.png) shows whether its chunks were stored, and the game quits. The far
+     * world keeps the square's region files (r.5.-2 to r.6.0: delete them to undo; the store keeps their terrain).
+     */
+    private static final boolean FAR_AUTO = Boolean.getBoolean("shaderscompanion.devFarAuto");
+    private static final int FAR_AUTO_X = Integer.getInteger("shaderscompanion.devFarAutoX", 3000);
+    private static final int FAR_AUTO_Z = Integer.getInteger("shaderscompanion.devFarAutoZ", -320);
+    private static final int FAR_AUTO_RADIUS = Integer.getInteger("shaderscompanion.devFarAutoRadius", 160);
+    private static int farAutoStep;
+    private static int farAutoQuietTicks;
+
+    private static void farAutoCheck(Minecraft mc, int t) {
+        int[] auto = FarStore.autoImportForChecks();
+        boolean upToDate = auto != null && auto[0] == 0;
+        if (t % 200 == 0 || t == 1) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, auto import {} s (step {}): waiting {}, read {}{} | Far store: {}", t / 20, farAutoStep,
+                    auto == null ? -1 : auto[0], auto == null ? 0 : auto[1], chunkyRunning("minecraft:overworld") ? ", Chunky running" : "", FarStore.status());
+        }
+        farAutoQuietTicks = upToDate && !chunkyRunning("minecraft:overworld") ? farAutoQuietTicks + 1 : 0;
+        if (farAutoStep == 0 && (farAutoQuietTicks >= 100 || t >= 12000)) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, auto import: the join's scan done after {} s ({} read) | Far store: {}", t / 20,
+                    auto == null ? 0 : auto[1], FarStore.status());
+            chunkyGenerate("minecraft:overworld", FAR_AUTO_X, FAR_AUTO_Z, FAR_AUTO_RADIUS);
+            farAutoStep = 1;
+            farAutoQuietTicks = 0;
+            phaseTick = ticks;
+        } else if (farAutoStep == 1 && t > 100 && (farAutoQuietTicks >= 200 || t >= 12000)) {
+            ShadersCompanion.LOGGER.info("Shaders Companion dev run, auto import: Chunky's square read after {} s ({} read this session) | Far store: {}", t / 20,
+                    auto == null ? 0 : auto[1], FarStore.status());
+            int r = FAR_AUTO_RADIUS + 32;
+            FarStore.map(2, FAR_AUTO_X - r, FAR_AUTO_Z - r, 2 * r, 2 * r, "shaderscompanion-farauto-L2.png")
+                    .whenComplete((line, error) -> ShadersCompanion.LOGGER.info("Shaders Companion dev run, auto import map: {}", error != null ? error : line));
+            farAutoStep = 2;
+            phaseTick = ticks;
+        } else if (farAutoStep == 2 && t >= 100) {
+            finish(mc);
+        }
+    }
+    /** Fix round 2: -PdevHeap logs the Java heap in use after two full collections at the end of each toggle or far round. */
+    private static final boolean HEAP = Boolean.getBoolean("shaderscompanion.devHeap");
+
+    private static String heapLine() {
+        Runtime runtime = Runtime.getRuntime();
+        System.gc();
+        System.gc();
+        long used = runtime.totalMemory() - runtime.freeMemory();
+        long direct = 0;
+        for (var pool : java.lang.management.ManagementFactory.getPlatformMXBeans(java.lang.management.BufferPoolMXBean.class)) {
+            direct += pool.getMemoryUsed();
+        }
+        long process = 0;
+        if (java.lang.management.ManagementFactory.getOperatingSystemMXBean() instanceof com.sun.management.OperatingSystemMXBean os) {
+            // Windows: the process's private bytes
+            process = os.getCommittedVirtualMemorySize();
+        }
+        return String.format("heap in use after GC %d MB (committed %d MB, max %d MB), direct buffers %d MB, process private %d MB | %s | Far store: %s", used >> 20,
+                runtime.totalMemory() >> 20, runtime.maxMemory() >> 20, direct >> 20, process >> 20, vram(), FarStore.status());
+    }
+
+    private static void nearBlocks(net.minecraft.server.level.ServerLevel level, BlockPos at, float yaw, boolean place) {
+        double forwardX = -Math.sin(Math.toRadians(yaw));
+        double forwardZ = Math.cos(Math.toRadians(yaw));
+        int changed = 0;
+        java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> blocks = new java.util.LinkedHashMap<>();
+        for (int ahead = -2; ahead <= 6; ahead++) {
+            for (int side = -4; side <= 4; side++) {
+                blocks.put(trunkOffset(at, at.getY() - 1, ahead, side, forwardX, forwardZ), Blocks.SMOOTH_QUARTZ.defaultBlockState());
+            }
+        }
+        blocks.put(trunkOffset(at, at.getY(), 3, 1, forwardX, forwardZ), Blocks.BIRCH_PLANKS.defaultBlockState());
+        blocks.put(trunkOffset(at, at.getY(), 3, -2, forwardX, forwardZ), Blocks.OAK_SLAB.defaultBlockState());
+        blocks.put(trunkOffset(at, at.getY(), 5, 0, forwardX, forwardZ), Blocks.OAK_SLAB.defaultBlockState());
+        blocks.put(trunkOffset(at, at.getY(), 5, 3, forwardX, forwardZ), Blocks.BIRCH_PLANKS.defaultBlockState());
+        for (var entry : blocks.entrySet()) {
+            var state = level.getBlockState(entry.getKey());
+            if (place ? state.isAir() : state.is(entry.getValue().getBlock())) {
+                level.setBlock(entry.getKey(), place ? entry.getValue() : Blocks.AIR.defaultBlockState(), 2);
+                changed++;
+            }
+        }
+        ShadersCompanion.LOGGER.info("Shaders Companion dev run: near blocks at {} along yaw {} {} ({} blocks)", at.toShortString(), yaw, place ? "placed" : "removed",
+                changed);
+    }
 
     /** M4: the walls placed (glassWalls), remembered so finish removes them. */
     private static void placeGlass(Minecraft mc, BlockPos at, float yaw) {
@@ -4440,6 +4553,16 @@ public final class DevRun {
     }
 
     private static void finish(Minecraft mc) {
+        if (nearBlocksAt != null && mc.getSingleplayerServer() != null) {
+            BlockPos at = nearBlocksAt;
+            MinecraftServer server = mc.getSingleplayerServer();
+            server.execute(() -> nearBlocks(server.overworld(), at, FAR_SHIFT_YAW, false));
+            nearBlocksAt = null;
+            if (glassAt == null) {
+                stopAt = ticks + 40;
+                return;
+            }
+        }
         if (glassAt != null && mc.getSingleplayerServer() != null) {
             // M4: the walls go first, and the game stops 2 seconds later (the far store sees the change too)
             BlockPos at = glassAt;

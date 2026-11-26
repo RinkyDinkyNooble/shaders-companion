@@ -38,6 +38,7 @@ public final class Config {
     public static final ForgeConfigSpec.BooleanValue FAR_EDGE_FADE;
     public static final ForgeConfigSpec.IntValue FAR_SHADOW_SIZE;
     public static final ForgeConfigSpec.BooleanValue FAR_TERRAIN_IN_VIEWS;
+    public static final ForgeConfigSpec.BooleanValue FAR_AUTO_IMPORT;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -140,6 +141,9 @@ public final class Config {
         FAR_TERRAIN_IN_VIEWS = builder
                 .comment("Draw the far terrain into the mod's own views (the cube and the mirror view, which the shader pack's reflections read) while farStore is on and farTerrain isn't off. The views draw it also while Distant Horizons or a Voxy mod draws the far terrain on screen: nothing else draws far terrain into them (Shaders Companion 2.x drew Distant Horizons' terrain there).")
                 .define("farTerrainInViews", true);
+        FAR_AUTO_IMPORT = builder
+                .comment("In singleplayer, add generated chunks to the far terrain without /shaderscompanion lod import: every chunk the world saves complete (a pre-generator's such as Chunky's, or anything generated away from you) as it is saved, and on joining, the world's saved chunks within farRange that are new or changed since the far store last read them. Runs in the background while little else waits. In multiplayer only what the server sends you is stored.")
+                .define("farAutoImport", true);
         SPEC = builder.build();
     }
 

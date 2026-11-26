@@ -220,6 +220,45 @@ final class FarDisk {
         }
         Files.deleteIfExists(folder.resolve("states.txt"));
         Files.deleteIfExists(folder.resolve("biomes.txt"));
+        Files.deleteIfExists(folder.resolve(IMPORTED));
+    }
+
+    /** The import stamps ({@link FarNodes#importedAt}): "SCI1", the count, then per chunk column its ChunkPos long and the time. */
+    private static final String IMPORTED = "imported.bin";
+    private static final int IMPORTED_MAGIC = 0x53434931;
+
+    /** The import stamps as last written (none when the file is missing or damaged: the auto import then reads everything once). */
+    it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap readImported() {
+        Path path = folder.resolve(IMPORTED);
+        if (Files.exists(path)) {
+            try (java.io.DataInputStream in = new java.io.DataInputStream(new java.io.BufferedInputStream(Files.newInputStream(path)))) {
+                if (in.readInt() == IMPORTED_MAGIC) {
+                    int count = in.readInt();
+                    it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap stamps = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap(Math.max(16, count));
+                    for (int i = 0; i < count; i++) {
+                        stamps.put(in.readLong(), in.readInt());
+                    }
+                    return stamps;
+                }
+            } catch (IOException e) {
+                ShadersCompanion.LOGGER.warn("Shaders Companion far store: {} unreadable ({}); the auto import reads the saved chunks again", path, e.toString());
+            }
+        }
+        return new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+    }
+
+    /** Writes the import stamps (to a new file, then moved over the old one). */
+    void writeImported(it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap stamps) throws IOException {
+        Path temporary = folder.resolve(IMPORTED + ".tmp");
+        try (java.io.DataOutputStream out = new java.io.DataOutputStream(new java.io.BufferedOutputStream(Files.newOutputStream(temporary)))) {
+            out.writeInt(IMPORTED_MAGIC);
+            out.writeInt(stamps.size());
+            for (var entry : stamps.long2IntEntrySet()) {
+                out.writeLong(entry.getLongKey());
+                out.writeInt(entry.getIntValue());
+            }
+        }
+        Files.move(temporary, folder.resolve(IMPORTED), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
     }
 
     private static String firstLine(Path path) throws IOException {
