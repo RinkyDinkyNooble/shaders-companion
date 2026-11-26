@@ -17,8 +17,8 @@ final class FarStats {
         lines.add(String.format("Far store %s %s: %d sections stored in %d chunk columns (this session %d new, %d changed, %d unchanged, %d of them by the stored hash "
                         + "alone; %d copied), %d block states, %d biomes", store.world, store.dimension, store.sectionsStored, store.explored.size(), store.sessionNew,
                 store.sessionChanged, store.sessionUnchanged, store.unchangedOnDisk, sectionsCaptured, store.states.size() - 2, store.biomes.size() - 1));
-        lines.add(String.format("Changed sections: %d with other block states, %d only the light, %d only the biomes", store.changedStates,
-                store.changedLightOnly, store.changedBiomesOnly));
+        lines.add(String.format("Changed sections: %d with other block states, %d only the light, %d only the biomes; %d voxels left out (farHiddenBlocks)", store.changedStates,
+                store.changedLightOnly, store.changedBiomesOnly, store.configHiddenVoxels));
         lines.add(String.format("Hidden voxels: %d sections looked at, %d voxels replaced (%.0f a section), %d more in the faces of sections next to new ones, "
                         + "%.1f us a section; %d sections marked stale (a voxel next to them opened), %d of them stored again; node borders: %d face masks read "
                         + "from disk, %d kept as nodes left memory, %d reused", store.hiddenSections, store.hiddenReplaced, store.hiddenSections == 0 ? 0.0 : (double) store.hiddenReplaced / store.hiddenSections,

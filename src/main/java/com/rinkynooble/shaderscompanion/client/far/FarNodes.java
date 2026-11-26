@@ -144,6 +144,14 @@ final class FarNodes {
     /** Dev checks: log what differs in the first changed sections (FarStore.logChangesForChecks). */
     static volatile int logChanges;
     long sectionsIngested;
+    /** The config's blocks the far terrain leaves out (farHiddenBlocks), and per state id whether it is one of them. */
+    private final FarBlockFilter blockFilter;
+    private boolean[] configHidden = new boolean[64];
+    private int configHiddenKnown;
+    /** The section's voxels whose block the config leaves out (indices into {@link #sectionIds}), during an ingest. */
+    private final int[] configHiddenAt = new int[4096];
+    /** Voxels stored as air because the config leaves their block out. */
+    long configHiddenVoxels;
     /** Hidden voxels ({@link HiddenVoxels}): sections whose voxels were looked at, voxels replaced, the time it took. */
     long hiddenSections;
     long hiddenReplaced;
@@ -180,6 +188,16 @@ final class FarNodes {
         this.maxY = maxY;
         this.caveFill = caveFill;
         setCacheMb(cacheMb);
+        FarBlockFilter filter;
+        try {
+            filter = new FarBlockFilter(com.rinkynooble.shaderscompanion.client.Config.FAR_HIDDEN_BLOCKS.get());
+        } catch (RuntimeException e) {
+            filter = new FarBlockFilter(java.util.List.of());
+        }
+        blockFilter = filter;
+        if (!filter.isEmpty()) {
+            ShadersCompanion.LOGGER.info("Shaders Companion far store: leaving out {} (farHiddenBlocks)", filter);
+        }
         flags[StateIds.AIR] = OPEN;
         meshClasses[StateIds.UNKNOWN] = FarMesher.UNKNOWN;
         meshClasses[StateIds.AIR] = FarMesher.AIR;
@@ -519,12 +537,14 @@ final class FarNodes {
     void ingest(CapturedSection section, long now) {
         long start = System.nanoTime();
         int[] ids = sectionIds;
+        int hiddenByConfig = 0;
         if (section.states == null) {
             Arrays.fill(ids, StateIds.AIR);
         } else {
             // Vanilla's index order (x fastest, then z, then y) is the node's
             BlockState last = null;
             int lastId = 0;
+            boolean lastHidden = false;
             int i = 0;
             for (int y = 0; y < 16; y++) {
                 for (int z = 0; z < 16; z++) {
@@ -533,13 +553,23 @@ final class FarNodes {
                         if (state != last) {
                             last = state;
                             lastId = states.id(state);
+                            lastHidden = configHides(lastId);
                         }
-                        ids[i] = lastId;
+                        if (lastHidden) {
+                            configHiddenAt[hiddenByConfig++] = i;
+                            ids[i] = StateIds.AIR;
+                        } else {
+                            ids[i] = lastId;
+                        }
                     }
                 }
             }
         }
         readLight(section);
+        if (hiddenByConfig > 0) {
+            lightHiddenByConfig(hiddenByConfig);
+            configHiddenVoxels += hiddenByConfig;
+        }
         for (int i = 0; i < 64; i++) {
             @SuppressWarnings("unchecked")
             Holder<Biome> biome = (Holder<Biome>) section.biomes[i];
@@ -718,6 +748,61 @@ final class FarNodes {
             }
         }
         return true;
+    }
+
+    /** Whether the config leaves the block of this state id out (farHiddenBlocks): worked out once per state. */
+    private boolean configHides(int id) {
+        if (blockFilter.isEmpty()) {
+            return false;
+        }
+        if (id >= configHiddenKnown) {
+            int size = states.size();
+            if (configHidden.length < size) {
+                configHidden = Arrays.copyOf(configHidden, Math.max(size, configHidden.length * 2));
+            }
+            for (int i = configHiddenKnown; i < size; i++) {
+                configHidden[i] = blockFilter.hides(states.state(i));
+            }
+            configHiddenKnown = size;
+        }
+        return id < configHiddenKnown && configHidden[id];
+    }
+
+    /**
+     * The light of voxels the config turned into air: the brightest of their six neighbours in the section, sky and block
+     * light apart (inside the block they were it was dark, which would draw them as dark air: closed, stone-coloured, or
+     * black faces around them). Twice, so a voxel next to another left-out one is lit too.
+     */
+    private void lightHiddenByConfig(int count) {
+        byte[] light = sectionLight;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int k = 0; k < count; k++) {
+                int i = configHiddenAt[k];
+                int x = i & 15;
+                int z = i >> 4 & 15;
+                int y = i >> 8;
+                int best = light[i] & 0xFF;
+                int sky = best >> 4;
+                int block = best & 15;
+                for (int d = 0; d < 6; d++) {
+                    int n;
+                    switch (d) {
+                        case 0 -> n = x > 0 ? i - 1 : -1;
+                        case 1 -> n = x < 15 ? i + 1 : -1;
+                        case 2 -> n = z > 0 ? i - 16 : -1;
+                        case 3 -> n = z < 15 ? i + 16 : -1;
+                        case 4 -> n = y > 0 ? i - 256 : -1;
+                        default -> n = y < 15 ? i + 256 : -1;
+                    }
+                    if (n >= 0) {
+                        int l = light[n] & 0xFF;
+                        sky = Math.max(sky, l >> 4);
+                        block = Math.max(block, l & 15);
+                    }
+                }
+                light[i] = (byte) (sky << 4 | block);
+            }
+        }
     }
 
     /** The section's light into {@link #sectionLight}: sky light in the high nibble, block light in the low one. */

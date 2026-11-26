@@ -123,6 +123,15 @@ public final class FarRenderer {
     /** The instance id buffer generation the vertex array points at, plus one (0: none yet). */
     private static int vaoInstanceIds;
     private static int overlayVao;
+    /**
+     * The overlay's framebuffer: the screen's colour texture alone. The overlay samples the screen's depth texture, so it
+     * must not draw into the screen's own framebuffer, where that texture is attached: sampling an attachment of the bound
+     * framebuffer is a feedback loop with undefined results, and NVIDIA's compressed depth read as sky in bands over near
+     * terrain (the user's dev5 and dev6 tests, shaders off).
+     */
+    private static int overlayFramebuffer;
+    /** The colour texture attached to {@link #overlayFramebuffer} (the screen's is made again when the window resizes). */
+    private static int overlayColor;
     /** The blend function before the overlay (source and destination, colour and alpha), put back after it. */
     private static final int[] blendBefore = new int[4];
     private static int sampler;
@@ -338,6 +347,11 @@ public final class FarRenderer {
             GL30C.glDeleteVertexArrays(overlayVao);
             overlayVao = 0;
         }
+        if (overlayFramebuffer > 0) {
+            GL30C.glDeleteFramebuffers(overlayFramebuffer);
+        }
+        overlayFramebuffer = 0;
+        overlayColor = 0;
         deleteLayer();
         FarShadow.release();
         FarViews.release();
@@ -382,6 +396,10 @@ public final class FarRenderer {
      */
     public static void render(Camera camera, Matrix4f view) {
         drewThisFrame = false;
+        Runnable startProbe = frameStartProbeForChecks;
+        if (startProbe != null) {
+            startProbe.run();
+        }
         int mode = FarStore.drawMode();
         FarResidency.View v = FarStore.frameView();
         RenderTarget main = Minecraft.getInstance().getMainRenderTarget();
@@ -860,6 +878,11 @@ public final class FarRenderer {
         if (main.width != layerWidth || main.height != layerHeight) {
             return;
         }
+        Runnable probe = overlayProbeForChecks;
+        if (probe != null) {
+            overlayProbeForChecks = null;
+            probe.run();
+        }
         long start = System.nanoTime();
         int s = drawSlot;
         GlState saved = GlState.capture();
@@ -894,7 +917,7 @@ public final class FarRenderer {
                 GL33C.glBindSampler(unit, sampler);
             }
             Gl.activeTexture(GL13C.GL_TEXTURE0);
-            Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, main.frameBufferId);
+            Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, sceneDepth != 0 ? overlayFramebuffer(main) : main.frameBufferId);
             GlStateManager._viewport(0, 0, main.width, main.height);
             GlStateManager._disableScissorTest();
             GlStateManager._disableDepthTest();
@@ -948,6 +971,37 @@ public final class FarRenderer {
         overlayCpuNanos = System.nanoTime() - start;
     }
 
+    /**
+     * The overlay's framebuffer with the screen's colour texture attached and no depth, or the screen's own framebuffer
+     * if that can't be made complete (logged once). Attached every frame: a texture the screen made again (a resize) can
+     * reuse the old one's name, and the old attachment would still be the deleted texture.
+     */
+    private static int overlayFramebuffer(RenderTarget main) {
+        if (overlayFramebuffer < 0) {
+            return main.frameBufferId;
+        }
+        if (overlayFramebuffer == 0) {
+            overlayFramebuffer = GL30C.glGenFramebuffers();
+            overlayColor = 0;
+        }
+        Gl.bindFramebuffer(GL30C.GL_FRAMEBUFFER, overlayFramebuffer);
+        int color = main.getColorTextureId();
+        GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, color, 0);
+        if (color != overlayColor) {
+            GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
+            int status = GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER);
+            if (status != GL30C.GL_FRAMEBUFFER_COMPLETE) {
+                ShadersCompanion.LOGGER.warn("Shaders Companion far terrain: the debug view's framebuffer is incomplete (0x{}); drawing it into the screen's own",
+                        Integer.toHexString(status));
+                GL30C.glDeleteFramebuffers(overlayFramebuffer);
+                overlayFramebuffer = -1;
+                return main.frameBufferId;
+            }
+            overlayColor = color;
+        }
+        return overlayFramebuffer;
+    }
+
     // Status and checks
 
     /** The status line's GPU part. */
@@ -974,6 +1028,12 @@ public final class FarRenderer {
     private static String ms(long nanos) {
         return nanos < 0 ? "n/a" : String.format("%.2f ms", nanos / 1.0e6);
     }
+
+    /** Dev checks: run once at the start of the next debug view overlay, with the frame as the overlay reads it. */
+    public static volatile Runnable overlayProbeForChecks;
+
+    /** Dev checks: run at the head of every frame's far draw hook (just before the level renders) while set. */
+    public static volatile Runnable frameStartProbeForChecks;
 
     /** Dev checks: 0 draws normally, 1 with the rasterizer off, 2 one quad per command (see {@link #probe}). */
     public static void probeForChecks(int which) {

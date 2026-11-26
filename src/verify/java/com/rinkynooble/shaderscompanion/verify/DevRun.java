@@ -517,6 +517,33 @@ public final class DevRun {
             if (mc.player != null && Boolean.getBoolean("shaderscompanion.devLateAloneToggle") && lateTicks % 40 == 20) {
                 FarRenderer.aloneForChecks((lateTicks / 40) % 2 == 0);
             }
+            // 3.0.0-dev7 check: -PdevLatePitch=N holds the camera at that pitch (and -PdevYaw) while shaders are off, after
+            // -PdevLateLift=N blocks up (flying) on the first tick; with -PdevLateShots each shot also writes
+            // shaderscompanion-late-<tag>-tNNNN-mask.png from the overlay's own moment (red: the screen's depth reads sky,
+            // green: the far layer holds a surface; yellow is where the overlay draws) and logs the depth state
+            if (mc.player != null && System.getProperty("shaderscompanion.devLatePitch") != null) {
+                if (lateTicks == 0) {
+                    mc.player.getAbilities().flying = true;
+                    int lift = Integer.getInteger("shaderscompanion.devLateLift", 0);
+                    if (lift != 0) {
+                        mc.player.connection.sendCommand("tp @s ~ ~" + lift + " ~");
+                    }
+                }
+                if (lateTicks == 2 && Boolean.getBoolean("shaderscompanion.devLateCmdBlocks")) {
+                    // -PdevLateCmdBlocks: a floating 9 x 9 slab of command blocks 80 blocks east, 10 below the camera
+                    // (past the chunk terrain's cut: far terrain), for farHiddenBlocks
+                    mc.player.connection.sendCommand("fill ~76 ~-10 ~-4 ~84 ~-10 ~4 minecraft:command_block");
+                }
+                mc.player.setXRot(Integer.getInteger("shaderscompanion.devLatePitch", 60));
+                mc.player.setYRot(Integer.getInteger("shaderscompanion.devYaw", 0));
+                mc.player.setDeltaMovement(0.0, 0.0, 0.0);
+            }
+            if (mc.player != null && Boolean.getBoolean("shaderscompanion.devLateShots") && lateTicks % 40 == 0
+                    && System.getProperty("shaderscompanion.devLatePitch") != null) {
+                String mask = String.format("shaderscompanion-late-%s-t%04d-mask.png", System.getProperty("shaderscompanion.devTag", "run"), lateTicks);
+                FarRenderer.frameStartProbeForChecks = LateDepthProbe::readFrameStart;
+                FarRenderer.overlayProbeForChecks = () -> LateDepthProbe.run(mc, mask);
+            }
             if (mc.player != null && Boolean.getBoolean("shaderscompanion.devLateShots") && lateTicks % 40 == 0) {
                 Screenshot.grab(mc.gameDirectory, String.format("shaderscompanion-late-%s-t%04d.png", System.getProperty("shaderscompanion.devTag", "run"), lateTicks),
                         mc.getMainRenderTarget(), message -> { });

@@ -39,6 +39,7 @@ public final class Config {
     public static final ForgeConfigSpec.IntValue FAR_SHADOW_SIZE;
     public static final ForgeConfigSpec.BooleanValue FAR_TERRAIN_IN_VIEWS;
     public static final ForgeConfigSpec.BooleanValue FAR_AUTO_IMPORT;
+    public static final ForgeConfigSpec.ConfigValue<java.util.List<? extends String>> FAR_HIDDEN_BLOCKS;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -144,6 +145,12 @@ public final class Config {
         FAR_AUTO_IMPORT = builder
                 .comment("In singleplayer, add generated chunks to the far terrain without /shaderscompanion lod import: every chunk the world saves complete (a pre-generator's such as Chunky's, or anything generated away from you) as it is saved, and on joining, the world's saved chunks within farRange that are new or changed since the far store last read them. Runs in the background while little else waits. In multiplayer only what the server sends you is stored.")
                 .define("farAutoImport", true);
+        FAR_HIDDEN_BLOCKS = builder
+                .comment("Blocks the far terrain leaves out, drawn as the air around them: block ids (minecraft:command_block), every block of a mod (modid:*) or block tags (#minecraft:...). The default leaves out command blocks (Lost Cities buildings can hold command blocks that turn into other blocks once you come near), structure blocks and jigsaw blocks; barriers, light blocks and structure voids are left out anyway. A change applies from the next world join to what is stored from then on: places stored before keep what they had until you visit them again or run /shaderscompanion lod import.")
+                .defineListAllowEmpty(java.util.List.of("farHiddenBlocks"),
+                        () -> java.util.List.of("minecraft:command_block", "minecraft:chain_command_block", "minecraft:repeating_command_block", "minecraft:structure_block",
+                                "minecraft:jigsaw"),
+                        entry -> entry instanceof String);
         SPEC = builder.build();
     }
 
