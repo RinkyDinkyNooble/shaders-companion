@@ -373,8 +373,8 @@ public final class DevRun {
                 FarStore.cornerShadingForChecks(Boolean.getBoolean("shaderscompanion.devFarCornerShading"));
                 // Integration round A: -PdevFarEncodedAverage, the faces' colours averaged as before 3.0.0-dev4
                 com.rinkynooble.shaderscompanion.client.far.StateColors.encodedAverageForChecks(Boolean.getBoolean("shaderscompanion.devFarEncodedAverage"));
-                // -PdevFarFillFrom=0: dark air filled from level 0 (the plan keeps level 0's caves)
-                FarStore.caveFillFromForChecks(Integer.getInteger("shaderscompanion.devFarFillFrom", 1));
+                // -PdevFarFillFrom=1: dark air filled from level 1, as before 3.0.0-dev6 (level 0's caves kept)
+                FarStore.caveFillFromForChecks(Integer.getInteger("shaderscompanion.devFarFillFrom", 0));
             }
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: far store on for the run, heap {} MB", Runtime.getRuntime().maxMemory() >> 20);
         }
@@ -503,7 +503,32 @@ public final class DevRun {
             }
         }
         if (!shadersOn) {
-            // -PdevShadersLate: shaders come on once the world has run that long without them
+            // Fix round 3: with -PdevLateShots a shot every 2 seconds while shaders are off (the far terrain's debug view
+            // from the join on)
+            // -PdevResizeAt=N (with -PdevLateShots): the window goes to 1024 x 768 N ticks in, and back to the run's size N ticks later
+            int resizeAt = Integer.getInteger("shaderscompanion.devResizeAt", 0);
+            if (mc.player != null && resizeAt > 0 && (lateTicks == resizeAt || lateTicks == 2 * resizeAt)) {
+                boolean small = lateTicks == resizeAt;
+                String[] size = System.getProperty("shaderscompanion.devSize", "854x480").split("x");
+                org.lwjgl.glfw.GLFW.glfwSetWindowSize(mc.getWindow().getWindow(), small ? 1024 : Integer.parseInt(size[0]), small ? 768 : Integer.parseInt(size[1]));
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run: window resized at {} ticks ({})", lateTicks, small ? "1024 x 768" : "back");
+            }
+            // -PdevLateAloneToggle: the far terrain alone (far show alone) on and off in turn every 40 ticks
+            if (mc.player != null && Boolean.getBoolean("shaderscompanion.devLateAloneToggle") && lateTicks % 40 == 20) {
+                FarRenderer.aloneForChecks((lateTicks / 40) % 2 == 0);
+            }
+            if (mc.player != null && Boolean.getBoolean("shaderscompanion.devLateShots") && lateTicks % 40 == 0) {
+                Screenshot.grab(mc.gameDirectory, String.format("shaderscompanion-late-%s-t%04d.png", System.getProperty("shaderscompanion.devTag", "run"), lateTicks),
+                        mc.getMainRenderTarget(), message -> { });
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, shaders off {} ticks: Far terrain: {}", lateTicks, FarStore.terrainStatus());
+            }
+            // -PdevShadersLate: shaders come on once the world has run that long without them (with -PdevLateQuit the game
+            // quits instead)
+            if (mc.player != null && lateTicks + 1 >= SHADERS_LATE && Boolean.getBoolean("shaderscompanion.devLateQuit")) {
+                lateTicks = Integer.MIN_VALUE / 2;
+                finish(mc);
+                return;
+            }
             if (mc.player != null && ++lateTicks >= SHADERS_LATE) {
                 Screenshot.grab(mc.gameDirectory, "shaderscompanion-late-" + System.getProperty("shaderscompanion.devTag", "run") + "-before.png",
                         mc.getMainRenderTarget(), message -> { });

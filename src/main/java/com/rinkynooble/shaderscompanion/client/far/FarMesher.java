@@ -24,7 +24,7 @@ import java.util.zip.DataFormatException;
  * of opaque solids behind them (a trunk inside leaves, a room behind a window).</li>
  * <li>{@link #SOLID}: everything else that isn't air (opaque blocks, slabs, stairs, snow layers, lava): faces against
  * air, water and see-through solids; hides everything.</li>
- * <li>{@link #FILL}: from level 1 up ({@link #fillFromLevel}), air with sky light 0 (caves, closed rooms) is solid: it hides the cave's walls and
+ * <li>{@link #FILL}: at every level ({@link #fillFromLevel}), air with sky light 0 (caves, closed rooms) is solid: it hides the cave's walls and
  * draws stone-coloured faces where it meets lit air, so a cave mouth is closed rather than a hole. Only in a dimension
  * with sky light and no ceiling ({@link FarNodes#caveFill}): in the Nether and the End all air is dark, so their far
  * terrain keeps its caves and open spaces at every level, the Nether's roof included (seen from below as the ceiling it
@@ -67,8 +67,12 @@ final class FarMesher {
     static final int SKIRT_REACH = 2;
     /** Corner shading in the quads (2 bits a corner); off: every corner 3 (unshaded), which merges best. */
     static volatile boolean cornerShading;
-    /** The first level whose dark air is filled (1, the plan's; 0 fills level 0's caves too: a dev check, research/lod/M2.md). */
-    static volatile int fillFromLevel = 1;
+    /**
+     * The first level whose dark air is filled: 0 since 3.0.0-dev6 (the plan's 1 kept level 0's caves for cave mouths just
+     * past the chunk edge, but the chunk terrain's cut then showed their black walls wherever the screen shows sky inside
+     * it: gaps in a ridge's outline, sections the game hasn't drawn; research/lod/M4.md, "Fix round 3"). 1 for a dev check.
+     */
+    static volatile int fillFromLevel = 0;
     /** The mesher's cache of neighbours' face layers, by node and change stamp. */
     static final long LAYER_CACHE_BYTES = 16L << 20;
 

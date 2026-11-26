@@ -333,8 +333,9 @@ minecraft {
             // Fix round 2 (research/lod/M4.md): -PdevFarNearBlocks puts a quartz platform with planks and slabs under the held camera
             // (-PdevFarNearDrop=N blocks below it); -PdevHeap logs the heap after GC per round; -PdevFarAuto (with -PdevChunky) checks the
             // far store's auto import (Chunky generates -PdevFarAutoRadius blocks around -PdevFarAutoX, -PdevFarAutoZ).
+            // Fix round 3: -PdevLateShots (with -PdevShadersLate) takes a shot every 2 seconds while shaders are off.
             ['devFarMesh', 'devFarCornerShading', 'devFarMeshShort', 'devFarDraw', 'devFarDhShot', 'devFarOverlay', 'devFarShort', 'devFarDims', 'devFarEncodedAverage',
-             'devFarGlass', 'devFarViewDump', 'devFarNearBlocks', 'devHeap', 'devFarAuto'].each { name ->
+             'devFarGlass', 'devFarViewDump', 'devFarNearBlocks', 'devHeap', 'devFarAuto', 'devLateShots', 'devLateAloneToggle', 'devLateQuit'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", 'true'
                 }
@@ -342,7 +343,7 @@ minecraft {
             // -PdevFarDiff=200: the log says what differs in the first 200 stored sections that change.
             // -PdevFov=90: the field of view for the run (restored; the dev client's default is 70, the user's 90).
             ['devFarChunky', 'devFarSettle', 'devFillHold', 'devFillFly', 'devFarRender', 'devFarStoreCache', 'devFarImport', 'devFarDiff', 'devFarRawStore', 'devFarRange', 'devFov', 'devFarFillFrom',
-             'devFarShift', 'devFarShiftX', 'devFarShiftY', 'devFarShiftZ', 'devFarDimsRadius', 'devFarHoldY', 'devFarGlassYaw', 'devFarNearDrop', 'devFarAutoX', 'devFarAutoZ', 'devFarAutoRadius'].each { name ->
+             'devFarShift', 'devFarShiftX', 'devFarShiftY', 'devFarShiftZ', 'devFarDimsRadius', 'devFarHoldY', 'devFarGlassYaw', 'devFarNearDrop', 'devFarAutoX', 'devFarAutoZ', 'devFarAutoRadius', 'devResizeAt'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }
