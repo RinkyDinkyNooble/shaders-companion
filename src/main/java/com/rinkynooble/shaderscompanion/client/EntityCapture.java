@@ -278,9 +278,12 @@ final class EntityCapture implements MultiBufferSource {
         return bytes;
     }
 
-    /** Lets go of every entity, block entity and world this capture refers to (no world loaded). */
+    /**
+     * Lets go of every entity, block entity and world this capture refers to (no world loaded), and frees the sinks'
+     * vertex memory (the next collection makes its sinks again).
+     */
     void forget() {
-        this.kept.clear();
+        this.releaseSinks();
         this.keptLevel = null;
         this.candidates.clear();
         this.blockCandidates.clear();
@@ -515,8 +518,7 @@ final class EntityCapture implements MultiBufferSource {
         if (entityIds == null) {
             return 0;
         }
-        ResourceLocation key = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType());
-        int id = entityIds.applyAsInt(new NamespacedId(key.getNamespace(), key.getPath()));
+        int id = entityIds.applyAsInt(Materials.namespacedId(BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType())));
         return id < 0 ? 0 : Math.min(id + 1, 0x3FFF);
     }
 

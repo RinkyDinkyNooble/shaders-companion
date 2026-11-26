@@ -2,7 +2,6 @@ package com.rinkynooble.shaderscompanion.client;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
-import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 import java.util.ArrayList;
@@ -70,26 +69,7 @@ public final class ItemMaterials {
         if (table.isEmpty()) {
             return packIds;
         }
-        Object2IntMap<NamespacedId> listed = packIds instanceof Object2IntMap<NamespacedId> map ? map : null;
-        return new Object2IntFunction<>() {
-            @Override
-            public int getInt(Object key) {
-                int material = table.getInt(key);
-                if (material <= 0) {
-                    return packIds.getInt(key);
-                }
-                if (listed != null && listed.containsKey(key)) {
-                    int id = listed.getInt(key);
-                    return id >= Materials.FLAG_RANGE && (id & Materials.CLASS_MASK) == 0 ? id | material : id;
-                }
-                return Materials.FLAG_RANGE | material;
-            }
-
-            @Override
-            public int defaultReturnValue() {
-                return packIds.defaultReturnValue();
-            }
-        };
+        return Materials.withClasses(packIds, table);
     }
 
     /** Works out every item's class (called from the block merge, which runs first in the same pipeline). */
@@ -116,7 +96,7 @@ public final class ItemMaterials {
             if (material <= 0) {
                 continue;
             }
-            built.put(new NamespacedId(key.getNamespace(), key.getPath()), material);
+            built.put(Materials.namespacedId(key), material);
             if (isFixed) {
                 itemsFixed++;
             } else {

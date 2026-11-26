@@ -2,7 +2,6 @@ package com.rinkynooble.shaderscompanion.client;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
-import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2IntMap;
 import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
@@ -12,7 +11,6 @@ import java.util.List;
 import java.util.Set;
 import net.irisshaders.iris.shaderpack.materialmap.NamespacedId;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 
@@ -54,26 +52,8 @@ public final class EntityMaterials {
         if (!active || packIds == null) {
             return packIds;
         }
-        Object2IntMap<NamespacedId> listed = packIds instanceof Object2IntMap<NamespacedId> map ? map : null;
-        return new Object2IntFunction<>() {
-            @Override
-            public int getInt(Object key) {
-                int material = classes.getInt(key);
-                if (material <= 0) {
-                    return packIds.getInt(key);
-                }
-                if (listed != null && listed.containsKey(key)) {
-                    int id = listed.getInt(key);
-                    return id >= Materials.FLAG_RANGE && (id & Materials.CLASS_MASK) == 0 ? id | material : id;
-                }
-                return Materials.FLAG_RANGE | material;
-            }
-
-            @Override
-            public int defaultReturnValue() {
-                return packIds.defaultReturnValue();
-            }
-        };
+        // The live map: entity types inferred as they are first drawn reach the pipeline's map too
+        return Materials.withClasses(packIds, classes);
     }
 
     /** The tables' and the user's classes (called from the block merge, before Oculus sets the entity id map). */
@@ -128,8 +108,7 @@ public final class EntityMaterials {
     }
 
     private static NamespacedId id(EntityType<?> type) {
-        ResourceLocation key = BuiltInRegistries.ENTITY_TYPE.getKey(type);
-        return new NamespacedId(key.getNamespace(), key.getPath());
+        return Materials.namespacedId(BuiltInRegistries.ENTITY_TYPE.getKey(type));
     }
 
     private static String entityStatus() {

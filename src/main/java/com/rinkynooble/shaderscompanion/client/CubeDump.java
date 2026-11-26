@@ -30,18 +30,13 @@ public final class CubeDump {
         File folder = new File(Minecraft.getInstance().gameDirectory, "screenshots");
         folder.mkdirs();
         String prefix = "shaderscompanion-" + new SimpleDateFormat("yyyy-MM-dd_HH.mm.ss").format(new Date());
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        try {
+        try (PixelTransfer transfer = PixelTransfer.save2D()) {
             saveColor(CubeTextures.PREVIEW, new File(folder, prefix + "-preview.png"));
             saveColor(CubeTextures.ALBEDO, new File(folder, prefix + "-albedo.png"));
             saveDistance(new File(folder, prefix + "-distance.png"));
             if (MirrorView.active() && CubeTextures.MIRROR_ALBEDO.width() > 1) {
                 saveColor(CubeTextures.MIRROR_ALBEDO, new File(folder, prefix + "-mirror.png"));
             }
-        } finally {
-            CompanionTexture.restorePixelBuffers(pixelBuffers);
-            Gl.bindTextureIfAlive(previous);
         }
         ShadersCompanion.LOGGER.info("Shaders Companion: cube saved as screenshots/{}-*.png", prefix);
         return prefix;
@@ -49,9 +44,7 @@ public final class CubeDump {
 
     /** The stored values of one atlas texel (x, y from the bottom-left), decoded as API.md describes. */
     public static String describeTexel(int x, int y) {
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        try {
+        try (PixelTransfer transfer = PixelTransfer.save2D()) {
             int width = CubeTextures.DATA.width();
             int height = CubeTextures.DATA.height();
             java.nio.ShortBuffer data = MemoryUtil.memAllocShort(width * height * 4);
@@ -77,9 +70,6 @@ public final class CubeDump {
                 MemoryUtil.memFree(distance);
                 MemoryUtil.memFree(albedo);
             }
-        } finally {
-            CompanionTexture.restorePixelBuffers(pixelBuffers);
-            Gl.bindTextureIfAlive(previous);
         }
     }
 

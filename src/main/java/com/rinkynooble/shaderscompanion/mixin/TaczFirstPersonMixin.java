@@ -1,6 +1,7 @@
 package com.rinkynooble.shaderscompanion.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.rinkynooble.shaderscompanion.client.Materials;
 import com.tacz.guns.client.renderer.item.GunItemRendererWrapper;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
 import net.irisshaders.iris.shaderpack.materialmap.NamespacedId;
@@ -9,7 +10,6 @@ import net.irisshaders.iris.uniforms.CapturedRenderingState;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import org.spongepowered.asm.mixin.Mixin;
@@ -30,8 +30,7 @@ public abstract class TaczFirstPersonMixin {
                                         MultiBufferSource buffers, int light, float partialTick, CallbackInfo ci) {
         Object2IntFunction<NamespacedId> itemIds = WorldRenderingSettings.INSTANCE.getItemIds();
         if (itemIds != null && !stack.isEmpty()) {
-            ResourceLocation id = BuiltInRegistries.ITEM.getKey(stack.getItem());
-            CapturedRenderingState.INSTANCE.setCurrentRenderedItem(itemIds.applyAsInt(new NamespacedId(id.getNamespace(), id.getPath())));
+            CapturedRenderingState.INSTANCE.setCurrentRenderedItem(itemIds.applyAsInt(Materials.namespacedId(BuiltInRegistries.ITEM.getKey(stack.getItem()))));
         }
     }
 

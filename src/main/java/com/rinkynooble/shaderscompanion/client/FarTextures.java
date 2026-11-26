@@ -240,12 +240,9 @@ public final class FarTextures {
     /** Dev checks: the info texture's 16 floats as GL holds them (a read back: a stall, for a check only). */
     public static float[] infoForChecks() {
         float[] out = new float[INFO_WIDTH * 4];
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        Gl.bindTexture(INFO.glId());
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        GL11C.glGetTexImage(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_RGBA, GL11C.GL_FLOAT, out);
-        CompanionTexture.restorePixelBuffers(pixelBuffers);
-        Gl.bindTextureIfAlive(previous);
+        try (PixelTransfer transfer = PixelTransfer.bind2D(INFO.glId())) {
+            GL11C.glGetTexImage(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_RGBA, GL11C.GL_FLOAT, out);
+        }
         return out;
     }
 }

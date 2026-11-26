@@ -1,10 +1,6 @@
 package com.rinkynooble.shaderscompanion.client;
 
-import com.mojang.blaze3d.platform.GlStateManager;
-import java.io.IOException;
-import java.io.InputStream;
 import java.nio.FloatBuffer;
-import java.nio.charset.StandardCharsets;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
 
@@ -27,28 +23,16 @@ final class ViewProgram {
 
     /** Compiles and links the program, with its vertex attributes at the given locations. */
     ViewProgram(String name, String[] attributes, int[] locations) {
-        int vertex = compile(GL20C.GL_VERTEX_SHADER, name + ".vsh");
-        int fragment = compile(GL20C.GL_FRAGMENT_SHADER, name + ".fsh");
-        int program = GL20C.glCreateProgram();
-        GL20C.glAttachShader(program, vertex);
-        GL20C.glAttachShader(program, fragment);
-        for (int i = 0; i < attributes.length; i++) {
-            GL20C.glBindAttribLocation(program, locations[i], attributes[i]);
-        }
-        for (int i = 0; i < OUTPUTS.length; i++) {
-            GL30C.glBindFragDataLocation(program, i, OUTPUTS[i]);
-        }
-        GL20C.glLinkProgram(program);
-        GL20C.glDetachShader(program, vertex);
-        GL20C.glDetachShader(program, fragment);
-        GL20C.glDeleteShader(vertex);
-        GL20C.glDeleteShader(fragment);
-        if (GL20C.glGetProgrami(program, GL20C.GL_LINK_STATUS) == 0) {
-            String log = GL20C.glGetProgramInfoLog(program);
-            GL20C.glDeleteProgram(program);
-            throw new IllegalStateException(name + " program failed to link: " + log);
-        }
-        this.id = program;
+        int vertex = Shaders.compile(GL20C.GL_VERTEX_SHADER, name + ".vsh");
+        int fragment = Shaders.compile(GL20C.GL_FRAGMENT_SHADER, name + ".fsh");
+        this.id = Shaders.link(name, program -> {
+            for (int i = 0; i < attributes.length; i++) {
+                GL20C.glBindAttribLocation(program, locations[i], attributes[i]);
+            }
+            for (int i = 0; i < OUTPUTS.length; i++) {
+                GL30C.glBindFragDataLocation(program, i, OUTPUTS[i]);
+            }
+        }, vertex, fragment);
         this.viewProjection = uniform("u_ViewProjection");
         this.logDepth = uniform("u_LogDepth");
         this.near = uniform("u_Near");
@@ -82,26 +66,5 @@ final class ViewProgram {
     /** Moves the bound program's camera offset (the camera relative to the view's origin). */
     void setCamera(float x, float y, float z) {
         GL20C.glUniform3f(this.camera, x, y, z);
-    }
-
-    static int compile(int type, String name) {
-        String source;
-        try (InputStream in = ViewProgram.class.getResourceAsStream("/assets/shaderscompanion/shaders/" + name)) {
-            if (in == null) {
-                throw new IllegalStateException("missing shader " + name);
-            }
-            source = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new IllegalStateException("can't read shader " + name, e);
-        }
-        int id = GL20C.glCreateShader(type);
-        GL20C.glShaderSource(id, source);
-        GL20C.glCompileShader(id);
-        if (GL20C.glGetShaderi(id, GL20C.GL_COMPILE_STATUS) == 0) {
-            String log = GL20C.glGetShaderInfoLog(id);
-            GL20C.glDeleteShader(id);
-            throw new IllegalStateException(name + " failed to compile: " + log);
-        }
-        return id;
     }
 }

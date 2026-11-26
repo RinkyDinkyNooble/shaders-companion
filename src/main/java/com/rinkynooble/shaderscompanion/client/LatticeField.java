@@ -54,7 +54,7 @@ final class LatticeField {
     private static final long[] slotSection = new long[SECTIONS * SECTIONS * SECTIONS];
     private static final long[] slotStamp = new long[SECTIONS * SECTIONS * SECTIONS];
     /** Section offsets from the camera's section covering the window, nearest first. */
-    private static final int[] offsets = offsets();
+    private static final int[] offsets = nearestFirst(SECTIONS / 2, SECTIONS / 2, SECTIONS / 2);
 
     // GPU time of the baking, from timestamps read a few frames later
     private static final int[] queries = new int[8];
@@ -86,15 +86,7 @@ final class LatticeField {
                 return available = false;
             }
             try {
-                int shader = ViewProgram.compile(GL43C.GL_COMPUTE_SHADER, "lattice_open.csh");
-                program = GL20C.glCreateProgram();
-                GL20C.glAttachShader(program, shader);
-                GL20C.glLinkProgram(program);
-                GL20C.glDetachShader(program, shader);
-                GL20C.glDeleteShader(shader);
-                if (GL20C.glGetProgrami(program, GL20C.GL_LINK_STATUS) == 0) {
-                    throw new IllegalStateException("lattice_open program failed to link: " + GL20C.glGetProgramInfoLog(program));
-                }
+                program = Shaders.link("lattice_open", Shaders.compile(GL43C.GL_COMPUTE_SHADER, "lattice_open.csh"));
             } catch (RuntimeException e) {
                 ShadersCompanion.LOGGER.error("Shaders Companion: the lattice's openness field is off", e);
                 problem = "its shader failed (see the log)";
@@ -282,13 +274,18 @@ final class LatticeField {
                 gpuNanos < 0 ? "" : String.format(" (last bake %.2f ms GPU)", gpuNanos / 1.0e6));
     }
 
-    private static int[] offsets() {
-        int[] all = new int[SECTIONS * SECTIONS * SECTIONS * 3];
-        Integer[] order = new Integer[SECTIONS * SECTIONS * SECTIONS];
+    /**
+     * Section offsets from the section the window is centred on, -half to half - 1 on each axis, nearest first (x, y, z
+     * per entry; sections at the same distance keep the order of a loop over y, then z, then x). The lattice's window
+     * uses it too.
+     */
+    static int[] nearestFirst(int halfX, int halfY, int halfZ) {
+        Integer[] order = new Integer[8 * halfX * halfY * halfZ];
+        int[] all = new int[order.length * 3];
         int n = 0;
-        for (int y = -SECTIONS / 2; y < SECTIONS / 2; y++) {
-            for (int z = -SECTIONS / 2; z < SECTIONS / 2; z++) {
-                for (int x = -SECTIONS / 2; x < SECTIONS / 2; x++) {
+        for (int y = -halfY; y < halfY; y++) {
+            for (int z = -halfZ; z < halfZ; z++) {
+                for (int x = -halfX; x < halfX; x++) {
                     all[n * 3] = x;
                     all[n * 3 + 1] = y;
                     all[n * 3 + 2] = z;
@@ -297,6 +294,7 @@ final class LatticeField {
                 }
             }
         }
+        // Arrays.sort on objects is stable
         Arrays.sort(order, (a, b) -> Integer.compare(distance(all, a), distance(all, b)));
         int[] sorted = new int[all.length];
         for (int i = 0; i < order.length; i++) {
@@ -306,6 +304,7 @@ final class LatticeField {
     }
 
     private static int distance(int[] all, int i) {
+        // Section centres from the window's centre, doubled to stay whole
         int x = all[i * 3] * 2 + 1;
         int y = all[i * 3 + 1] * 2 + 1;
         int z = all[i * 3 + 2] * 2 + 1;

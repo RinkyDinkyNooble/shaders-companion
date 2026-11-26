@@ -1,6 +1,7 @@
 package com.rinkynooble.shaderscompanion.client;
 
 import com.rinkynooble.shaderscompanion.ShadersCompanion;
+import it.unimi.dsi.fastutil.objects.Object2IntFunction;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 import java.nio.ByteBuffer;
@@ -9,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import net.irisshaders.iris.shaderpack.materialmap.NamespacedId;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -144,6 +146,44 @@ public final class Materials {
         return id >= FLAG_RANGE ? id & CLASS_MASK : 0;
     }
 
+    /** Whether a pack's id takes a class in its low bits: an id in the flag range that doesn't carry one yet. */
+    static boolean takesClass(int id) {
+        return id >= FLAG_RANGE && (id & CLASS_MASK) == 0;
+    }
+
+    /**
+     * A pipeline's entity or item id map with classes in: a key with a class gets the pack's id with the class in its low
+     * bits when the id {@link #takesClass}, the pack's other ids as they are, and {@code 16384 | class} when the pack
+     * doesn't list the key; keys without a class read the pack's map.
+     */
+    static <K> Object2IntFunction<K> withClasses(Object2IntFunction<K> packIds, Object2IntFunction<K> classes) {
+        Object2IntMap<K> listed = packIds instanceof Object2IntMap<K> map ? map : null;
+        return new Object2IntFunction<>() {
+            @Override
+            public int getInt(Object key) {
+                int material = classes.getInt(key);
+                if (material <= 0) {
+                    return packIds.getInt(key);
+                }
+                if (listed != null && listed.containsKey(key)) {
+                    int id = listed.getInt(key);
+                    return takesClass(id) ? id | material : id;
+                }
+                return FLAG_RANGE | material;
+            }
+
+            @Override
+            public int defaultReturnValue() {
+                return packIds.defaultReturnValue();
+            }
+        };
+    }
+
+    /** Oculus's id for a registry key (what its entity and item id maps are looked up by). */
+    public static NamespacedId namespacedId(ResourceLocation key) {
+        return new NamespacedId(key.getNamespace(), key.getPath());
+    }
+
     static int classNumber(String name) {
         for (int i = 0; i < CLASSES.length; i++) {
             if (CLASSES[i][0].equals(name)) {
@@ -241,7 +281,7 @@ public final class Materials {
                         continue;
                     }
                     ids.put(state, FLAG_RANGE | material);
-                } else if (id >= FLAG_RANGE && (id & CLASS_MASK) == 0) {
+                } else if (takesClass(id)) {
                     ids.put(state, id | material);
                 } else {
                     skippedIds++;

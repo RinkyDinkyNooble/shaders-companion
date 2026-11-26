@@ -313,11 +313,9 @@ public final class Lattice {
         int cameraX = blockX >> 4;
         int cameraY = blockY >> 4;
         int cameraZ = blockZ >> 4;
-        int previous3d = GL11C.glGetInteger(GL12C.GL_TEXTURE_BINDING_3D);
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        GL11C.glPixelStorei(GL12C.GL_UNPACK_IMAGE_HEIGHT, 0);
-        GL11C.glPixelStorei(GL12C.GL_UNPACK_SKIP_IMAGES, 0);
-        try {
+        try (PixelTransfer transfer = PixelTransfer.save3D()) {
+            GL11C.glPixelStorei(GL12C.GL_UNPACK_IMAGE_HEIGHT, 0);
+            GL11C.glPixelStorei(GL12C.GL_UNPACK_SKIP_IMAGES, 0);
             int wantedSize = Config.LATTICE_SIZE.get();
             if (level != mc.level || wantedSize != size) {
                 start(mc.level, wantedSize);
@@ -385,9 +383,6 @@ public final class Lattice {
             if (field) {
                 LatticeField.update(centreX, centreY, centreZ, cameraX, cameraY, cameraZ);
             }
-        } finally {
-            CompanionTexture.restorePixelBuffers(pixelBuffers);
-            GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, previous3d);
         }
         nanosLastFrame = System.nanoTime() - start;
         int sections = offsets.length / 3;
@@ -423,7 +418,7 @@ public final class Lattice {
             slotHash = new long[slots];
             slotShapeHash = new long[slots];
             slotFine = new boolean[slots];
-            offsets = sectionOffsets();
+            offsets = LatticeField.nearestFirst(sectionsXZ / 2, SECTIONS_Y / 2, sectionsXZ / 2);
             refreshCursor = 0;
             if (cellsTexture == 0) {
                 cellsTexture = GL11C.glGenTextures();
@@ -455,39 +450,6 @@ public final class Lattice {
         fillNanos = 0;
     }
 
-    /** Offsets of the window's sections from the camera's section, nearest first. */
-    private static int[] sectionOffsets() {
-        int half = sectionsXZ / 2;
-        Integer[] order = new Integer[sectionsXZ * sectionsXZ * SECTIONS_Y];
-        int[] all = new int[order.length * 3];
-        int n = 0;
-        for (int y = -SECTIONS_Y / 2; y < SECTIONS_Y / 2; y++) {
-            for (int z = -half; z < half; z++) {
-                for (int x = -half; x < half; x++) {
-                    all[n * 3] = x;
-                    all[n * 3 + 1] = y;
-                    all[n * 3 + 2] = z;
-                    order[n] = n;
-                    n++;
-                }
-            }
-        }
-        Arrays.sort(order, (a, b) -> Integer.compare(distance(all, a), distance(all, b)));
-        int[] sorted = new int[all.length];
-        for (int i = 0; i < order.length; i++) {
-            System.arraycopy(all, order[i] * 3, sorted, i * 3, 3);
-        }
-        return sorted;
-    }
-
-    private static int distance(int[] all, int i) {
-        // Section centres from the camera's section centre, doubled to stay whole
-        int x = all[i * 3] * 2 + 1;
-        int y = all[i * 3 + 1] * 2 + 1;
-        int z = all[i * 3 + 2] * 2 + 1;
-        return x * x + y * y + z * z;
-    }
-
     private static void allocate(int texture, int internalFormat, int format) {
         GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, texture);
         GL12C.glTexImage3D(GL12C.GL_TEXTURE_3D, 0, internalFormat, size, HEIGHT, size, 0, format, GL11C.GL_UNSIGNED_INT, (IntBuffer) null);
@@ -502,18 +464,16 @@ public final class Lattice {
             GL44C.glClearTexImage(texture, 0, format, GL11C.GL_UNSIGNED_INT, (IntBuffer) null);
             return;
         }
-        int previous = GL11C.glGetInteger(GL12C.GL_TEXTURE_BINDING_3D);
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        IntBuffer zeros = MemoryUtil.memCallocInt(size * HEIGHT * components);
-        try {
-            GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, texture);
-            for (int z = 0; z < size; z++) {
-                GL12C.glTexSubImage3D(GL12C.GL_TEXTURE_3D, 0, 0, 0, z, size, HEIGHT, 1, format, GL11C.GL_UNSIGNED_INT, zeros);
+        try (PixelTransfer transfer = PixelTransfer.save3D()) {
+            IntBuffer zeros = MemoryUtil.memCallocInt(size * HEIGHT * components);
+            try {
+                GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, texture);
+                for (int z = 0; z < size; z++) {
+                    GL12C.glTexSubImage3D(GL12C.GL_TEXTURE_3D, 0, 0, 0, z, size, HEIGHT, 1, format, GL11C.GL_UNSIGNED_INT, zeros);
+                }
+            } finally {
+                MemoryUtil.memFree(zeros);
             }
-        } finally {
-            MemoryUtil.memFree(zeros);
-            CompanionTexture.restorePixelBuffers(pixelBuffers);
-            GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, previous);
         }
     }
 
@@ -535,20 +495,17 @@ public final class Lattice {
         infoX = minX;
         infoY = minY;
         infoZ = minZ;
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        Gl.bindTexture(CubeTextures.LATTICE_INFO.glId());
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        IntBuffer info = MemoryUtil.memAllocInt(20);
-        try {
-            info.put(magic).put(PROTOCOL).put(size).put(HEIGHT).put(minX).put(minY).put(minZ).put(0)
-                    .put(magic != 0 && infoField ? LatticeField.MAGIC : 0).put(LatticeField.PROTOCOL).put(LatticeField.WIDTH).put((int) (LatticeField.REACH * 4))
-                    .put(LatticeField.windowMin(fieldCentreX)).put(LatticeField.windowMin(fieldCentreY)).put(LatticeField.windowMin(fieldCentreZ)).put(0)
-                    .put(magic != 0 && LatticeDetail.atlas() != 0 ? LatticeDetail.MAGIC : 0).put(LatticeDetail.PROTOCOL).put(LatticeDetail.RES).put(0).flip();
-            GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, 5, 1, GL30C.GL_RGBA_INTEGER, GL11C.GL_INT, info);
-        } finally {
-            MemoryUtil.memFree(info);
-            CompanionTexture.restorePixelBuffers(pixelBuffers);
-            Gl.bindTextureIfAlive(previous);
+        try (PixelTransfer transfer = PixelTransfer.bind2D(CubeTextures.LATTICE_INFO.glId())) {
+            IntBuffer info = MemoryUtil.memAllocInt(20);
+            try {
+                info.put(magic).put(PROTOCOL).put(size).put(HEIGHT).put(minX).put(minY).put(minZ).put(0)
+                        .put(magic != 0 && infoField ? LatticeField.MAGIC : 0).put(LatticeField.PROTOCOL).put(LatticeField.WIDTH).put((int) (LatticeField.REACH * 4))
+                        .put(LatticeField.windowMin(fieldCentreX)).put(LatticeField.windowMin(fieldCentreY)).put(LatticeField.windowMin(fieldCentreZ)).put(0)
+                        .put(magic != 0 && LatticeDetail.atlas() != 0 ? LatticeDetail.MAGIC : 0).put(LatticeDetail.PROTOCOL).put(LatticeDetail.RES).put(0).flip();
+                GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, 5, 1, GL30C.GL_RGBA_INTEGER, GL11C.GL_INT, info);
+            } finally {
+                MemoryUtil.memFree(info);
+            }
         }
     }
 

@@ -85,11 +85,7 @@ public final class RainCover {
             status = "the shader pack doesn't read it";
             return;
         }
-        int[] pixelBuffers = null;
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        try {
-            Gl.bindTexture(CubeTextures.RAIN_COVER.glId());
-            pixelBuffers = CompanionTexture.preparePixelTransfer();
+        try (PixelTransfer transfer = PixelTransfer.bind2D(CubeTextures.RAIN_COVER.glId())) {
             if (level != mc.level) {
                 start(mc.level);
             }
@@ -112,11 +108,6 @@ public final class RainCover {
                 read(slot, minX + Math.floorMod(slot % CHUNKS - minX, CHUNKS), minZ + Math.floorMod(slot / CHUNKS - minZ, CHUNKS));
             }
             status = String.format("%d x %d blocks around the camera, %d chunks uploaded last frame", SIZE, SIZE, uploaded);
-        } finally {
-            if (pixelBuffers != null) {
-                CompanionTexture.restorePixelBuffers(pixelBuffers);
-            }
-            Gl.bindTextureIfAlive(previous);
         }
     }
 
@@ -144,14 +135,8 @@ public final class RainCover {
             return;
         }
         level = null;
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        Gl.bindTexture(CubeTextures.RAIN_COVER.glId());
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        try {
+        try (PixelTransfer transfer = PixelTransfer.bind2D(CubeTextures.RAIN_COVER.glId())) {
             writeHeader(0.0F);
-        } finally {
-            CompanionTexture.restorePixelBuffers(pixelBuffers);
-            Gl.bindTextureIfAlive(previous);
         }
     }
 

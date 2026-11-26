@@ -87,14 +87,8 @@ public final class CubeTextures {
         manager.register(RAIN_COVER_ID, RAIN_COVER);
         manager.register(MATERIAL_TABLE_ID, MATERIAL_TABLE);
         MATERIAL_TABLE.allocate(Materials.TABLE_WIDTH, 1);
-        int previousTexture = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        Gl.bindTexture(MATERIAL_TABLE.glId());
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        try {
+        try (PixelTransfer transfer = PixelTransfer.bind2D(MATERIAL_TABLE.glId())) {
             Materials.uploadTable();
-        } finally {
-            CompanionTexture.restorePixelBuffers(pixelBuffers);
-            Gl.bindTextureIfAlive(previousTexture);
         }
         manager.register(LATTICE_INFO_ID, LATTICE_INFO);
         LATTICE_INFO.allocate(8, 1);

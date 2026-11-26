@@ -294,18 +294,14 @@ final class LatticeDetail {
     private static void clearLayers(int from, int to) {
         int layerBytes = ROW * RES * ROW * RES * RES;
         ByteBuffer far = MemoryUtil.memAlloc(layerBytes);
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        try {
+        try (PixelTransfer transfer = PixelTransfer.stateOnly()) {
             MemoryUtil.memSet(far, 0xFF);
             GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, atlas);
-            int alignment = GL11C.glGetInteger(GL11C.GL_UNPACK_ALIGNMENT);
-            GL11C.glPixelStorei(GL11C.GL_UNPACK_ALIGNMENT, 1);
+            transfer.unpackAlignment(1);
             for (int layer = from; layer < to; layer++) {
                 GL12C.glTexSubImage3D(GL12C.GL_TEXTURE_3D, 0, 0, 0, layer * RES, ROW * RES, ROW * RES, RES, GL11C.GL_RED, GL11C.GL_UNSIGNED_BYTE, far);
             }
-            GL11C.glPixelStorei(GL11C.GL_UNPACK_ALIGNMENT, alignment);
         } finally {
-            CompanionTexture.restorePixelBuffers(pixelBuffers);
             MemoryUtil.memFree(far);
         }
     }
@@ -317,16 +313,11 @@ final class LatticeDetail {
         }
         upload.clear();
         upload.put(bytes).flip();
-        int[] pixelBuffers = CompanionTexture.preparePixelTransfer();
-        try {
+        try (PixelTransfer transfer = PixelTransfer.stateOnly()) {
             GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, atlas);
-            int alignment = GL11C.glGetInteger(GL11C.GL_UNPACK_ALIGNMENT);
-            GL11C.glPixelStorei(GL11C.GL_UNPACK_ALIGNMENT, 1);
+            transfer.unpackAlignment(1);
             GL12C.glTexSubImage3D(GL12C.GL_TEXTURE_3D, 0, (i % ROW) * RES, (i / ROW % ROW) * RES, (i / LAYER_SLOTS) * RES, RES, RES, RES,
                     GL11C.GL_RED, GL11C.GL_UNSIGNED_BYTE, upload);
-            GL11C.glPixelStorei(GL11C.GL_UNPACK_ALIGNMENT, alignment);
-        } finally {
-            CompanionTexture.restorePixelBuffers(pixelBuffers);
         }
     }
 

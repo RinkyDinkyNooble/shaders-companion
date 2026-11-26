@@ -156,12 +156,9 @@ final class CompanionTexture extends AbstractTexture {
 
     /** As {@link #writeRow} for the first {@code rows} rows, row after row. */
     void writeRows(FloatBuffer data, int texels, int rows) {
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        Gl.bindTexture(this.glId());
-        int[] pixelBuffers = preparePixelTransfer();
-        GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, texels, rows, GL11C.GL_RGBA, GL11C.GL_FLOAT, data);
-        restorePixelBuffers(pixelBuffers);
-        Gl.bindTextureIfAlive(previous);
+        try (PixelTransfer transfer = PixelTransfer.bind2D(this.glId())) {
+            GL11C.glTexSubImage2D(GL11C.GL_TEXTURE_2D, 0, 0, 0, texels, rows, GL11C.GL_RGBA, GL11C.GL_FLOAT, data);
+        }
     }
 
     /** Gives the texture storage of this size; keeps its GL name, so framebuffer attachments stay valid. */
@@ -169,30 +166,26 @@ final class CompanionTexture extends AbstractTexture {
         if (width == this.width && height == this.height) {
             return;
         }
-        int id = this.glId();
-        int previous = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        Gl.bindTexture(id);
-        int[] pixelBuffers = preparePixelTransfer();
-        // Small textures (the info texture) start zero-filled, so nothing reads as a valid cube before the first frame
-        ByteBuffer zeros = width * height <= 4096 ? MemoryUtil.memCalloc(width * height * 16) : null;
-        try {
-            GL11C.glTexImage2D(GL11C.GL_TEXTURE_2D, 0, this.internalFormat, width, height, 0, this.format, this.type, zeros);
-        } finally {
-            if (zeros != null) {
-                MemoryUtil.memFree(zeros);
+        try (PixelTransfer transfer = PixelTransfer.bind2D(this.glId())) {
+            // Small textures (the info texture) start zero-filled, so nothing reads as a valid cube before the first frame
+            ByteBuffer zeros = width * height <= 4096 ? MemoryUtil.memCalloc(width * height * 16) : null;
+            try {
+                GL11C.glTexImage2D(GL11C.GL_TEXTURE_2D, 0, this.internalFormat, width, height, 0, this.format, this.type, zeros);
+            } finally {
+                if (zeros != null) {
+                    MemoryUtil.memFree(zeros);
+                }
+            }
+            GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MIN_FILTER, this.filter);
+            GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MAG_FILTER, this.filter);
+            GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_WRAP_S, GL12C.GL_CLAMP_TO_EDGE);
+            GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_WRAP_T, GL12C.GL_CLAMP_TO_EDGE);
+            GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL12C.GL_TEXTURE_MAX_LEVEL, 0);
+            if (this.compare) {
+                GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL14C.GL_TEXTURE_COMPARE_MODE, GL30C.GL_COMPARE_REF_TO_TEXTURE);
+                GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL14C.GL_TEXTURE_COMPARE_FUNC, GL11C.GL_LEQUAL);
             }
         }
-        restorePixelBuffers(pixelBuffers);
-        GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MIN_FILTER, this.filter);
-        GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MAG_FILTER, this.filter);
-        GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_WRAP_S, GL12C.GL_CLAMP_TO_EDGE);
-        GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_WRAP_T, GL12C.GL_CLAMP_TO_EDGE);
-        GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL12C.GL_TEXTURE_MAX_LEVEL, 0);
-        if (this.compare) {
-            GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL14C.GL_TEXTURE_COMPARE_MODE, GL30C.GL_COMPARE_REF_TO_TEXTURE);
-            GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, GL14C.GL_TEXTURE_COMPARE_FUNC, GL11C.GL_LEQUAL);
-        }
-        Gl.bindTextureIfAlive(previous);
         this.width = width;
         this.height = height;
     }
