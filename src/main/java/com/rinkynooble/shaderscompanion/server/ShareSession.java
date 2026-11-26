@@ -26,9 +26,9 @@ final class ShareSession {
     /** Columns wanted but not read yet, at most (the next offer waits while more wait). */
     static final int MAX_WANTED = 512;
     /** Columns packed and waiting to be sent, at most (reads wait while more wait). */
-    static final int MAX_READY = 16;
+    static final int MAX_READY = 32;
     /** Reads of one player in flight, at most. */
-    static final int MAX_READS = 4;
+    static final int MAX_READS = 16;
     /** Saved chunks waiting to be offered as pushes (new or changed), at most. */
     static final int MAX_PUSHES = 4096;
     /** A column is offered again as changed at most this often, in seconds (a farm saves every 10 s). */
@@ -63,6 +63,7 @@ final class ShareSession {
     long acceptedAt;
     /** The last reply that started sending (a client can't restart the planning more often than {@link #REPLY_INTERVAL}). */
     long lastReplyAt;
+    int lastReplyEpoch = -1;
 
     // Planning
     boolean planning;
@@ -98,6 +99,10 @@ final class ShareSession {
     long offeredTotal;
     long wantedTotal;
     long pushesOffered;
+    int lastPlan = -1;
+    long ticked;
+    long skippedNotFar;
+    long skippedOffered;
 
     ShareSession(java.util.UUID id) {
         this.id = id;
@@ -148,7 +153,10 @@ final class ShareSession {
         return player.chunkPosition().z;
     }
 
-    /** Whether a column is far terrain for the player: inside the radius (a circle) and outside the game's own chunks. */
+    /**
+     * Whether a column is far terrain for the player: inside the radius (a circle) and outside the game's own chunks, less
+     * two chunks (the client may hold the outer ring without having stored it; it turns down what it holds itself).
+     */
     boolean farFor(long pos, int viewDistance) {
         int cx = ChunkPos.getX(pos);
         int cz = ChunkPos.getZ(pos);
@@ -157,7 +165,7 @@ final class ShareSession {
         if (dx * dx + dz * dz > (long) radius * radius) {
             return false;
         }
-        return !ChunkMap.isChunkInRange(cx, cz, chunkX(), chunkZ(), viewDistance + 1);
+        return !ChunkMap.isChunkInRange(cx, cz, chunkX(), chunkZ(), Math.max(1, viewDistance - 2));
     }
 
     /** A new or changed column of the player's level, saved now: offered before the plan's (at most {@link #MAX_PUSHES} wait). */
@@ -197,7 +205,12 @@ final class ShareSession {
         while (n < FarNet.MAX_OFFER && !toOffer.isEmpty()) {
             long pos = toOffer.dequeueLong();
             int stamp = toOfferStamps.dequeueInt();
-            if (offered.get(pos) == stamp || !farFor(pos, viewDistance)) {
+            if (offered.get(pos) == stamp) {
+                skippedOffered++;
+                continue;
+            }
+            if (!farFor(pos, viewDistance)) {
+                skippedNotFar++;
                 continue;
             }
             chunks[n] = pos;

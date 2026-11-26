@@ -198,6 +198,7 @@ public final class FarLink implements FarNet.ClientSide {
         String server = FarFolders.serverBase(mc.getCurrentServer());
         java.nio.file.Path lodRoot = FarFolders.lodRoot(mc.gameDirectory.toPath());
         String choice = FarChoices.get(lodRoot, server);
+        declined = null;
         if (!h.shares()) {
             declined = "this server doesn't share its far terrain here";
         } else if (h.protocol() != FarNet.PROTOCOL) {

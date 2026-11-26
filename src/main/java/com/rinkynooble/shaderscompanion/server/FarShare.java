@@ -150,7 +150,9 @@ public final class FarShare implements FarNet.ServerSide {
     public void reply(ServerPlayer player, FarNet.Reply message) {
         ShareSession session = session(player, message.epoch());
         long now = System.nanoTime();
-        if (session == null || session.accepted || !session.shares || !message.accept() || session.lastReplyAt != 0 && now - session.lastReplyAt < ShareSession.REPLY_INTERVAL) {
+        // The first reply of a hello always counts; another in the same one (the player turned it off and on) at most every 5 s
+        if (session == null || session.accepted || !session.shares || !message.accept()
+                || session.lastReplyEpoch == session.epoch && now - session.lastReplyAt < ShareSession.REPLY_INTERVAL) {
             return;
         }
         if (message.protocol() != FarNet.PROTOCOL) {
@@ -163,6 +165,7 @@ public final class FarShare implements FarNet.ServerSide {
         }
         session.accepted = true;
         session.lastReplyAt = now;
+        session.lastReplyEpoch = session.epoch;
         session.radius = Math.max(1, Math.min(message.radius(), ShareConfig.RADIUS.get()));
         session.bytesPerSecond = Math.max(16, Math.min(message.kbps(), ShareConfig.KBPS_PER_PLAYER.get())) * 1024L;
         session.window = Math.max(64, Math.min(message.windowKb(), 8192)) * 1024L;
@@ -244,6 +247,7 @@ public final class FarShare implements FarNet.ServerSide {
     }
 
     private static void tick(ShareSession session, long now, int nowSeconds, int viewDistance, boolean hide, long totalRate) {
+        session.ticked++;
         // The worker's plans (the newest one wins)
         ShareSession.Plan plan;
         while ((plan = session.plans.poll()) != null) {
@@ -255,6 +259,7 @@ public final class FarShare implements FarNet.ServerSide {
                     session.toOfferStamps.enqueue(plan.stamps()[i]);
                 }
                 session.planning = false;
+                session.lastPlan = plan.chunks().length;
             }
         }
         if (!session.planning && Math.max(Math.abs(session.chunkX() - session.planCenterX), Math.abs(session.chunkZ() - session.planCenterZ)) > ShareSession.REPLAN_CHUNKS) {
@@ -338,10 +343,12 @@ public final class FarShare implements FarNet.ServerSide {
                 worker.packed, worker.packed == 0 ? 0.0 : worker.packNanos / 1.0e6 / worker.packed, worker.cacheHits, worker.cacheBytes() >> 20, worker.queued(),
                 worker.reads.get(), worker.failures));
         for (ShareSession s : sessions.values()) {
-            lines.add(String.format("%s in %s: %s; %d columns sent (%.1f MB), %d not complete; %d offered (%d new or changed), %d wanted, %d to offer, %d waiting to be read",
+            lines.add(String.format("%s in %s: %s; %d columns sent (%.1f MB), %d not complete; last plan %d columns around %d, %d%s; %d offered (%d new or changed; "
+                            + "%d left out as the game's own chunks, %d as offered before), %d wanted, %d to offer, %d waiting to be read; epoch %d, %d plans queued (epochs %s), removed %s, ticked %d",
                     s.player.getGameProfile().getName(), s.dimension.location(), !s.shares ? "not shared here" : s.accepted ? "taking it" : "not taking it",
-                    s.columnsSent, s.bytesSent / 1048576.0, s.notComplete, s.offeredTotal, s.pushesOffered, s.wantedTotal, s.toOffer.size() + s.pushes.size(),
-                    s.wanted.size()));
+                    s.columnsSent, s.bytesSent / 1048576.0, s.notComplete, s.lastPlan, s.planCenterX, s.planCenterZ, s.planning ? " (planning)" : "", s.offeredTotal,
+                    s.pushesOffered, s.skippedNotFar, s.skippedOffered, s.wantedTotal, s.toOffer.size() + s.pushes.size(), s.wanted.size(), s.epoch, s.plans.size(),
+                    s.plans.stream().map(pl -> Integer.toString(pl.epoch())).toList(), s.player.isRemoved(), s.ticked));
         }
         return lines.toArray(new String[0]);
     }

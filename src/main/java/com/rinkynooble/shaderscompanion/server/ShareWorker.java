@@ -24,7 +24,7 @@ import net.minecraft.world.level.Level;
  */
 final class ShareWorker {
     /** Reads of all players in flight, at most. */
-    static final int MAX_READS = 8;
+    static final int MAX_READS = 32;
 
     private record Key(ResourceKey<Level> dimension, long pos, int stamp) {
     }
@@ -107,6 +107,8 @@ final class ShareWorker {
             for (int i = 0; i < order.length; i++) {
                 orderStamps[i] = times.get(order[i]);
             }
+            ShadersCompanion.LOGGER.debug("Shaders Companion far share: planned {} saved columns of {} within {} chunks of {}, {}", order.length,
+                    saved.level.dimension().location(), radius, centerX, centerZ);
             session.plans.add(new ShareSession.Plan(epoch, centerX, centerZ, order, orderStamps));
         });
     }
@@ -139,9 +141,10 @@ final class ShareWorker {
                 try {
                     if (error == null && tag != null && tag.isPresent() && !stopped) {
                         data = packColumn(saved, tag.get(), pos, hide);
-                        if (data.length > 0) {
-                            keep(key, data);
-                        }
+                    }
+                    if (error == null) {
+                        // Kept even when empty (not complete): the next player near it isn't read for it again
+                        keep(key, data);
                     }
                 } catch (RuntimeException e) {
                     failures++;
@@ -182,12 +185,13 @@ final class ShareWorker {
         if (max <= 0) {
             return;
         }
+        // An entry costs its bytes and about 64 of its own
         byte[] old = cache.put(key, data);
-        cacheBytes += data.length - (old == null ? 0 : old.length);
+        cacheBytes += data.length + 64 - (old == null ? 0 : old.length + 64);
         var it = cache.entrySet().iterator();
         while (cacheBytes > max && it.hasNext()) {
             Map.Entry<Key, byte[]> eldest = it.next();
-            cacheBytes -= eldest.getValue().length;
+            cacheBytes -= eldest.getValue().length + 64;
             it.remove();
         }
     }

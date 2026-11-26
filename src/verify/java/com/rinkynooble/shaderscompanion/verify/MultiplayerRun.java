@@ -47,29 +47,60 @@ import net.minecraftforge.fml.common.Mod;
 public final class MultiplayerRun {
     private static final String SERVER = System.getProperty("shaderscompanion.devServer", "");
     private static final int SERVER_WAIT = Integer.getInteger("shaderscompanion.devServerWait", 120);
+    private static final int DENY_AT = Integer.getInteger("shaderscompanion.devServerDeny", 0);
     private static final boolean WIRE = Boolean.getBoolean("shaderscompanion.devWireCheck");
     private static final String WIRE_WORLD = System.getProperty("shaderscompanion.devWireWorld", "shaderscompanion-far");
     private static final int WIRE_CHUNKS = Integer.getInteger("shaderscompanion.devWireChunks", 200);
     private static boolean started;
     private static int ticks;
     private static boolean wireStarted;
+    private static boolean connecting;
+    private static int titleTicks;
+    private static int attempts;
+    private static int respawnedAt = -100;
 
     private MultiplayerRun() {
     }
 
     @SubscribeEvent
     public static void onScreenOpening(ScreenEvent.Opening event) {
+        if (!SERVER.isEmpty() && event.getNewScreen() != null) {
+            // Every screen on the way in (a disconnect's reason with it)
+            String reason = "";
+            if (event.getNewScreen() instanceof net.minecraft.client.gui.screens.DisconnectedScreen) {
+                try {
+                    java.lang.reflect.Field field = net.minecraft.client.gui.screens.DisconnectedScreen.class.getDeclaredField("reason");
+                    field.setAccessible(true);
+                    reason = ": " + ((net.minecraft.network.chat.Component) field.get(event.getNewScreen())).getString();
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    reason = ": (reason unreadable: " + e + ")";
+                }
+            }
+            ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: screen {} \"{}\"{}", event.getNewScreen().getClass().getSimpleName(),
+                    event.getNewScreen().getTitle().getString(), reason);
+            if (event.getNewScreen() instanceof net.minecraft.client.gui.screens.DisconnectedScreen) {
+                if (ticks == 0 && attempts < 3) {
+                    // Never in the world (the dev client's login sometimes hears nothing back and times out): joined again
+                    attempts++;
+                    connecting = false;
+                    titleTicks = 0;
+                    ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: joining again (attempt {})", attempts + 1);
+                    event.setNewScreen(new TitleScreen());
+                } else {
+                    // Nothing more to check: the run ends
+                    Minecraft.getInstance().tell(Minecraft.getInstance()::stop);
+                }
+            }
+        }
         if (started || !(event.getNewScreen() instanceof TitleScreen) || SERVER.isEmpty() && !WIRE) {
             return;
         }
         started = true;
         Minecraft mc = Minecraft.getInstance();
         if (!SERVER.isEmpty()) {
+            // Joined from the client tick once the title screen has stood for 2 seconds (the connection only moves on
+            // while its screen ticks, and the start-up can still replace the first screen)
             FarChecks.force(true, 0);
-            mc.tell(() -> {
-                ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: joining {}", SERVER);
-                ConnectScreen.startConnecting(new TitleScreen(), mc, ServerAddress.parseString(SERVER), new ServerData("dev server", SERVER, false), false);
-            });
         } else {
             mc.tell(() -> {
                 ShadersCompanion.LOGGER.info("Shaders Companion wire check: opening {}", WIRE_WORLD);
@@ -84,8 +115,23 @@ public final class MultiplayerRun {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
+        if (!SERVER.isEmpty() && !connecting) {
+            if (mc.screen instanceof TitleScreen && ++titleTicks == 40) {
+                connecting = true;
+                ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: joining {}", SERVER);
+                ConnectScreen.startConnecting(new TitleScreen(), mc, ServerAddress.parseString(SERVER), new ServerData("dev server", SERVER, false), false);
+            }
+            return;
+        }
         if (mc.player == null || mc.level == null) {
             return;
+        }
+        if (!WIRE && mc.player.isDeadOrDying() && mc.screen instanceof net.minecraft.client.gui.screens.DeathScreen && ticks - respawnedAt > 40) {
+            respawnedAt = ticks;
+            // A dead player gets nothing (the server pauses its far terrain until the respawn): respawned at once
+            ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: respawning");
+            mc.player.respawn();
+            mc.setScreen(null);
         }
         ticks++;
         if (WIRE) {
@@ -110,6 +156,13 @@ public final class MultiplayerRun {
                 thread.start();
             }
             return;
+        }
+        if (DENY_AT > 0 && ticks == DENY_AT * 20) {
+            // -PdevServerDeny=N: far server deny N seconds in, far server allow 30 seconds later
+            ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: far server deny: {}", com.rinkynooble.shaderscompanion.client.far.FarLink.choose(false));
+        }
+        if (DENY_AT > 0 && ticks == (DENY_AT + 30) * 20) {
+            ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: far server allow: {}", com.rinkynooble.shaderscompanion.client.far.FarLink.choose(true));
         }
         if (ticks % 100 == 0) {
             ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run at {} s: Far store: {} | Server far terrain: {}", ticks / 20, FarStore.status(),

@@ -123,10 +123,15 @@ final class FarFeed {
     /** A column arrived (worker thread): stored when it was asked for and reads cleanly. */
     void column(FarNodes store, FarNet.Column column, long now) {
         long pos = ChunkPos.asLong(column.x(), column.z());
-        int askedStamp = wanted.remove(pos);
-        if (askedStamp == Integer.MIN_VALUE || askedStamp != column.stamp()) {
+        int askedStamp = wanted.get(pos);
+        if (askedStamp == Integer.MIN_VALUE) {
             unasked++;
             return;
+        }
+        // A column asked for twice (offered, then saved again meanwhile) waits for the later one too; either is read
+        // at the time it is sent, so both are current
+        if (askedStamp == column.stamp()) {
+            wanted.remove(pos);
         }
         if (column.data().length == 0) {
             // Not complete on the server: nothing to store, and not asked for again until it is saved again
