@@ -157,6 +157,32 @@ final class FarFolders {
         return failed;
     }
 
+    /**
+     * What a server's far stores take on disk (every world key of its address: {@code <base>} and {@code <base>-w...}),
+     * but the store at {@code except} (its size is counted live). For {@code farServerDiskMb}.
+     */
+    static long serverBytesElsewhere(Path lodRoot, String serverBase, Path except) {
+        long bytes = 0;
+        try (java.nio.file.DirectoryStream<Path> worlds = Files.newDirectoryStream(lodRoot)) {
+            for (Path world : worlds) {
+                String name = world.getFileName().toString();
+                if (!Files.isDirectory(world, LinkOption.NOFOLLOW_LINKS) || !(name.equals(serverBase) || name.startsWith(serverBase + "-w"))) {
+                    continue;
+                }
+                try (java.nio.file.DirectoryStream<Path> dimensions = Files.newDirectoryStream(world)) {
+                    for (Path dimension : dimensions) {
+                        if (!dimension.toAbsolutePath().normalize().equals(except.toAbsolutePath().normalize())) {
+                            bytes += Files.isDirectory(dimension, LinkOption.NOFOLLOW_LINKS) ? size(dimension) : 0;
+                        }
+                    }
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            // Counted as nothing: the cap then holds for this store alone
+        }
+        return bytes;
+    }
+
     /** The bytes of the regular files under a folder (links not followed); 0 when it doesn't exist. */
     static long size(Path folder) {
         if (!Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS)) {

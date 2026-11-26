@@ -23,6 +23,7 @@ public final class ClientInit {
 
     public static void init(IEventBus modBus) {
         ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, Config.SPEC);
+        com.rinkynooble.shaderscompanion.far.net.FarNet.client = new com.rinkynooble.shaderscompanion.client.far.FarLink();
         modBus.addListener(ClientInit::onClientSetup);
         modBus.addListener(ClientInit::onRegisterOverlays);
         modBus.addListener(ClientInit::onModelsBaked);
@@ -45,6 +46,7 @@ public final class ClientInit {
         if (event.phase == TickEvent.Phase.END) {
             LightLeaks.tick(Minecraft.getInstance());
             DoorLight.tick(Minecraft.getInstance());
+            com.rinkynooble.shaderscompanion.client.far.FarLink.tick(Minecraft.getInstance());
         }
     }
 

@@ -221,15 +221,21 @@ final class FarDisk {
         Files.deleteIfExists(folder.resolve("states.txt"));
         Files.deleteIfExists(folder.resolve("biomes.txt"));
         Files.deleteIfExists(folder.resolve(IMPORTED));
+        Files.deleteIfExists(folder.resolve(SERVED));
     }
 
-    /** The import stamps ({@link FarNodes#importedAt}): "SCI1", the count, then per chunk column its ChunkPos long and the time. */
-    private static final String IMPORTED = "imported.bin";
+    /**
+     * The stamp files, per chunk column a time in seconds: when the import last read the column's saved copy
+     * ({@link FarNodes#importedAt}), and the save time of the column the server last sent ({@link FarNodes#servedAt}).
+     * Each is "SCI1", the count, then per column its ChunkPos long and the time.
+     */
+    static final String IMPORTED = "imported.bin";
+    static final String SERVED = "served.bin";
     private static final int IMPORTED_MAGIC = 0x53434931;
 
-    /** The import stamps as last written (none when the file is missing or damaged: the auto import then reads everything once). */
-    it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap readImported() {
-        Path path = folder.resolve(IMPORTED);
+    /** A stamp file as last written (none when it is missing or damaged: the columns are then read or asked for again once). */
+    it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap readStamps(String file) {
+        Path path = folder.resolve(file);
         if (Files.exists(path)) {
             try (java.io.DataInputStream in = new java.io.DataInputStream(new java.io.BufferedInputStream(Files.newInputStream(path)))) {
                 int count = in.readInt() == IMPORTED_MAGIC ? in.readInt() : -1;
@@ -248,9 +254,9 @@ final class FarDisk {
         return new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     }
 
-    /** Writes the import stamps (to a new file, then moved over the old one). */
-    void writeImported(it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap stamps) throws IOException {
-        Path temporary = folder.resolve(IMPORTED + ".tmp");
+    /** Writes a stamp file (to a new file, then moved over the old one). */
+    void writeStamps(String file, it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap stamps) throws IOException {
+        Path temporary = folder.resolve(file + ".tmp");
         try (java.io.DataOutputStream out = new java.io.DataOutputStream(new java.io.BufferedOutputStream(Files.newOutputStream(temporary)))) {
             out.writeInt(IMPORTED_MAGIC);
             out.writeInt(stamps.size());
@@ -259,7 +265,7 @@ final class FarDisk {
                 out.writeInt(entry.getIntValue());
             }
         }
-        Files.move(temporary, folder.resolve(IMPORTED), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        Files.move(temporary, folder.resolve(file), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
     }
 
     private static String firstLine(Path path) throws IOException {

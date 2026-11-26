@@ -40,6 +40,9 @@ public final class Config {
     public static final ForgeConfigSpec.BooleanValue FAR_TERRAIN_IN_VIEWS;
     public static final ForgeConfigSpec.BooleanValue FAR_AUTO_IMPORT;
     public static final ForgeConfigSpec.ConfigValue<java.util.List<? extends String>> FAR_HIDDEN_BLOCKS;
+    public static final ForgeConfigSpec.BooleanValue FAR_SERVER_TERRAIN;
+    public static final ForgeConfigSpec.IntValue FAR_SERVER_DISK_MB;
+    public static final ForgeConfigSpec.IntValue FAR_SERVER_KBPS;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -95,7 +98,7 @@ public final class Config {
                 .comment("Keep the lattice while a shader pack reads it: a copy of the blocks around you (their shapes in quarter blocks, their light and what kind of block they are) that the pack uses for lighting that doesn't depend on what is on screen. Built from the world and updated only where blocks or light change.")
                 .define("lattice", true);
         LATTICE_SIZE = builder
-                .comment("Width of the lattice around you, in blocks (it is 128 blocks tall). 128 uses 24 MB of video memory, 256 uses 96 MB.")
+                .comment("Width of the lattice around you, in blocks (it is 128 blocks tall). 128 uses 32 MB of video memory, 256 uses 128 MB.")
                 .defineInList("latticeSize", 128, java.util.List.of(64, 128, 256));
         LATTICE_BUDGET = builder
                 .comment("Most processor time spent on the lattice per frame, in microseconds. It is used up only while blocks wait to be read: on joining a world, after a teleport or while flying fast.")
@@ -116,7 +119,7 @@ public final class Config {
                 .comment("Memory for the far terrain kept ready near you, in MB.")
                 .defineInRange("farStoreCacheMb", 64, 16, 8192);
         FAR_STORE_DISK_MB = builder
-                .comment("Most disk space for far terrain, in MB, per world.")
+                .comment("Most disk space for far terrain, in MB, per world (not enforced yet: it is planned for the 3.0.0 release).")
                 .defineInRange("farStoreDiskMb", 4096, 256, 1048576);
         FAR_RANGE = builder
                 .comment("How far the far terrain reaches, in blocks (in development).")
@@ -151,6 +154,15 @@ public final class Config {
                         () -> java.util.List.of("minecraft:command_block", "minecraft:chain_command_block", "minecraft:repeating_command_block", "minecraft:structure_block",
                                 "minecraft:jigsaw"),
                         entry -> entry instanceof String);
+        FAR_SERVER_TERRAIN = builder
+                .comment("Take the far terrain a server with Shaders Companion shares (the world's saved chunks within your farRange, sent in the background, so you see what has been explored without going there; stored like the chunks you load). /shaderscompanion far server deny turns it down for one server.")
+                .define("farServerTerrain", true);
+        FAR_SERVER_DISK_MB = builder
+                .comment("Most disk space for far terrain one server sends you, in MB, all its worlds together; past it nothing more is asked for. Taking from a server also pauses while the disk has less than 2 GB free.")
+                .defineInRange("farServerDiskMb", 2048, 64, 1048576);
+        FAR_SERVER_KBPS = builder
+                .comment("Most KB a second a server may send you far terrain at (the server has its own limit too).")
+                .defineInRange("farServerKbps", 1024, 16, 1 << 20);
         SPEC = builder.build();
     }
 

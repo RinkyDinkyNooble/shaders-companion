@@ -91,11 +91,17 @@ final class FarNodes {
     /**
      * Per chunk column, when an import last read its saved copy or found it shown live (seconds since 1970; 0:
      * never): the auto import reads a saved chunk again only when its region file says it was written later
-     * ({@link FarImport#planSaved}). Kept in the store's folder ({@link FarDisk#readImported}).
+     * ({@link FarImport#planSaved}). Kept in the store's folder ({@link FarDisk#readStamps}).
      */
     final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap importedAt;
     private boolean importedChanged;
     private long lastImportedWrite;
+    /**
+     * Per chunk column, the save time (the server's clock, seconds) of the copy a server last sent ({@link FarFeed});
+     * a column offered with the same time again isn't asked for. Kept in the store's folder beside the import stamps.
+     */
+    final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap servedAt;
+    private boolean servedChanged;
     private long lastWrite;
     private boolean changedSinceWrite;
 
@@ -215,7 +221,9 @@ final class FarNodes {
             }
         }
         disk = opened;
-        importedAt = opened != null ? opened.readImported() : new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+        importedAt = opened != null ? opened.readStamps(FarDisk.IMPORTED) : new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+        servedAt = opened != null ? opened.readStamps(FarDisk.SERVED) : new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+        servedAt.defaultReturnValue(Integer.MIN_VALUE);
         diskError = error;
         lastWrite = System.nanoTime();
     }
@@ -918,9 +926,9 @@ final class FarNodes {
         if (disk != null && now - lastWrite >= WRITE_INTERVAL && (changedSinceWrite || !disk.batchEmpty())) {
             writeChanged(now, false);
         }
-        if (disk != null && importedChanged && now - lastImportedWrite >= WRITE_INTERVAL) {
+        if (disk != null && (importedChanged || servedChanged) && now - lastImportedWrite >= WRITE_INTERVAL) {
             lastImportedWrite = now;
-            writeImported();
+            writeStamps();
         }
     }
 
@@ -930,10 +938,22 @@ final class FarNodes {
         importedChanged = true;
     }
 
-    private void writeImported() {
+    /** A server sent a column saved at this time (its clock, seconds). */
+    void markServed(long column, int seconds) {
+        servedAt.put(column, seconds);
+        servedChanged = true;
+    }
+
+    private void writeStamps() {
         try {
-            disk.writeImported(importedAt);
-            importedChanged = false;
+            if (importedChanged) {
+                disk.writeStamps(FarDisk.IMPORTED, importedAt);
+                importedChanged = false;
+            }
+            if (servedChanged) {
+                disk.writeStamps(FarDisk.SERVED, servedAt);
+                servedChanged = false;
+            }
         } catch (IOException e) {
             // The stamps only save reading chunks again
             ShadersCompanion.LOGGER.warn("Shaders Companion far store: writing the import stamps of {} {} failed: {}", world, dimension, e.toString());
@@ -983,8 +1003,8 @@ final class FarNodes {
         }
         long rebuilt = System.nanoTime();
         writeChanged(t, true);
-        if (importedChanged) {
-            writeImported();
+        if (importedChanged || servedChanged) {
+            writeStamps();
         }
         try {
             disk.close();

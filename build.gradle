@@ -356,6 +356,17 @@ minecraft {
                 property 'shaderscompanion.devProfile', 'true'
                 args '--mixin.config', 'shaderscompanion-verify.mixins.json'
             }
+            // Multiplayer checks (src/verify MultiplayerRun, research/lod/MULTIPLAYER.md): -PdevServer=localhost:25565 joins a server with the
+            // far store on and logs its far terrain feed (-PdevServerWait=120 seconds); -PdevWireCheck checks the column wire format on a world's
+            // saved chunks (-PdevWireWorld=shaderscompanion-far, -PdevWireChunks=200).
+            ['devServer', 'devServerWait', 'devWireWorld', 'devWireChunks'].each { name ->
+                if (project.hasProperty(name)) {
+                    property "shaderscompanion.${name}", project.property(name)
+                }
+            }
+            if (project.hasProperty('devWireCheck')) {
+                property 'shaderscompanion.devWireCheck', 'true'
+            }
             // -PdevSize=1920x1009: the game window's size (854 x 480 by default).
             if (project.hasProperty('devSize')) {
                 var size = project.property('devSize').toString().split('x')

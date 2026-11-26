@@ -69,6 +69,8 @@ public final class SavedChunks {
     private final Codec<PalettedContainer<BlockState>> blockCodec;
     private final Codec<PalettedContainerRO<Holder<Biome>>> biomeCodec;
     private final Holder<Biome> plains;
+    /** The level's biome ids, as its chunk packets send them (the far terrain's columns use the same). */
+    public final net.minecraft.core.IdMap<Holder<Biome>> biomeIds;
 
     public SavedChunks(ServerLevel level) {
         this.level = level;
@@ -82,7 +84,8 @@ public final class SavedChunks {
                 Blocks.AIR.defaultBlockState());
         Registry<Biome> registry = level.registryAccess().registryOrThrow(Registries.BIOME);
         this.plains = registry.getHolderOrThrow(Biomes.PLAINS);
-        this.biomeCodec = PalettedContainer.codecRO(registry.asHolderIdMap(), registry.holderByNameCodec(), PalettedContainer.Strategy.SECTION_BIOMES, plains);
+        this.biomeIds = registry.asHolderIdMap();
+        this.biomeCodec = PalettedContainer.codecRO(biomeIds, registry.holderByNameCodec(), PalettedContainer.Strategy.SECTION_BIOMES, plains);
     }
 
     /** The dimension's region files (r.X.Z.mca, not empty). */

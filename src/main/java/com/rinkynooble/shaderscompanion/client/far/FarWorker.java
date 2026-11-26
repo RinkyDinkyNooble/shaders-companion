@@ -61,6 +61,11 @@ final class FarWorker {
     /** Lines for the chat (an import's start and end), taken by the main thread. */
     final LinkedBlockingQueue<String> messages = new LinkedBlockingQueue<>();
 
+    /** The far terrain a server sends into the current store ({@link FarLink}), or null (worker thread). */
+    FarFeed feed;
+    /** Its status line part, published with the statistics. */
+    volatile String feedStatus;
+
     /** The far terrain meshes (set by the main thread): the residency runs while the store is open. */
     volatile boolean meshingWanted;
     /** The current residency, for the render thread's outbox and the status line; null while nothing meshes. */
@@ -127,6 +132,7 @@ final class FarWorker {
         stopAutoImport();
         FarNodes old = store;
         store = null;
+        feed = null;
         if (old != null) {
             try {
                 old.close();
@@ -298,6 +304,7 @@ final class FarWorker {
                 store = null;
                 importer = null;
                 autoImporter = null;
+                feed = null;
                 tasks.clear();
                 syncResidency();
                 publish(System.nanoTime());
@@ -361,6 +368,8 @@ final class FarWorker {
         autoWaiting = auto == null ? -1 : auto.waiting();
         autoComplete = auto == null ? 0 : auto.complete;
         FarNodes s = store;
+        FarFeed f = feed;
+        feedStatus = f == null || s == null ? null : f.status(s);
         recaptures = s == null ? null : s.recaptures;
         publishedStates = s == null ? null : s.states;
         publishedBiomes = s == null ? null : s.biomes;

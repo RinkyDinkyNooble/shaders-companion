@@ -82,6 +82,10 @@ public final class DebugOverlay {
                                 .then(Commands.argument("radius", IntegerArgumentType.integer(1, 2048))
                                         .executes(context -> say(context.getSource(), FarStore.startImport(IntegerArgumentType.getInteger(context, "radius")))))))
                 .then(Commands.literal("far")
+                        .then(Commands.literal("server")
+                                .executes(context -> say(context.getSource(), "Server far terrain: " + com.rinkynooble.shaderscompanion.client.far.FarLink.status()))
+                                .then(Commands.literal("allow").executes(context -> say(context.getSource(), com.rinkynooble.shaderscompanion.client.far.FarLink.choose(true))))
+                                .then(Commands.literal("deny").executes(context -> say(context.getSource(), com.rinkynooble.shaderscompanion.client.far.FarLink.choose(false)))))
                         .then(Commands.literal("on").executes(context -> say(context.getSource(), FarTerrain.setFarTerrain(true))))
                         .then(Commands.literal("off").executes(context -> say(context.getSource(), FarTerrain.setFarTerrain(false))))
                         .then(Commands.literal("mode")
@@ -164,6 +168,7 @@ public final class DebugOverlay {
                 "Closed doors: " + DoorLight.status(),
                 "Far store: " + FarStore.status(),
                 "Far terrain: " + FarTerrain.terrainStatus(),
+                "Server far terrain: " + com.rinkynooble.shaderscompanion.client.far.FarLink.status(),
                 "Bundled shader pack: " + BundledPack.status
                         + (Gl.mismatches == 0 ? "" : "; GL state out of step with Minecraft's record " + Gl.mismatches + " times (see the log)")
         };

@@ -37,7 +37,7 @@ public final class FarStore {
     /** Capturing for {@link #capture}'s level (main thread). The hooks check only this. */
     static boolean active;
     static FarCapture capture;
-    static FarWorker worker;
+    static volatile FarWorker worker;
     static int generation;
     private static int cacheMb;
     static volatile String failure;
@@ -50,6 +50,11 @@ public final class FarStore {
      */
     private static volatile net.minecraft.resources.ResourceKey<Level> autoDimension;
     private static volatile int autoGeneration;
+
+    /** The running store's world key and dimension folder, and its server's key part in multiplayer (main thread). */
+    private static String startedKey;
+    private static Path startedFolder;
+    private static String startedServer;
 
     // Dev checks (src/verify): the store on for a run and its cache size, without touching the config file
     static boolean forcedOn;
@@ -76,9 +81,21 @@ public final class FarStore {
                 stop();
                 return;
             }
-            if (capture == null || capture.level() != level) {
+            // In multiplayer the world's key waits for the server's hello (its world id), a few seconds at most
+            String key = null;
+            if (mc.getSingleplayerServer() == null) {
+                FarLink.Identity identity = FarLink.identity(mc);
+                if (identity.waiting()) {
+                    if (capture != null && capture.level() != level) {
+                        stop();
+                    }
+                    return;
+                }
+                key = FarFolders.serverKey(mc.getCurrentServer(), identity.worldId());
+            }
+            if (capture == null || capture.level() != level || key != null && !key.equals(startedKey)) {
                 stop();
-                start(mc, level, camera);
+                start(mc, level, camera, key);
             }
             int wantedMb = forcedCacheMb > 0 ? forcedCacheMb : Config.FAR_STORE_CACHE_MB.get();
             if (wantedMb != cacheMb) {
@@ -108,14 +125,14 @@ public final class FarStore {
         }
     }
 
-    private static void start(Minecraft mc, ClientLevel level, Camera camera) {
+    private static void start(Minecraft mc, ClientLevel level, Camera camera, String serverKey) {
         if (worker == null) {
             worker = new FarWorker();
         }
         generation++;
         int gen = generation;
         cacheMb = forcedCacheMb > 0 ? forcedCacheMb : Config.FAR_STORE_CACHE_MB.get();
-        String world = worldKey(mc);
+        String world = serverKey != null ? serverKey : worldKey(mc);
         String dimension = FarFolders.dimensionFolder(level.dimension().location());
         int minY = level.getMinBuildHeight();
         int maxY = level.getMaxBuildHeight();
@@ -125,6 +142,9 @@ public final class FarStore {
         Path lodRoot = FarFolders.lodRoot(mc.gameDirectory.toPath());
         Path storeRoot = FarFolders.child(lodRoot, world);
         Path folder = FarFolders.child(storeRoot, dimension);
+        startedKey = world;
+        startedFolder = folder;
+        startedServer = mc.getSingleplayerServer() == null ? FarFolders.serverBase(mc.getCurrentServer()) : null;
         // Singleplayer: the store must be this world's, not a deleted one's of the same name (FarWorldId)
         Path saveRoot = mc.getSingleplayerServer() == null ? null : mc.getSingleplayerServer().getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
         // Sections of the store before are let go by their generation; the old store closes first (the queue's order)
@@ -203,12 +223,47 @@ public final class FarStore {
         }
         active = false;
         capture = null;
+        startedKey = null;
         autoDimension = null;
         generation++;
         if (worker != null) {
             worker.post(w -> w.replaceStore(() -> null));
         }
         ShadersCompanion.LOGGER.info("Shaders Companion far store: stopped");
+    }
+
+    /** Whether the store runs for this level (main thread): the server's far terrain is taken only then. */
+    static boolean runningFor(ClientLevel level) {
+        return active && level != null && capture != null && capture.level() == level;
+    }
+
+    /**
+     * Starts taking the server's far terrain into the running store (main thread, {@link FarLink}): the worker measures
+     * what this server's other stores take on disk, then answers offers with a {@link FarFeed}.
+     */
+    static void startFeed(int epoch, com.rinkynooble.shaderscompanion.far.ColumnWire.Expect expect, String server) {
+        FarWorker w = worker;
+        Path folder = startedFolder;
+        if (w == null || folder == null) {
+            return;
+        }
+        Path lodRoot = FarFolders.lodRoot(Minecraft.getInstance().gameDirectory.toPath());
+        long cap = Config.FAR_SERVER_DISK_MB.get() * 1048576L;
+        int gen = generation;
+        w.post(x -> {
+            if (x.store() == null || x.store().generation != gen) {
+                return;
+            }
+            x.feed = new FarFeed(epoch, expect, cap, FarFolders.serverBytesElsewhere(lodRoot, server, folder), folder);
+        });
+    }
+
+    /** Stops taking the server's far terrain (the player turned it down; main thread). */
+    static void stopFeed() {
+        FarWorker w = worker;
+        if (w != null) {
+            w.post(x -> x.feed = null);
+        }
     }
 
     /** Sends the worker's chat lines (an import's start and end) and the import's progress every 10 seconds. */
