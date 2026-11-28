@@ -298,6 +298,11 @@ minecraft {
             if (project.hasProperty('devFarRejoin')) {
                 property 'shaderscompanion.devFarRejoin', 'true'
             }
+            // -PdevFarReset (3.0.1): once the store has settled, /shaderscompanion far reset and confirm as typed, the refill
+            // logged until the auto import is up to date, shots before, empty and after (screenshots/shaderscompanion-farreset-*).
+            if (project.hasProperty('devFarReset')) {
+                property 'shaderscompanion.devFarReset', 'true'
+            }
             // M1c (research/lod/M1.md): -PdevFarFlight (join, teleport away, fly across Chunky's square with the store on,
             // back with it off), -PdevFarTunnel (the import check digs a tunnel past hidden granite and compares the store
             // with the world), -PdevFarRaw (sections stored without replacing hidden voxels), -PdevFarRawStore=path (the
@@ -363,7 +368,7 @@ minecraft {
             // Multiplayer checks (src/verify MultiplayerRun, research/lod/MULTIPLAYER.md): -PdevServer=localhost:25565 joins a server with the
             // far store on and logs its far terrain feed (-PdevServerWait=120 seconds); -PdevWireCheck checks the column wire format on a world's
             // saved chunks (-PdevWireWorld=shaderscompanion-far, -PdevWireChunks=200).
-            ['devServer', 'devServerWait', 'devServerDeny', 'devServerStoreOff', 'devWireWorld', 'devWireChunks'].each { name ->
+            ['devServer', 'devServerWait', 'devServerDeny', 'devServerStoreOff', 'devServerReset', 'devWireWorld', 'devWireChunks'].each { name ->
                 if (project.hasProperty(name)) {
                     property "shaderscompanion.${name}", project.property(name)
                 }

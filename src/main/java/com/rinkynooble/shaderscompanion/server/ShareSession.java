@@ -132,11 +132,16 @@ final class ShareSession {
         tokens = 0;
     }
 
-    /** The client stopped taking far terrain for this level: nothing more is offered or sent until the next hello. */
+    /**
+     * The client stopped taking far terrain for this level: nothing more is offered or sent until it replies again (or the
+     * next hello). What was offered is forgotten, so a new reply offers the whole radius again: the client may have reset
+     * its far store meanwhile ({@code far reset}), and it turns down what it already holds.
+     */
     void stopSending() {
         accepted = false;
         toOffer.clear();
         toOfferStamps.clear();
+        offered.clear();
         pushes.clear();
         offerChunks = null;
         offerStamps = null;

@@ -83,6 +83,20 @@ final class FarCleanup {
                         continue;
                     }
                 }
+                // A dimension's leftover inside a world's folder (far reset deletes one dimension's store)
+                List<Path> dimensions = new ArrayList<>();
+                try (DirectoryStream<Path> listing = Files.newDirectoryStream(world)) {
+                    listing.forEach(dimensions::add);
+                }
+                for (Path dimension : dimensions) {
+                    if (Files.isDirectory(dimension, LinkOption.NOFOLLOW_LINKS) && DISCARDED.matcher(dimension.getFileName().toString()).matches()) {
+                        long bytes = discard(lodRoot, dimension, "an earlier delete left it");
+                        if (bytes >= 0) {
+                            deletedBytes += bytes;
+                            deleted++;
+                        }
+                    }
+                }
                 Store store = measure(world, name);
                 total += store.bytes();
                 if (!name.equals(runningKey)) {

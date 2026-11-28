@@ -271,6 +271,27 @@ public final class FarLink implements FarNet.ClientSide {
                 .append(deny));
     }
 
+    /** Whether far terrain is being taken from the server now (main thread). */
+    static boolean taking() {
+        return hello != null && accepted;
+    }
+
+    /**
+     * The far store was reset ({@code far reset confirm}, main thread): the server is told to stop sending into the old
+     * store, and asked again once the new one runs (after the wait between replies, so the stop goes out first and the
+     * server takes the new reply). A server since 3.0.1 then offers the whole radius again; the client asks for all of it,
+     * the served stamps having gone with the old store.
+     */
+    static void storeReset() {
+        if (hello != null && accepted) {
+            outbox.add(new FarNet.Stop(hello.epoch(), "the far store is off"));
+            accepted = false;
+            replied = false;
+            stoppedAt = System.nanoTime();
+            declined = "the far store was reset; asking the server again";
+        }
+    }
+
     /** {@code far server allow|deny}: the choice for the server played on now (saved); applies at once. */
     public static String choose(boolean allow) {
         Minecraft mc = Minecraft.getInstance();

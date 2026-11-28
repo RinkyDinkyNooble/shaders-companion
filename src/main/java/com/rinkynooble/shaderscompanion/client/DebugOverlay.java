@@ -12,7 +12,10 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.Style;
 import net.minecraftforge.client.gui.overlay.ForgeGui;
 
 /**
@@ -20,7 +23,8 @@ import net.minecraftforge.client.gui.overlay.ForgeGui;
  * the views as pictures, and {@code on} and {@code off} start and stop all drawing. {@code lod map <level> [radius]}
  * saves a map of the far store's level around you, {@code lod stats} prints its sizes and {@code lod import [radius]}
  * (singleplayer) adds the world's saved chunks within that many chunks of you to it, {@code lod import stop} stops
- * that. {@code far on} and {@code far off} turn the far terrain on or off with the far store,
+ * that. {@code far reset} offers to delete this world's far terrain in the current dimension and build it again,
+ * {@code far reset confirm} (within 30 seconds) does it. {@code far on} and {@code far off} turn the far terrain on or off with the far store,
  * {@code far mode auto|companion|off} says whose far terrain is drawn (the setting farTerrain); {@code far show} draws it
  * in a debug view where the screen shows sky while the shader pack doesn't draw it itself, {@code far show alone} draws
  * it alone, {@code far hide} stops that; {@code far mesh on|off}, {@code far stats} and {@code far meshmap <level>
@@ -86,6 +90,12 @@ public final class DebugOverlay {
                                 .executes(context -> say(context.getSource(), "Server far terrain: " + com.rinkynooble.shaderscompanion.client.far.FarLink.status()))
                                 .then(Commands.literal("allow").executes(context -> say(context.getSource(), com.rinkynooble.shaderscompanion.client.far.FarLink.choose(true))))
                                 .then(Commands.literal("deny").executes(context -> say(context.getSource(), com.rinkynooble.shaderscompanion.client.far.FarLink.choose(false)))))
+                        .then(Commands.literal("reset")
+                                .executes(context -> askFarReset(context.getSource()))
+                                .then(Commands.literal("confirm").executes(context -> {
+                                    replyLine(context.getSource(), FarStore.confirmReset());
+                                    return 1;
+                                })))
                         .then(Commands.literal("on").executes(context -> say(context.getSource(), FarTerrain.setFarTerrain(true))))
                         .then(Commands.literal("off").executes(context -> say(context.getSource(), FarTerrain.setFarTerrain(false))))
                         .then(Commands.literal("mode")
@@ -126,6 +136,35 @@ public final class DebugOverlay {
     private static int say(CommandSourceStack source, String line) {
         source.sendSuccess(() -> Component.literal(line), false);
         return 1;
+    }
+
+    /**
+     * {@code far reset}: what it would delete, then the confirmation it waits for, with a link that runs it (the reset
+     * happens only on {@code far reset confirm}).
+     */
+    private static int askFarReset(CommandSourceStack source) {
+        CompletableFuture<String> question = FarStore.askReset();
+        if (question == null) {
+            return say(source, FarStore.resetUnavailable());
+        }
+        question.whenComplete((line, error) -> Minecraft.getInstance().execute(() -> {
+            if (error != null) {
+                source.sendSuccess(() -> Component.literal("Failed: " + error), false);
+                return;
+            }
+            source.sendSuccess(() -> Component.literal(line), false);
+            String confirm = "/shaderscompanion far reset confirm";
+            Component link = Component.literal("[reset it]").withStyle(Style.EMPTY.withColor(ChatFormatting.AQUA)
+                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, confirm))
+                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal(confirm))));
+            source.sendSuccess(() -> Component.literal("Type " + confirm + " within 30 seconds to go ahead. ").append(link), false);
+        }));
+        return 1;
+    }
+
+    /** Sends a line to the chat once it is ready (on the main thread). */
+    private static void replyLine(CommandSourceStack source, CompletableFuture<String> line) {
+        reply(source, line.thenApply(text -> new String[]{text}));
     }
 
     /** Sends lines to the chat once the far store's worker has them (on the main thread). */

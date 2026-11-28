@@ -49,6 +49,8 @@ public final class MultiplayerRun {
     private static final int SERVER_WAIT = Integer.getInteger("shaderscompanion.devServerWait", 120);
     private static final int DENY_AT = Integer.getInteger("shaderscompanion.devServerDeny", 0);
     private static final int STORE_OFF_AT = Integer.getInteger("shaderscompanion.devServerStoreOff", 0);
+    /** -PdevServerReset=N: /shaderscompanion far reset N seconds in and its confirm 3 seconds later, as typed (3.0.1). */
+    private static final int RESET_AT = Integer.getInteger("shaderscompanion.devServerReset", 0);
     private static final boolean WIRE = Boolean.getBoolean("shaderscompanion.devWireCheck");
     private static final String WIRE_WORLD = System.getProperty("shaderscompanion.devWireWorld", "shaderscompanion-far");
     private static final int WIRE_CHUNKS = Integer.getInteger("shaderscompanion.devWireChunks", 200);
@@ -173,6 +175,14 @@ public final class MultiplayerRun {
         if (STORE_OFF_AT > 0 && ticks == (STORE_OFF_AT + 20) * 20) {
             ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: far store on");
             FarChecks.force(true, 0);
+        }
+        if (RESET_AT > 0 && ticks == RESET_AT * 20) {
+            ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: far reset");
+            Minecraft.getInstance().player.connection.sendCommand("shaderscompanion far reset");
+        }
+        if (RESET_AT > 0 && ticks == (RESET_AT + 3) * 20) {
+            ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run: far reset confirm");
+            Minecraft.getInstance().player.connection.sendCommand("shaderscompanion far reset confirm");
         }
         if (ticks % 100 == 0) {
             ShadersCompanion.LOGGER.info("Shaders Companion multiplayer run at {} s: Far store: {} | Server far terrain: {}", ticks / 20, FarStore.status(),

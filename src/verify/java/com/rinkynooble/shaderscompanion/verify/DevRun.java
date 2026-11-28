@@ -272,6 +272,8 @@ public final class DevRun {
     private static final boolean FAR_STORE = Boolean.getBoolean("shaderscompanion.devFarStore");
     /** -PdevFarRejoin: the far store check leaves the world and joins it again (M1b). */
     private static final boolean FAR_REJOIN = Boolean.getBoolean("shaderscompanion.devFarRejoin");
+    /** -PdevFarReset: the far store check resets the far terrain through the commands (3.0.1) and waits for it to refill. */
+    private static final boolean FAR_RESET = Boolean.getBoolean("shaderscompanion.devFarReset");
     /** -PdevFarImport=R: the far store check imports the saved chunks within R chunks (M1b). */
     private static final int FAR_IMPORT = Integer.getInteger("shaderscompanion.devFarImport", 0);
     /**
@@ -2973,6 +2975,10 @@ public final class DevRun {
             farStoreDisk(mc, t);
             return;
         }
+        if (phase >= 20) {
+            farStoreReset(mc, t);
+            return;
+        }
         if (phase == 10) {
             if (t % 20 == 0 && (frame[2] > 0 || t < 1200)) {
                 ShadersCompanion.LOGGER.info("Shaders Companion dev run, far store {} s: main thread {} us a frame (max {}), {} sections waiting, frame {} ms | {}", t / 20,
@@ -2986,6 +2992,13 @@ public final class DevRun {
                     storeMapsLeft = 1;
                     logWhenDone(FarStore.stats());
                     phase = 30;
+                    phaseTick = ticks;
+                    return;
+                }
+                if (FAR_RESET) {
+                    storeMapsLeft = 1;
+                    logWhenDone(FarStore.stats());
+                    phase = 20;
                     phaseTick = ticks;
                     return;
                 }
@@ -3091,6 +3104,92 @@ public final class DevRun {
 
     private static String importBefore;
     private static int storeJoins;
+
+    /**
+     * -PdevFarReset (3.0.1's far reset, through the commands as typed): 20 takes the "before" shot, confirms with nothing
+     * asked (expect "Nothing to confirm"), asks, confirms; 21 logs the store refilling every 5 s until the auto import is
+     * up to date and the store settled and the far terrain meshed (or 5 minutes), takes the "after" shot and the stats;
+     * 22 asks again and confirms 31 s later (expect "Nothing to confirm"), then quits. The store's folders and any
+     * leftover ({@code *.discarded-*}) are logged at each step; the replies are the log's [CHAT] lines.
+     */
+    private static void farStoreReset(Minecraft mc, int t) {
+        java.nio.file.Path world = mc.gameDirectory.toPath().resolve("shaderscompanion/lod/sp-" + WORLD);
+        if (phase == 20) {
+            if (t == 40) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far reset before: {} | {}", folderReport(world), FarStore.status());
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-farreset-before.png", mc.getMainRenderTarget(), message -> { });
+            } else if (t == 60) {
+                mc.player.connection.sendCommand("shaderscompanion far reset confirm");
+            } else if (t == 80) {
+                mc.player.connection.sendCommand("shaderscompanion far reset");
+            } else if (t == 160) {
+                mc.player.connection.sendCommand("shaderscompanion far reset confirm");
+            } else if (t == 161 || t == 170 || t == 200) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far reset {} ticks after the confirm: {} | {}", t - 160, folderReport(world), FarStore.status());
+            } else if (t == 220) {
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-farreset-empty.png", mc.getMainRenderTarget(), message -> { });
+                phase = 21;
+                phaseTick = ticks;
+                storeSettledTicks = 0;
+            }
+        } else if (phase == 21) {
+            String status = FarStore.status();
+            if (t % 100 == 0) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far reset refilling {} s: {} | {}", t / 20, folderReport(world), status);
+            }
+            boolean upToDate = status.contains("auto import: up to date");
+            resetSettledTicks = upToDate && FarChecks.settled() ? resetSettledTicks + 1 : 0;
+            boolean ready = farReady(t);
+            if (resetSettledTicks >= 100 && t >= 400 && ready || t >= 6000) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far reset refilled ({} after {} s): {} | {}", t >= 6000 ? "not settled" : "settled", t / 20,
+                        folderReport(world), status);
+                Screenshot.grab(mc.gameDirectory, "shaderscompanion-farreset-after.png", mc.getMainRenderTarget(), message -> { });
+                storeMapsLeft = 1;
+                logWhenDone(FarStore.stats());
+                phase = 22;
+                phaseTick = ticks;
+            }
+        } else if (phase == 22) {
+            if (t == 40) {
+                mc.player.connection.sendCommand("shaderscompanion far reset");
+            } else if (t == 40 + 31 * 20) {
+                mc.player.connection.sendCommand("shaderscompanion far reset confirm");
+            } else if (t == 40 + 33 * 20) {
+                ShadersCompanion.LOGGER.info("Shaders Companion dev run, far reset after the late confirm: {} | {}", folderReport(world), FarStore.status());
+                finish(mc);
+            }
+        }
+    }
+
+    private static int resetSettledTicks;
+
+    /** The far scene's store folders: each dimension's size, and leftovers of deletes. */
+    private static String folderReport(java.nio.file.Path world) {
+        StringBuilder out = new StringBuilder();
+        try (java.util.stream.Stream<java.nio.file.Path> dims = java.nio.file.Files.list(world)) {
+            for (java.nio.file.Path dim : dims.sorted().toList()) {
+                long[] bytes = {0};
+                int[] files = {0};
+                if (java.nio.file.Files.isDirectory(dim)) {
+                    try (java.util.stream.Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(dim)) {
+                        walk.filter(java.nio.file.Files::isRegularFile).forEach(f -> {
+                            files[0]++;
+                            try {
+                                bytes[0] += java.nio.file.Files.size(f);
+                            } catch (java.io.IOException e) {
+                                // being replaced
+                            }
+                        });
+                    }
+                }
+                out.append(out.length() == 0 ? "" : ", ").append(dim.getFileName()).append(java.nio.file.Files.isDirectory(dim)
+                        ? String.format(" %.1f MB in %d files", bytes[0] / 1048576.0, files[0]) : " (file)");
+            }
+        } catch (java.io.IOException | java.io.UncheckedIOException e) {
+            out.append("not listed: ").append(e);
+        }
+        return "store folders: " + out;
+    }
 
     /**
      * M1b's checks (research/lod/M1.md). -PdevFarRejoin: 30 waits for the stats, then leaves the world; 31 joins it again

@@ -56,6 +56,12 @@ public final class FarStore {
     private static Path startedFolder;
     private static String startedServer;
 
+    /** {@code far reset} waits this long for its confirmation (nanoseconds). */
+    static final long RESET_CONFIRM_NANOS = 30_000_000_000L;
+    /** The folder {@code far reset} offered to delete, and when (main thread); null while no reset waits. */
+    private static Path resetFolder;
+    private static long resetAskedAt;
+
     // Dev checks (src/verify): the store on for a run and its cache size, without touching the config file
     static boolean forcedOn;
     static int forcedCacheMb;
@@ -465,5 +471,79 @@ public final class FarStore {
         }
         worker.post(FarWorker::stopImport);
         return "Far store import: stopping";
+    }
+
+    /**
+     * {@code far reset} (main thread): says what a reset deletes (this world's far terrain in this dimension, measured on
+     * the worker) and how it comes back, and waits {@link #RESET_CONFIRM_NANOS} for {@link #confirmReset}. Null when
+     * there is nothing to reset (the line for the chat is then {@link #resetUnavailable}).
+     */
+    public static CompletableFuture<String> askReset() {
+        if (!active || startedFolder == null) {
+            return null;
+        }
+        Path folder = startedFolder;
+        resetFolder = folder;
+        resetAskedAt = System.nanoTime();
+        String dimension = capture.level().dimension().location().toString();
+        String refill = refillText(Minecraft.getInstance());
+        return worker.ask(store -> FarFolders.size(folder)).thenApply(bytes -> String.format(
+                "This deletes the far terrain stored for this world in %s (%.1f MB) and builds it again %s.", dimension, bytes / 1048576.0, refill));
+    }
+
+    /** Why there is nothing to reset. */
+    public static String resetUnavailable() {
+        return failure != null ? "The far store stopped after an error: nothing to reset (restart the game)"
+                : "The far store is off (farStore in config/shaderscompanion-client.toml): nothing to reset";
+    }
+
+    /**
+     * {@code far reset confirm} (main thread): within {@link #RESET_CONFIRM_NANOS} of {@code far reset}, in the same world
+     * and dimension, stops the store (it closes on the worker, every change written), deletes its folder there
+     * ({@link FarFolders#discard}: renamed aside first, so a half-deleted store never opens), and the next frame starts a
+     * new, empty store, which fills again as {@link #refillText} says. The future gives the line for the chat.
+     */
+    public static CompletableFuture<String> confirmReset() {
+        Path folder = resetFolder;
+        boolean due = folder != null && System.nanoTime() - resetAskedAt <= RESET_CONFIRM_NANOS;
+        resetFolder = null;
+        if (!due) {
+            return CompletableFuture.completedFuture("Nothing to confirm: type /shaderscompanion far reset first (it waits 30 seconds for the confirmation)");
+        }
+        if (!active || !folder.equals(startedFolder)) {
+            return CompletableFuture.completedFuture("Not reset: the world or dimension changed since /shaderscompanion far reset (type it again here)");
+        }
+        Minecraft mc = Minecraft.getInstance();
+        String refill = refillText(mc);
+        Path lodRoot = FarFolders.lodRoot(mc.gameDirectory.toPath());
+        FarWorker w = worker;
+        // The queue keeps the order: the store closes, then its folder goes, then the next frame's start opens a new one
+        stop();
+        FarLink.storeReset();
+        CompletableFuture<String> result = new CompletableFuture<>();
+        w.post(x -> {
+            try {
+                if (!java.nio.file.Files.isDirectory(folder, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    result.complete("Far terrain reset: nothing was stored yet. It builds " + refill + ".");
+                    return;
+                }
+                long bytes = FarFolders.discard(lodRoot, folder, "the player reset it (/shaderscompanion far reset)");
+                result.complete(String.format("Far terrain reset: deleted %.1f MB. It builds again %s.", bytes / 1048576.0, refill));
+            } catch (java.io.IOException | RuntimeException e) {
+                ShadersCompanion.LOGGER.warn("Shaders Companion far store: the reset couldn't delete {}", folder, e);
+                result.complete("Far terrain reset failed, nothing was deleted (" + e.getMessage() + "); the far terrain stays as it was");
+            }
+        });
+        return result;
+    }
+
+    /** How a reset store fills again, for the reset's lines. */
+    private static String refillText(Minecraft mc) {
+        if (mc.getSingleplayerServer() != null) {
+            return Config.FAR_AUTO_IMPORT.get() ? "from the world's saved chunks, in the background (the Far store line of /shaderscompanion status counts them)"
+                    : "from the chunks you load (farAutoImport is off: /shaderscompanion lod import reads the saved ones)";
+        }
+        return FarLink.taking() ? "from what the server sends and the chunks you load (if nothing comes within a minute, rejoin the server)"
+                : "only from the chunks you load: this server doesn't send far terrain, so what you saw far away is gone until you go there again";
     }
 }

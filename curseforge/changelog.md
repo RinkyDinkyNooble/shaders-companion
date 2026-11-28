@@ -6,6 +6,7 @@
 - Fixed: with shaders off and the far terrain shown (`/shaderscompanion far show`), a band of sky between your render distance and the far terrain. While it is shown, the fog starts far out, so your chunks no longer fade into the sky colour at your render distance.
 - `/shaderscompanion far on` no longer shows the far terrain with shaders off. That view is `far show` and `far hide` (off by default), as before.
 - The far terrain is stored again once: in singleplayer it fills from your world's saved chunks again by itself.
+- New: `/shaderscompanion far reset` deletes the far terrain stored for the world and dimension you are in and builds it again (it asks you to confirm within 30 seconds). In singleplayer it refills from your world's saved chunks; on a server, from what the server shares and what you load. For far terrain that looks wrong or out of date.
 
 ## 3.0.0 (2026-11-27)
 

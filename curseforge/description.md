@@ -145,6 +145,7 @@ The mod puts ABZA Shader into your `shaderpacks` folder as "ABZA Shader.zip" whe
 <tr><td><strong>/shaderscompanion debug</strong></td><td>Shows the mod's views in the corner of the screen</td></tr>
 <tr><td><strong>/shaderscompanion dump</strong></td><td>Saves the views to the screenshots folder</td></tr>
 <tr><td><strong>/shaderscompanion far on</strong> / <strong>far off</strong></td><td>Turns the far terrain on or off</td></tr>
+<tr><td><strong>/shaderscompanion far reset</strong></td><td>Deletes this world's far terrain and builds it again (asks you to confirm)</td></tr>
 <tr><td><strong>/shaderscompanion far server deny</strong> / <strong>allow</strong></td><td>Turns down (or takes again) the far terrain the server you are on shares</td></tr>
 <tr><td><strong>/farshare</strong></td><td>On a server, for operators: what the server shares with whom</td></tr>
 </table>
