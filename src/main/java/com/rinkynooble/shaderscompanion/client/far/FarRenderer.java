@@ -114,7 +114,7 @@ public final class FarRenderer {
     static final float PLANT_SHADE = 0.79F;
     /** Dev checks: another factor for the planted faces (-PdevFarPlantShade), or NaN. */
     static float plantShadeForChecks = Float.NaN;
-    private static final String[] OVERLAY_UNIFORMS = {"u_InverseProjection", "u_ScreenSize", "u_Alone", "u_UseScene", "u_SunDir", "u_Daylight", "u_FarRange", "u_FogColor"};
+    private static final String[] OVERLAY_UNIFORMS = {"u_InverseProjection", "u_ScreenSize", "u_Alone", "u_UseScene", "u_SunDir", "u_Daylight", "u_FarRange", "u_FogColor", "u_FogStart"};
     /** The overlay's texture units: the two layers' albedo and data, the far depth, the scene's depth. */
     private static final int OVERLAY_UNITS = 6;
 
@@ -950,6 +950,7 @@ public final class FarRenderer {
             // The vanilla fog colour of this frame (FogRenderer: time of day, weather, biome, sunsets)
             float[] fogColor = RenderSystem.getShaderFogColor();
             GL20C.glUniform3f(u[7], Mth.clamp(fogColor[0], 0.0f, 1.0f), Mth.clamp(fogColor[1], 0.0f, 1.0f), Mth.clamp(fogColor[2], 0.0f, 1.0f));
+            GL20C.glUniform1f(u[8], overlayRange * FarTerrain.FOG_START);
             GlStateManager._glBindVertexArray(overlayVao);
             GL11C.glDrawArrays(GL11C.GL_TRIANGLES, 0, 3);
             if (s >= 0) {

@@ -29,7 +29,7 @@ import net.minecraft.world.level.ChunkPos;
  */
 final class FarDisk {
     /** The folder's format: another number in format.txt starts the folder over (region files and ids). */
-    static final int FORMAT = 1;
+    static final int FORMAT = 2;
     /** Bytes per sector of the region files (part of the format; research/lod/M1.md compares 4 KiB). */
     static final int SECTOR_BYTES = 512;
     /** Region files kept open (least recently used closed first). */

@@ -73,6 +73,10 @@ final class FarMesher {
      * it: gaps in a ridge's outline, sections the game hasn't drawn; research/lod/M4.md, "Fix round 3"). 1 for a dev check.
      */
     static volatile int fillFromLevel = 0;
+    /** How far into dark air, in blocks, the light of unknown terrain beside it might have reached (sky light's 14). */
+    static final int UNKNOWN_REACH = 14;
+    /** Dev checks: dark air beside unknown terrain filled as before 3.0.1 (FarChecks.skyRepairOff). */
+    static volatile boolean unfillOff;
     /** The mesher's cache of neighbours' face layers, by node and change stamp. */
     static final long LAYER_CACHE_BYTES = 16L << 20;
 
@@ -121,6 +125,8 @@ final class FarMesher {
     volatile long decodes;
     volatile long layerHits;
     volatile long layerMisses;
+    /** Filled voxels left as air beside unknown terrain (Mesher#unfillNearUnknown). */
+    volatile long unfilled;
 
     FarMesher() {
         thread = new Thread(this::run, "Shaders Companion far mesher");
@@ -169,6 +175,7 @@ final class FarMesher {
             decodes = mesher.decodes;
             layerHits = mesher.layerHits;
             layerMisses = mesher.layerMisses;
+            unfilled = mesher.unfilled;
             FarResidency sink = job.sink;
             if (sink != null) {
                 sink.meshed(mesh);
@@ -284,6 +291,9 @@ final class FarMesher {
         private final int[] skirt = new int[1024];
         private final int[] exposed = new int[1024];
         private final int[] exposedTmp = new int[1024];
+        /** {@link #unfillNearUnknown}: the voxels reached, and each one's distance in voxels from unknown terrain. */
+        private final int[] queue = new int[Node.VOXELS];
+        private final byte[] depth = new byte[Node.VOXELS];
         private int[] out = new int[1 << 14];
         private int[] sorted = new int[1 << 14];
         private int quads;
@@ -314,6 +324,8 @@ final class FarMesher {
         private int maxZ;
         private int dark;
         // Statistics
+        /** Filled voxels left as air beside unknown terrain ({@link #unfillNearUnknown}). */
+        long unfilled;
         long decodes;
         long layerHits;
         long layerMisses;
@@ -382,6 +394,9 @@ final class FarMesher {
             }
             for (int d = 0; d < 6; d++) {
                 layers[d] = resolve(job.neighbours[d], OPPOSITE[d]);
+            }
+            if (fill && !uniform && !unfillOff) {
+                unfillNearUnknown();
             }
             Arrays.fill(paletteOf, 0);
             paletteIndex.clear();
@@ -477,6 +492,100 @@ final class FarMesher {
                     hiders[64 + (i & 31)]++;
                 }
             }
+        }
+
+        /**
+         * Filled dark air within reach of unknown terrain beside it goes back to air (3.0.1): at the edge of generated
+         * land the game keeps a chunk complete beside one it hasn't lit yet, and that chunk's light from that side never
+         * came in (a Lost Cities highway's deck along such a chunk row was dark under its open side, and the far terrain
+         * closed it with a stone wall). The store can't repair that light from a neighbour it doesn't have
+         * ({@link SkyRepair}); once the neighbour is stored, this node is meshed again with it. The reach is sky light's
+         * ({@link #UNKNOWN_REACH} blocks, in this level's voxels, at least one), through filled voxels, from those with an
+         * unknown voxel beside them horizontally (unknown below is the world's bottom, not unlit terrain).
+         */
+        private void unfillNearUnknown() {
+            int reach = Math.max(1, (UNKNOWN_REACH + (1 << level) - 1) >> level);
+            byte[] c = cls;
+            int tail = 0;
+            for (int i = 0; i < Node.VOXELS; i++) {
+                if (c[i] != FILL) {
+                    continue;
+                }
+                int x = i & 31;
+                int z = i >> 5 & 31;
+                if ((x > 0 ? c[i - 1] : borderClass(4, i)) == UNKNOWN || (x < 31 ? c[i + 1] : borderClass(5, i)) == UNKNOWN
+                        || (z > 0 ? c[i - 32] : borderClass(2, i)) == UNKNOWN || (z < 31 ? c[i + 32] : borderClass(3, i)) == UNKNOWN) {
+                    // Marked as a seed, unfilled once all seeds are found (an unfilled seed isn't unknown to its neighbours anyway)
+                    queue[tail++] = i;
+                }
+            }
+            for (int k = 0; k < tail; k++) {
+                unfill(queue[k]);
+                depth[queue[k]] = 1;
+            }
+            for (int head = 0; head < tail; head++) {
+                int i = queue[head];
+                int next = depth[i] + 1;
+                if (next > reach) {
+                    continue;
+                }
+                int x = i & 31;
+                int z = i >> 5 & 31;
+                int y = i >> 10;
+                if (x > 0 && c[i - 1] == FILL) {
+                    unfill(i - 1);
+                    depth[i - 1] = (byte) next;
+                    queue[tail++] = i - 1;
+                }
+                if (x < 31 && c[i + 1] == FILL) {
+                    unfill(i + 1);
+                    depth[i + 1] = (byte) next;
+                    queue[tail++] = i + 1;
+                }
+                if (z > 0 && c[i - 32] == FILL) {
+                    unfill(i - 32);
+                    depth[i - 32] = (byte) next;
+                    queue[tail++] = i - 32;
+                }
+                if (z < 31 && c[i + 32] == FILL) {
+                    unfill(i + 32);
+                    depth[i + 32] = (byte) next;
+                    queue[tail++] = i + 32;
+                }
+                if (y > 0 && c[i - 1024] == FILL) {
+                    unfill(i - 1024);
+                    depth[i - 1024] = (byte) next;
+                    queue[tail++] = i - 1024;
+                }
+                if (y < 31 && c[i + 1024] == FILL) {
+                    unfill(i + 1024);
+                    depth[i + 1024] = (byte) next;
+                    queue[tail++] = i + 1024;
+                }
+            }
+            unfilled += tail;
+        }
+
+        /** The class of the neighbour's voxel across a side face (2 to 5) from a voxel on that side. */
+        private int borderClass(int d, int i) {
+            short[] layer = layers[d];
+            if (layer.length == 1) {
+                return layer[0] >> 8 & 7;
+            }
+            // Side faces: u is x (z sides) or z (x sides), v is y
+            int u = d < 4 ? i & 31 : i >> 5 & 31;
+            return layer[(i >> 10) * 32 + u] >> 8 & 7;
+        }
+
+        /** A filled voxel back to air: no longer drawn, no longer hiding the faces behind it. */
+        private void unfill(int i) {
+            cls[i] = AIR;
+            slices[i >> 10]--;
+            slices[32 + (i >> 5 & 31)]--;
+            slices[64 + (i & 31)]--;
+            hiders[i >> 10]--;
+            hiders[32 + (i >> 5 & 31)]--;
+            hiders[64 + (i & 31)]--;
         }
 
         /** The faces of one direction: the main range's quads now, the border slice's seam faces into {@link #skirt}. */

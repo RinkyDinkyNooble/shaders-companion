@@ -33,6 +33,7 @@ public final class ClientInit {
         MinecraftForge.EVENT_BUS.addListener(ClientInit::onChunkUnload);
         MinecraftForge.EVENT_BUS.addListener(ClientInit::onClientTick);
         MinecraftForge.EVENT_BUS.addListener(ClientInit::onChunkSave);
+        MinecraftForge.EVENT_BUS.addListener(com.rinkynooble.shaderscompanion.client.far.FarTerrain::onRenderFog);
     }
 
     /** The integrated server saves a chunk (its thread): the far store's auto import reads it later. */

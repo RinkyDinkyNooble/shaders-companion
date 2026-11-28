@@ -66,6 +66,7 @@ final class FarNodes {
     final String diskError;
     private final CoarseLevels coarse = new CoarseLevels(this);
     private final HiddenVoxels hidden = new HiddenVoxels(this);
+    private final SkyRepair skyRepair = new SkyRepair(this);
     /** Sections marked stale for the main thread to copy again (SectionPos.asLong); the main thread takes them. */
     final java.util.concurrent.ConcurrentLinkedQueue<Long> recaptures = new java.util.concurrent.ConcurrentLinkedQueue<>();
     /**
@@ -119,6 +120,8 @@ final class FarNodes {
      * six of these around it can't be seen ({@link HiddenVoxels}).
      */
     static final byte OPAQUE = 16;
+    /** Air, or a decoration with no collision ({@link #THIN}): sky light spreads through it as through air ({@link SkyRepair}). */
+    static final byte CLEAR = 32;
     private byte[] flags = new byte[256];
     /** Per state id: the far mesher's class and its tint and translucent bits, worked out only while something meshes. */
     private final MeshClasses meshClasses = new MeshClasses(this);
@@ -163,6 +166,10 @@ final class FarNodes {
     long hiddenNanos;
     /** Voxels of stored neighbours replaced when a section next to them arrived; sections marked stale; stale ones stored again. */
     long hiddenLate;
+    /** Sky light repair ({@link SkyRepair}): voxels raised in sections being stored, in stored sections next to them, the time it took. */
+    long skyRaised;
+    long skyRaisedNext;
+    long skyNanos;
     long staleMarked;
     long staleRestored;
     long rebuilds;
@@ -197,7 +204,7 @@ final class FarNodes {
         if (!blockFilter.isEmpty()) {
             ShadersCompanion.LOGGER.info("Shaders Companion far store: leaving out {} (farHiddenBlocks)", blockFilter);
         }
-        flags[StateIds.AIR] = OPEN;
+        flags[StateIds.AIR] = OPEN | CLEAR;
         FarDisk opened = null;
         String error = null;
         if (folder != null) {
@@ -347,6 +354,14 @@ final class FarNodes {
         recaptures.add(net.minecraft.core.SectionPos.asLong(sectionX, sectionY, sectionZ));
     }
 
+    /** A node's light changed outside an ingest (sky light repaired next to a new section): written, folded again and meshed again. */
+    void lightChanged(Node node, long now) {
+        node.dirty = true;
+        changedSinceWrite = true;
+        markParent(node, now);
+        changed(node.key);
+    }
+
     /** A node's voxels changed outside an ingest (hidden voxels next to a new section): written with the next batch. */
     void changedWithoutIngest(Node node) {
         node.dirty = true;
@@ -409,7 +424,7 @@ final class FarNodes {
                         f |= WATER;
                     }
                     if (state.isAir()) {
-                        f |= OPEN;
+                        f |= OPEN | CLEAR;
                     } else if (state.getFluidState().is(FluidTags.WATER) && !state.canOcclude()) {
                         // Water, and plants standing in it (kelp, seagrass): a face next to them is seen
                         f |= OPEN;
@@ -422,7 +437,7 @@ final class FarNodes {
                             collides = true;
                         }
                         if (!collides && !(state.getBlock() instanceof SnowLayerBlock)) {
-                            f |= THIN;
+                            f |= THIN | CLEAR;
                         } else if (collides) {
                             f |= SHEER;
                         }
@@ -548,6 +563,10 @@ final class FarNodes {
                 hiddenSections++;
                 hiddenNanos += System.nanoTime() - hiddenStart;
             }
+            // Sky light the world left unspread (the hash above is still of the copy as captured)
+            long skyStart = System.nanoTime();
+            skyRaised += skyRepair.own(section.x, section.y, section.z, ids, sectionLight);
+            skyNanos += System.nanoTime() - skyStart;
             if (old == 0) {
                 node.known += 4096;
                 sectionsStored++;
@@ -587,6 +606,10 @@ final class FarNodes {
                 hiddenLate += hidden.late(section.x, section.y, section.z);
                 hiddenNanos += System.nanoTime() - hiddenStart;
             }
+            // The stored sections around take this one's sky light where theirs was left unspread
+            skyStart = System.nanoTime();
+            skyRaisedNext += skyRepair.push(section.x, section.y, section.z, ids, sectionLight, now);
+            skyNanos += System.nanoTime() - skyStart;
             if (node.known == Node.VOXELS && sectionUniform()) {
                 // Complete, and the section was one state: perhaps the whole node is (open sky, solid rock)
                 tryCompact(node);

@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.1 (2026-11-28)
+
+- Fixed: a grey wall under bridges and highways in the far terrain (Lost Cities highways over water showed it). Where the world saved its light unfinished, at the edge of the land generated so far, the far terrain took the air under the deck for a cave and closed it with stone.
+- Fixed: with shaders off and the far terrain shown (`/shaderscompanion far show`), a band of sky between your render distance and the far terrain. While it is shown, the fog starts far out, so your chunks no longer fade into the sky colour at your render distance.
+- `/shaderscompanion far on` no longer shows the far terrain with shaders off. That view is `far show` and `far hide` (off by default), as before.
+- The far terrain is stored again once: in singleplayer it fills from your world's saved chunks again by itself.
+
 ## 3.0.0 (2026-11-27)
 
 For Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31 (exactly this version). Distant Horizons is optional. Client, and optionally the server too.

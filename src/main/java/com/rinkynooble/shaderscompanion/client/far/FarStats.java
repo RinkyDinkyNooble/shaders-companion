@@ -24,6 +24,8 @@ final class FarStats {
                         + "from disk, %d kept as nodes left memory, %d reused", store.hiddenSections, store.hiddenReplaced, store.hiddenSections == 0 ? 0.0 : (double) store.hiddenReplaced / store.hiddenSections,
                 store.hiddenLate, store.hiddenSections == 0 ? 0.0 : store.hiddenNanos / 1.0e3 / store.hiddenSections, store.staleMarked, store.staleRestored,
                 store.faceMaskReads, store.faceMasksKept, store.faceMaskHits));
+        lines.add(String.format("Sky light repair: %d voxels raised in sections as stored, %d in stored sections next to them, %.1f us a section stored", store.skyRaised,
+                store.skyRaisedNext, store.sectionsIngested == 0 ? 0.0 : store.skyNanos / 1.0e3 / store.sectionsIngested));
         lines.add(String.format("Time: main thread %.1f us a section copied; worker %.1f us a section stored, %.0f us a coarser node rebuilt (%.0f us an octant), %d rebuilds",
                 mainMicrosPerSection, store.sectionsIngested == 0 ? 0.0 : store.ingestNanos / 1.0e3 / store.sectionsIngested,
                 store.rebuilds == 0 ? 0.0 : store.rebuildNanos / 1.0e3 / store.rebuilds, store.folds == 0 ? 0.0 : store.foldNanos / 1.0e3 / store.folds, store.rebuilds));

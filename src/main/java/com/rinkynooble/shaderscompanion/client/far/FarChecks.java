@@ -71,6 +71,20 @@ public final class FarChecks {
         FarMesher.fillFromLevel = level;
     }
 
+    /**
+     * Dev checks: 3.0.1's sky light fixes off, as in 3.0.0: the store's repair (SkyRepair.off; sections stored from now
+     * on keep the light as captured) and the mesher's open dark air beside unknown terrain (FarMesher.unfillOff).
+     */
+    public static void skyRepairOff(boolean off) {
+        SkyRepair.off = off;
+        FarMesher.unfillOff = off;
+    }
+
+    /** Dev checks: vanilla's fog left as it is with the debug view, as before 3.0.1 (FarTerrain.fogMatchOff). */
+    public static void fogMatchOff(boolean off) {
+        FarTerrain.fogMatchOff = off;
+    }
+
     /** Dev checks: corner shading in the quads (FarMesher.cornerShading; nodes meshed from now on). */
     public static void cornerShading(boolean on) {
         FarMesher.cornerShading = on;

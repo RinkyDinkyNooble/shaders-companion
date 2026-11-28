@@ -296,7 +296,7 @@ public final class DevRun {
      * The far scene's world is kept between runs (Distant Horizons' database in it grows run by run, so later runs draw
      * the same terrain); the fill check's is made fresh every run; every other scene's is the usual dev world.
      */
-    private static final String WORLD = FAR ? (FAR_FILL ? "shaderscompanion-fill" : "shaderscompanion-far") : "shaderscompanion-dev";
+    private static final String WORLD = FAR ? (FAR_FILL ? "shaderscompanion-fill" : System.getProperty("shaderscompanion.devFarWorld", "shaderscompanion-far")) : "shaderscompanion-dev";
     private static boolean worldRequested;
     private static int phase;
     private static int phaseTick;
@@ -377,6 +377,10 @@ public final class DevRun {
                 com.rinkynooble.shaderscompanion.client.far.StateColors.encodedAverageForChecks(Boolean.getBoolean("shaderscompanion.devFarEncodedAverage"));
                 // -PdevFarFillFrom=1: dark air filled from level 1, as before 3.0.0-dev6 (level 0's caves kept)
                 FarChecks.caveFillFrom(Integer.getInteger("shaderscompanion.devFarFillFrom", 0));
+                // 3.0.1: -PdevSkyRepairOff stores sections with their light as captured, as before 3.0.1
+                FarChecks.skyRepairOff(Boolean.getBoolean("shaderscompanion.devSkyRepairOff"));
+                // 3.0.1: -PdevFogMatchOff leaves vanilla's fog as it is with the debug view, as before 3.0.1
+                FarChecks.fogMatchOff(Boolean.getBoolean("shaderscompanion.devFogMatchOff"));
             }
             ShadersCompanion.LOGGER.info("Shaders Companion dev run: far store on for the run, heap {} MB", Runtime.getRuntime().maxMemory() >> 20);
         }
@@ -526,6 +530,11 @@ public final class DevRun {
             if (mc.player != null && System.getProperty("shaderscompanion.devLatePitch") != null) {
                 if (lateTicks == 0) {
                     mc.player.getAbilities().flying = true;
+                    // 3.0.1: -PdevLateTp=x,y,z holds the camera there instead of at the vantage (the highway world)
+                    String tp = System.getProperty("shaderscompanion.devLateTp");
+                    if (tp != null) {
+                        mc.player.connection.sendCommand("tp @s " + tp.replace(',', ' '));
+                    }
                     int lift = Integer.getInteger("shaderscompanion.devLateLift", 0);
                     if (lift != 0) {
                         mc.player.connection.sendCommand("tp @s ~ ~" + lift + " ~");

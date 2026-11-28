@@ -1,12 +1,20 @@
 package com.rinkynooble.shaderscompanion.client.far;
 
+import com.mojang.blaze3d.shaders.FogShape;
 import com.rinkynooble.shaderscompanion.client.Config;
 import com.rinkynooble.shaderscompanion.client.FarTextures;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
+import net.irisshaders.iris.api.v0.IrisApi;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.FogRenderer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.level.material.FogType;
+import net.minecraftforge.client.event.ViewportEvent;
 
 /**
  * The far terrain's drawing state, worked out each frame by the render thread while the far store runs
@@ -90,6 +98,45 @@ public final class FarTerrain {
             return demand == FarTextures.BOUND_JITTERED ? MODE_PACK : MODE_PACK_STILL;
         }
         return debugView ? MODE_OVERLAY : MODE_NONE;
+    }
+
+    /** The debug view's fog starts at this share of the far range and ends at the far range ({@link #onRenderFog}, far_overlay.fsh). */
+    static final float FOG_START = 0.25f;
+    /** Dev checks: vanilla's fog left as it is with the debug view, as before 3.0.1 (FarChecks.fogMatchOff). */
+    static volatile boolean fogMatchOff;
+
+    /**
+     * Shaders off, with the debug view drawn: vanilla's terrain fog moves out to the far terrain's, a sphere from a
+     * quarter of the far range to the far range, the curve far_overlay.fsh fogs the far terrain with. Vanilla's own fog
+     * ends at the render distance (a cylinder, as Embeddium draws the chunk terrain), so the chunk terrain's last blocks
+     * faded into the fog colour, which the debug view, drawn only where the screen shows sky, couldn't fill: a band of
+     * sky between the two (the user, 3.0.0). Left alone under water, in lava or powder snow, with blindness or darkness,
+     * in thick fog (the Nether, a boss) and while a shader pack is in use.
+     */
+    public static void onRenderFog(ViewportEvent.RenderFog event) {
+        if (fogMatchOff || event.getMode() != FogRenderer.FogMode.FOG_TERRAIN || event.getType() != FogType.NONE || drawMode != MODE_OVERLAY || FarRenderer.alone) {
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || IrisApi.getInstance().isShaderPackInUse()) {
+            return;
+        }
+        Camera camera = event.getCamera();
+        if (camera.getEntity() instanceof LivingEntity living && (living.hasEffect(MobEffects.BLINDNESS) || living.hasEffect(MobEffects.DARKNESS))) {
+            return;
+        }
+        BlockPos at = camera.getBlockPosition();
+        if (mc.level.effects().isFoggyAt(at.getX(), at.getZ()) || mc.gui.getBossOverlay().shouldCreateWorldFog()) {
+            return;
+        }
+        float range = farRange();
+        if (range <= event.getFarPlaneDistance()) {
+            return;
+        }
+        event.setNearPlaneDistance(range * FOG_START);
+        event.setFarPlaneDistance(range);
+        event.setFogShape(FogShape.SPHERE);
+        event.setCanceled(true);
     }
 
     /** The farTerrain setting: auto, companion or off (the dev checks turn off into auto). */
@@ -325,20 +372,23 @@ public final class FarTerrain {
     }
 
     /**
-     * The {@code far on} and {@code far off} commands: the store, {@code farTerrain} (auto, or off) and the debug view
-     * for packs that don't read the far terrain together, all saved in the config.
+     * The {@code far on} and {@code far off} commands: the store and {@code farTerrain} (auto, or off) together, saved in
+     * the config; off also turns the debug view off. On leaves the debug view as it is (until 3.0.1 it turned it on too,
+     * so with shaders off the far terrain showed in the debug view without being asked for).
      */
     public static String setFarTerrain(boolean on) {
         Config.FAR_STORE.set(on);
         Config.FAR_STORE.save();
         Config.FAR_TERRAIN.set(on ? "auto" : "off");
         Config.FAR_TERRAIN.save();
-        Config.FAR_TERRAIN_DEBUG.set(on);
-        Config.FAR_TERRAIN_DEBUG.save();
+        if (!on) {
+            Config.FAR_TERRAIN_DEBUG.set(false);
+            Config.FAR_TERRAIN_DEBUG.save();
+        }
         FarRenderer.alone = false;
         return on ? "Far terrain on: the store fills from the chunks you load (in singleplayer also from the world's saved chunks, by itself with farAutoImport, "
                 + "or /shaderscompanion lod import); "
-                + "a shader pack that reads it (ABZA Shader 3) lights it, otherwise the debug view shows it" : "Far terrain off (what is stored stays on disk)";
+                + "a shader pack that reads it (ABZA Shader 3) draws it; /shaderscompanion far show shows it without one, in the debug view" : "Far terrain off (what is stored stays on disk)";
     }
 
     /** The {@code far mode auto|companion|off} command: whose far terrain is drawn (saved in the config). */
@@ -385,7 +435,8 @@ public final class FarTerrain {
             if (m != null) {
                 lines = java.util.Arrays.copyOf(lines, lines.length + 1);
                 lines[lines.length - 1] = String.format("Mesher thread: %.1f s of processor time so far, %d jobs failed; %d blobs decoded, neighbours' face layers %d "
-                        + "from its cache, %d decoded", cpuNanos(m.thread) / 1.0e9, m.failures, m.decodes, m.layerHits, m.layerMisses);
+                        + "from its cache, %d decoded; %d dark air voxels left open beside unknown terrain", cpuNanos(m.thread) / 1.0e9, m.failures, m.decodes,
+                        m.layerHits, m.layerMisses, m.unfilled);
             }
             return lines;
         });

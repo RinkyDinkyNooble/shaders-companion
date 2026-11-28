@@ -21,6 +21,7 @@ uniform vec3 u_SunDir;    // world space, towards the sun (below the horizon at 
 uniform float u_Daylight; // 0 at night to 1 by day, from the level's sky brightness
 uniform float u_FarRange; // the far range in blocks
 uniform vec3 u_FogColor;  // the game's fog colour this frame (time of day, weather, biome)
+uniform float u_FogStart; // the fog's start in blocks; it ends at u_FarRange
 
 out vec4 fragColor;
 
@@ -70,11 +71,12 @@ void main() {
     float ambient = sky * mix(0.16, 0.55, u_Daylight) * (0.75 + 0.25 * max(normal.y, 0.0));
     float sunLight = sky * u_Daylight * 0.7 * direct;
     vec3 lit = albedo.rgb * (0.03 + ambient + sunLight) + albedo.rgb * TORCH * block * 0.9 * (1.0 - 0.6 * u_Daylight * sky);
-    // Haze by distance towards the game's fog colour, and a fade over the last 15% of the range so its edge doesn't
-    // show. Opaque: blending with the sky behind let the stars and the sun below the horizon show through (dev1)
+    // Fog by distance towards the game's fog colour, with vanilla's curve (smoothstep from start to end, a sphere): with
+    // shaders off the chunk terrain gets the same fog while this view draws (FarTerrain.onRenderFog), so the two meet
+    // without a seam, and the far edge is fully fogged. Opaque: blending with the sky behind let the stars and the sun
+    // below the horizon show through (dev1)
     vec3 haze = u_Alone != 0 ? SKY * mix(0.15, 1.0, u_Daylight) : u_FogColor;
-    float x = distance / max(u_FarRange, 1.0);
-    float fog = max(clamp(1.0 - exp(-2.2 * x * x), 0.0, 1.0) * 0.7, smoothstep(0.85, 1.0, x));
+    float fog = smoothstep(u_FogStart, max(u_FarRange, u_FogStart + 1.0), distance);
     // Water and glass (the translucent pass leaves alpha under 1): a dark body with the haze colour standing in for
     // the sky it reflects at these grazing angles
     if (albedo.a < 0.999) {
