@@ -1,1 +1,1 @@
-Far terrain, real mirrors, reflections of the whole world, steady ambient occlusion and materials for every block, for shader packs. Comes with ABZA Shader.
+Provides far terrain, high quality mirrors and reflections for any compatible shaderpack. Includes the Apocalypse Begins shaderpack.
