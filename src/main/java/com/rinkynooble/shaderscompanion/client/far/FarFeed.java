@@ -50,6 +50,9 @@ final class FarFeed {
     long rejected;
     long unasked;
     long liveSkipped;
+    long liveAtOffer;
+    /** Asked for although a copy of it was sent before (saved again since). */
+    long askedAgain;
     String lastRejection;
 
     FarFeed(int epoch, ColumnWire.Expect expect, long capBytes, long otherBytes, Path folder) {
@@ -96,12 +99,21 @@ final class FarFeed {
                 long pos = offer.chunks()[i];
                 long dx = ChunkPos.getX(pos) - centerX;
                 long dz = ChunkPos.getZ(pos) - centerZ;
-                if (dx * dx + dz * dz > r * r || store.liveColumns.contains(pos) || store.servedAt.get(pos) == offer.stamps()[i]) {
+                if (dx * dx + dz * dz > r * r || store.servedAt.get(pos) == offer.stamps()[i]) {
+                    continue;
+                }
+                if (store.liveColumns.contains(pos)) {
+                    // Shown live this session: not asked for now, and not stamped either (the client may have left
+                    // it before this save, so the next join asks for it once)
+                    liveAtOffer++;
                     continue;
                 }
                 bits[i >> 6] |= 1L << (i & 63);
                 wanted.put(pos, offer.stamps()[i]);
                 asked++;
+                if (store.servedAt.containsKey(pos)) {
+                    askedAgain++;
+                }
             }
         }
         return new FarNet.Want(epoch, offer.id(), bits);
@@ -167,8 +179,8 @@ final class FarFeed {
     /** The status line's part (worker thread). */
     String status(FarNodes store) {
         String cap = capReason(store, System.nanoTime());
-        return String.format("%d columns stored (%.1f MB from the server), %d not complete on the server, %d waiting; %d offered, %d asked for%s%s%s", received,
-                receivedBytes / 1048576.0, notComplete, wanted.size(), offered, asked, rejected > 0 ? ", " + rejected + " turned down (" + lastRejection + ")" : "",
+        return String.format("%d columns stored (%.1f MB from the server), %d not complete on the server, %d waiting; %d offered, %d asked for (%d saved again since sent), %d already shown live%s%s%s",
+                received, receivedBytes / 1048576.0, notComplete, wanted.size(), offered, asked, askedAgain, liveAtOffer + liveSkipped, rejected > 0 ? ", " + rejected + " turned down (" + lastRejection + ")" : "",
                 unasked > 0 ? ", " + unasked + " not asked for (dropped)" : "", cap != null ? "; paused: " + cap : "");
     }
 }

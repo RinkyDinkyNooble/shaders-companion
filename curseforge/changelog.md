@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.0.0 (2026-11-27)
+
+For Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31 (exactly this version). Distant Horizons is optional. Client, and optionally the server too.
+
+- Far terrain: the world past your render distance, out to 1,024 blocks (`farRange`), drawn by the mod from its own copy of the world and shaded by ABZA Shader with its light, shadows, fog, clouds and light shafts. On by default; `/shaderscompanion far off` turns it off. In singleplayer it fills from the world's saved chunks as soon as you join, chunks pre-generated with Chunky included, and from every chunk the world saves after that. On a server it is what you have loaded there, plus what the server shares.
+- Far terrain in reflections: water, glass and mirrors show the far land, also while Distant Horizons draws the far terrain on screen. Distant Horizons' own terrain is no longer drawn into reflections (2.0.0 did that).
+- With Distant Horizons drawing far terrain, or a Voxy mod installed, the mod's far terrain stays out of the way on screen. `farTerrain` (or `/shaderscompanion far mode`) chooses.
+- Servers: with the mod on the server too, players who have it get the world's saved chunks around them for their far terrain, so they see what has been explored without going there, and new and changed chunks follow as the server saves them. Nothing goes from one player to another, and blocks deep inside the rock (ores, hidden rooms) are never sent. Settings in the server's `config/shaderscompanion-common.toml`; `/farshare` (operators) shows what is sent. A player turns it down for one server with `/shaderscompanion far server deny`. A server without the mod works as before.
+- Disk: the far terrain is kept in `shaderscompanion/lod`, at most 4 GB for every world and server together (`farStoreDiskMb`). Past that, the worlds and servers you visited longest ago are let go, and the far terrain of deleted worlds is removed. One server can fill at most 2 GB (`farServerDiskMb`).
+- `farHiddenBlocks` leaves blocks out of the far terrain: command blocks by default, so Lost Cities buildings don't show them from afar.
+- Comes with ABZA Shader 3.0.0, which shades the far terrain (options under Shaders Companion > "Far terrain") and has depth of field off by default.
+- For shader pack authors: far terrain protocol 1 and the far shadow map. See `API.md`.
+
 ## 2.0.0 (2026-11-22)
 
 For Minecraft 1.20.1, Forge 47, Oculus 1.8.0 and Embeddium 0.3.31 (exactly this version now). Distant Horizons 3.3.2 is optional. Client only.

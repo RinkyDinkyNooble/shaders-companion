@@ -133,8 +133,10 @@ public final class FarLink implements FarNet.ClientSide {
             return;
         }
         if (queuedBytes.addAndGet(size) > MAX_QUEUED) {
+            // Turned down unread, and acknowledged like any handled column, so the server's window moves on
             queuedBytes.addAndGet(-size);
             dropped++;
+            ackBytes.addAndGet(size);
             return;
         }
         w.post(worker -> {

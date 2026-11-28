@@ -1,6 +1,6 @@
 # Shaders Companion
 
-Shader packs can only reflect what is on your screen. **Shaders Companion** gives them the rest of the world: water and glass become <span style="color:#2dc26b"><strong>real mirrors</strong></span> that show **yourself**, the mobs and buildings behind you and the terrain far away, and every other shiny surface reflects the room around it, lamps' glow included. It also gives shader packs **ambient occlusion that stays put**, a **material for every block** and lighting fixes no shader pack can make on its own.
+Shader packs can only reflect what is on your screen and draw what is within your render distance. **Shaders Companion** gives them the rest of the world: <span style="color:#2dc26b"><strong>far terrain</strong></span> out to 1,024 blocks, shaded by the shader pack like the land around you, and water and glass that become <span style="color:#2dc26b"><strong>real mirrors</strong></span> showing **yourself**, the mobs and buildings behind you and the land far away. Every other shiny surface reflects the room around it, lamps' glow included. It also gives shader packs **ambient occlusion that stays put**, a **material for every block** and lighting fixes no shader pack can make on its own.
 
 It comes with [ABZA Shader](https://www.curseforge.com/minecraft/shaders/apocalypse-begins-sundial-lite-fork), which uses all of it out of the box: install the mod and pick "ABZA Shader.zip" in the shader pack list. Made for the [ABZA modpack](https://www.curseforge.com/minecraft/modpacks/apocalypse-begins-zombie-apocalypse). <span style="color:#e03e2d"><strong>Oculus and Embeddium are required.</strong></span>
 
@@ -13,11 +13,11 @@ It comes with [ABZA Shader](https://www.curseforge.com/minecraft/shaders/apocaly
 <table>
 <tr><th align="left">What</th><th align="left">Version</th></tr>
 <tr><td><strong>Forge</strong></td><td>47</td></tr>
-<tr><td><strong>Side</strong></td><td><span style="color:#3598db"><strong>Client only</strong></span></td></tr>
+<tr><td><strong>Side</strong></td><td><span style="color:#3598db"><strong>Client</strong></span>; on a server <span style="color:#3598db"><strong>optional</strong></span>, for sharing far terrain</td></tr>
 <tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/oculus">Oculus</a></strong></td><td>1.8.0</td></tr>
 <tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/embeddium">Embeddium</a></strong></td><td>0.3.31, exactly this version</td></tr>
-<tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/distant-horizons">Distant Horizons</a></strong></td><td><span style="color:#3598db"><strong>Optional</strong></span>, 3.3.2</td></tr>
-<tr><td><strong><a href="https://www.curseforge.com/minecraft/shaders/apocalypse-begins-sundial-lite-fork">ABZA Shader</a></strong></td><td>2.0.0, <span style="color:#2dc26b"><strong>included</strong></span></td></tr>
+<tr><td><strong><a href="https://www.curseforge.com/minecraft/mc-mods/distant-horizons">Distant Horizons</a></strong></td><td><span style="color:#3598db"><strong>Optional</strong></span>, tested with 3.3.2</td></tr>
+<tr><td><strong><a href="https://www.curseforge.com/minecraft/shaders/apocalypse-begins-sundial-lite-fork">ABZA Shader</a></strong></td><td>3.0.0, <span style="color:#2dc26b"><strong>included</strong></span></td></tr>
 </table>
 
 ***
@@ -41,9 +41,22 @@ It comes with [ABZA Shader](https://www.curseforge.com/minecraft/shaders/apocaly
 
 ## Features
 
+### Far Terrain
+
+The land past your render distance, out to 1,024 blocks, drawn by the mod and lit, fogged and shadowed by the shader pack like the land around you: far mountains cast shadows, clouds pass over them and the sun throws shafts of light past them. It is in reflections and mirrors too. On by default.
+
+*   **Singleplayer:** the far terrain fills from your world's saved chunks as soon as you join, so land you explored long ago or pre-generated with Chunky shows at once.
+*   **Servers:** it is what you have seen there, and with the mod on the server too, everything the server has saved around you (see below).
+*   **With Distant Horizons:** while Distant Horizons draws the far terrain, the mod stays out of its way on screen and still puts far terrain in reflections.
+*   **Disk:** the far terrain is kept in `shaderscompanion/lod`, at most 4 GB for every world and server together; the worlds you visited longest ago make room first.
+
+### Far Terrain From Servers
+
+Put the mod on your server too, and every player who has it sees the land other players have explored, not only their own: the server sends the world's saved chunks around each player in the background, and new and changed chunks as it saves them. Ores and hidden rooms deep inside the rock are never sent, so it can't be used as x-ray. Players without the mod can still join, a player can turn it off for one server, and the server's owner sets how far and how fast in `config/shaderscompanion-common.toml`.
+
 ### Real Mirrors
 
-The largest water surfaces and walls of stained or tinted glass on screen, <span style="color:#2dc26b"><strong>up to four at once</strong></span>, show a sharp reflection of the world with the shader pack's own light and shadows: you, your gun and armour, mobs, other players, chests and Distant Horizons' far terrain. A lake and a window beside it, or two walls of a glass building, each get their own. In ABZA Shader the mirror is on in the Ultra preset (one) and the Max preset (four).
+The largest water surfaces and walls of stained or tinted glass on screen, <span style="color:#2dc26b"><strong>up to four at once</strong></span>, show a sharp reflection of the world with the shader pack's own light and shadows: you, your gun and armour, mobs, other players, chests and the far terrain. A lake and a window beside it, or two walls of a glass building, each get their own. In ABZA Shader the mirror is on in the Ultra preset (one) and the Max preset (four).
 
 <table>
 <tr>
@@ -131,19 +144,24 @@ The mod puts ABZA Shader into your `shaderpacks` folder as "ABZA Shader.zip" whe
 <tr><td><strong>/shaderscompanion status</strong></td><td>Shows what is being drawn and what it costs</td></tr>
 <tr><td><strong>/shaderscompanion debug</strong></td><td>Shows the mod's views in the corner of the screen</td></tr>
 <tr><td><strong>/shaderscompanion dump</strong></td><td>Saves the views to the screenshots folder</td></tr>
+<tr><td><strong>/shaderscompanion far on</strong> / <strong>far off</strong></td><td>Turns the far terrain on or off</td></tr>
+<tr><td><strong>/shaderscompanion far server deny</strong> / <strong>allow</strong></td><td>Turns down (or takes again) the far terrain the server you are on shares</td></tr>
+<tr><td><strong>/farshare</strong></td><td>On a server, for operators: what the server shares with whom</td></tr>
 </table>
 
 ***
 
 ## For Shader Pack Authors
 
-Any shader pack can use the mod's views, its copy of the blocks around the camera, its material classes and its map of where rain falls, and a pack that uses them still works without the mod. The format and reference code are in [API.md](https://github.com/RinkyDinkyNooble/shaders-companion/blob/main/API.md) on GitHub.
+Any shader pack can use the mod's views, its far terrain, its copy of the blocks around the camera, its material classes and its map of where rain falls, and a pack that uses them still works without the mod. The format and reference code are in [API.md](https://github.com/RinkyDinkyNooble/shaders-companion/blob/main/API.md) on GitHub.
 
 ***
 
 ## Known Limits
 
 *   **The mirror view** is <span style="color:#e67e23"><strong>experimental</strong></span>. To turn it off, switch off "Shaders Companion mirror view" (Shaders Companion screen) or set `mirror = false` in `config/shaderscompanion-client.toml`; the other reflections keep working.
+*   **Far terrain** has one colour per block face, not textures, and leaves out grass and flowers.
+*   **Distant Horizons' own terrain** isn't drawn into reflections any more; Shaders Companion 2.0.0 still does that.
 *   **Particles** aren't reflected, and a mirror doesn't show another mirror's reflection.
 *   **Four mirrors at most:** other reflecting surfaces on screen get the less sharp reflection.
 *   **Other versions** of Oculus, Embeddium and Distant Horizons than the ones above may not work.

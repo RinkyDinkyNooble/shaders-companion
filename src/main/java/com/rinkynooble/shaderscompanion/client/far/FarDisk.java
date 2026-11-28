@@ -129,7 +129,7 @@ final class FarDisk {
                 ShadersCompanion.LOGGER.info("Shaders Companion far store: {} has format {} (this version writes {}); starting it over", folder, found, wanted);
                 wipe();
             }
-            Files.writeString(format, wanted + "\nShaders Companion far store (research/lod/M1-PLAN.md, \"Disk\"): region files of 8 x 8 node columns, "
+            Files.writeString(format, wanted + "\nShaders Companion far store (a cache of far terrain; safe to delete while the game is closed): region files of 8 x 8 node columns, "
                     + SECTOR_BYTES + "-byte sectors, Deflater blobs; states.txt and biomes.txt number the block states and biomes (line n = id n).\n");
         }
         states.load(readLines(folder.resolve("states.txt"), 0));

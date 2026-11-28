@@ -233,6 +233,9 @@ public final class FarShare implements FarNet.ServerSide {
         long totalRate = ShareConfig.KBPS_TOTAL.get() * 1024L;
         if (totalRate > 0) {
             totalTokens = Math.min(totalRate, totalTokens + totalRate * ((now - lastTotalRefill) / 1.0e9));
+        } else {
+            // No total limit: nothing is drawn from it (a limit set later starts from empty, not from a debt)
+            totalTokens = 0;
         }
         lastTotalRefill = now;
         int viewDistance = server.getPlayerList().getViewDistance();
@@ -302,7 +305,9 @@ public final class FarShare implements FarNet.ServerSide {
             FarNet.send(session.player, new FarNet.Column(session.epoch, net.minecraft.world.level.ChunkPos.getX(ready.pos()), net.minecraft.world.level.ChunkPos.getZ(ready.pos()),
                     ready.stamp(), ready.data()));
             session.tokens -= size;
-            totalTokens -= size;
+            if (totalRate > 0) {
+                totalTokens -= size;
+            }
             session.inFlight += size;
             session.bytesSent += size;
             if (ready.data().length == 0) {
