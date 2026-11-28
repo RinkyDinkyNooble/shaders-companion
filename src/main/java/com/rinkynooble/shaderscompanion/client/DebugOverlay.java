@@ -20,7 +20,7 @@ import net.minecraftforge.client.gui.overlay.ForgeGui;
  * the views as pictures, and {@code on} and {@code off} start and stop all drawing. {@code lod map <level> [radius]}
  * saves a map of the far store's level around you, {@code lod stats} prints its sizes and {@code lod import [radius]}
  * (singleplayer) adds the world's saved chunks within that many chunks of you to it, {@code lod import stop} stops
- * that (all in development). {@code far on} and {@code far off} turn the far terrain on or off with the far store,
+ * that. {@code far on} and {@code far off} turn the far terrain on or off with the far store,
  * {@code far mode auto|companion|off} says whose far terrain is drawn (the setting farTerrain); {@code far show} draws it
  * in a debug view where the screen shows sky while the shader pack doesn't draw it itself, {@code far show alone} draws
  * it alone, {@code far hide} stops that; {@code far mesh on|off}, {@code far stats} and {@code far meshmap <level>

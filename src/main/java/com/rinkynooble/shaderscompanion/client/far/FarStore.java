@@ -155,6 +155,14 @@ public final class FarStore {
             }
             return new FarNodes(gen, world, dimension, minY, maxY, caveFill, mb, filter, folder);
         }));
+        // Then the stores within farStoreDiskMb, and those of deleted worlds gone (FarCleanup), once this one is open
+        Path savesDir = savesDir(mc);
+        long diskCap = Config.FAR_STORE_DISK_MB.get() * 1048576L;
+        worker.post(w -> {
+            if (w.store() != null && w.store().generation == gen) {
+                FarCleanup.run(lodRoot, world, savesDir, diskCap);
+            }
+        });
         FarWorker sink = worker;
         capture = new FarCapture(level, gen, sink::post);
         active = true;
@@ -282,6 +290,15 @@ public final class FarStore {
             lastImportChat = now;
             mc.gui.getChat().addMessage(Component.literal(String.format("Far store import: %d of %d chunks, %.0f a second", progress.done(), progress.total(),
                     progress.perSecond())));
+        }
+    }
+
+    /** The game's saves folder, or null when it can't be told (FarCleanup then keeps every singleplayer store). */
+    private static Path savesDir(Minecraft mc) {
+        try {
+            return mc.getLevelSource().getBaseDir().toAbsolutePath().normalize();
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 

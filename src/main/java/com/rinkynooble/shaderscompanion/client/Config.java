@@ -110,8 +110,8 @@ public final class Config {
                 .comment("Give blocks without their own PBR maps material values (how smooth, how reflective, whether metal) for a shader pack that reads them: vanilla blocks and some tech mods' machines from the mod's own tables, other modded blocks from their sound, tags and name, and any block from config/shaderscompanion-materials.json. A resource pack's own PBR maps win. Takes effect when the shader pack is next loaded.")
                 .define("materials", true);
         FAR_STORE = builder
-                .comment("Keep the mod's own copy of the world for far terrain (in development). /shaderscompanion far on and far off change this and farTerrain together.")
-                .define("farStore", false);
+                .comment("Far terrain past the chunk terrain: keep the mod's own copy of the world for it in shaderscompanion/lod (the chunks you load; in singleplayer the world's saved chunks too; on a server with Shaders Companion what it shares), for a shader pack that draws it, such as ABZA Shader 3. /shaderscompanion far on and far off change this and farTerrain together.")
+                .define("farStore", true);
         FAR_STORE_BUDGET = builder
                 .comment("Most processor time per frame spent copying the world for far terrain, in microseconds. It is used up only while sections wait to be copied: on joining a world, after a teleport or while flying fast.")
                 .defineInRange("farStoreBudget", 150, 20, 2000);
@@ -119,16 +119,16 @@ public final class Config {
                 .comment("Memory for the far terrain kept ready near you, in MB.")
                 .defineInRange("farStoreCacheMb", 64, 16, 8192);
         FAR_STORE_DISK_MB = builder
-                .comment("Most disk space for far terrain, in MB, per world (not enforced yet: it is planned for the 3.0.0 release).")
+                .comment("Most disk space for far terrain, in MB, every world and server together. Past it, joining a world deletes the far stores of the worlds and servers used longest ago (they fill again when you go back: a singleplayer world's from its saved chunks); the world you are in keeps its own. The far stores of deleted singleplayer worlds are deleted too.")
                 .defineInRange("farStoreDiskMb", 4096, 256, 1048576);
         FAR_RANGE = builder
-                .comment("How far the far terrain reaches, in blocks (in development).")
+                .comment("How far the far terrain reaches, in blocks.")
                 .defineInRange("farRange", 1024, 64, 32768);
         FAR_PIXELS_PER_VOXEL = builder
                 .comment("Far terrain detail: the most pixels one of its voxels may cover before a finer level is used. Lower is sharper and costs more.")
                 .defineInRange("farPixelsPerVoxel", 2, 1, 8);
         FAR_TERRAIN_DEBUG = builder
-                .comment("Show the far terrain in the mod's debug view where the screen shows sky, while the shader pack doesn't draw it itself (a pack that reads it, such as ABZA Shader 3, does; in development, needs farStore). /shaderscompanion far show, far show alone and far hide change this in game.")
+                .comment("Show the far terrain in the mod's debug view where the screen shows sky, while the shader pack doesn't draw it itself (a pack that reads it, such as ABZA Shader 3, does; needs farStore). /shaderscompanion far show, far show alone and far hide change this in game.")
                 .define("farTerrainDebug", false);
         FAR_GPU_MB = builder
                 .comment("Most video memory for the far terrain's geometry, in MB. The buffer grows to this as terrain is meshed.")
